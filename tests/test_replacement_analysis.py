@@ -1,0 +1,107 @@
+import unittest
+
+from replacement_analysis import (
+    ReplacementReading,
+    analyze_replacements,
+    parse_extra_readings,
+    replacement_metadata,
+)
+from run_data import MeasurementRecord
+
+
+class ReplacementAnalysisTests(unittest.TestCase):
+    def test_parse_extra_readings(self):
+        readings = parse_extra_readings("49, 1.2, 1.1\n50; 0.9; 1.0")
+        self.assertEqual([reading.port for reading in readings], [49, 50])
+        self.assertAlmostEqual(readings[1].worst_loss, 1.0)
+
+    def test_no_extra_ports_is_not_applicable(self):
+        result = analyze_replacements(
+            [MeasurementRecord(1, 1.5, 1.6)],
+            [],
+            designed_channel_count=1,
+            warning_limit=2.0,
+        )
+        self.assertFalse(result["applicable"])
+        self.assertEqual(result["bottom_spares"], [])
+
+    def test_replaces_worst_channels_then_chooses_remaining_spares(self):
+        production = [
+            MeasurementRecord(1, 2.4, 2.1, 1),
+            MeasurementRecord(2, 1.995, 1.8, 2),
+            MeasurementRecord(3, 1.2, 1.3, 3),
+        ]
+        extras = [
+            ReplacementReading(49, 1.0, 0.9),
+            ReplacementReading(50, 1.8, 1.7),
+            ReplacementReading(51, 1.1, 1.2),
+            ReplacementReading(52, 1.7, 1.7),
+        ]
+        result = analyze_replacements(
+            production,
+            extras,
+            designed_channel_count=3,
+            warning_limit=2.5,
+            minimum_improvement=0.05,
+            bottom_spare_count=2,
+        )
+
+        self.assertEqual(
+            [(item["logical_channel"], item["candidate_physical_port"])
+             for item in result["recommendations"]],
+            [(1, 49), (2, 51)],
+        )
+        self.assertEqual(
+            [item["physical_port"] for item in result["bottom_spares"]],
+            [52, 50],
+        )
+        metadata = replacement_metadata(result)
+        self.assertIn("Logical 1 (physical 1", metadata["Replacement recommendation 1"])
+        self.assertIn("Physical 49", metadata["Replacement recommendation 1"])
+        self.assertIn(
+            "Physical 52", metadata["Recommended designated spare 1"]
+        )
+
+    def test_candidates_must_be_at_or_below_warning_limit(self):
+        result = analyze_replacements(
+            [MeasurementRecord(1, 2.4, 2.4, 1)],
+            [ReplacementReading(2, 2.1, 1.0)],
+            designed_channel_count=1,
+            warning_limit=2.0,
+            minimum_improvement=0.05,
+        )
+        self.assertEqual(result["recommendations"], [])
+        self.assertEqual(result["bottom_spares"][0]["physical_port"], 2)
+        self.assertFalse(result["bottom_spares"][0]["within_warning_limit"])
+
+    def test_replaced_production_port_can_be_designated_spare(self):
+        result = analyze_replacements(
+            [
+                MeasurementRecord(41, 1.5, 1.5, 41),
+                MeasurementRecord(42, 1.0, 1.0, 42),
+            ],
+            [
+                ReplacementReading(50, 1.0, 1.0),
+                ReplacementReading(51, 3.0, 3.0),
+            ],
+            designed_channel_count=48,
+            warning_limit=2.0,
+            minimum_improvement=0.05,
+            bottom_spare_count=2,
+        )
+
+        self.assertEqual(
+            [(item["logical_channel"], item["candidate_physical_port"])
+             for item in result["recommendations"]],
+            [(41, 50)],
+        )
+        self.assertEqual(
+            [item["physical_port"] for item in result["bottom_spares"]],
+            [41, 51],
+        )
+        self.assertTrue(result["bottom_spares"][0]["within_warning_limit"])
+        self.assertFalse(result["bottom_spares"][1]["within_warning_limit"])
+
+
+if __name__ == "__main__":
+    unittest.main()

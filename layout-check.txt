@@ -1,0 +1,2 @@
+﻿Hardware test setup (9, 83, 1289, 186) min 1289
+Simulation mode (1304, 83, 2265, 186) min 2265
