@@ -22,7 +22,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current user-facing release is **Light Workbench 1.6.1**. The single
+The current user-facing release is **Light Workbench 1.6.2**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.

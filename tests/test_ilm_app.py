@@ -120,10 +120,36 @@ class MainWindowTests(unittest.TestCase):
         )
         self.assertEqual(
             [action.text() for action in menus["Tools"].actions()],
-            ["Check Dependencies...", "Red Light Test...", "Live IL Reading..."],
+            [
+                "Check Dependencies...",
+                "Red Light Test...",
+                "Live IL Reading...",
+                "Dark Mode",
+            ],
         )
         self.assertEqual([action.text() for action in menus["Help"].actions()], ["About"])
         window.close()
+
+    def test_dark_mode_is_checkable_and_preserves_red_accent(self):
+        window = MainWindow()
+        original = window.settings.value("dark_mode", None)
+        try:
+            window.toggle_dark_mode(True)
+            self.assertTrue(window.dark_mode_enabled)
+            self.assertTrue(window.dark_mode_action.isChecked())
+            self.assertIn("#202124", window.styleSheet())
+            self.assertIn("QPushButton { background: #e60013", window.styleSheet())
+            self.assertIn(
+                "QPushButton:disabled { background: #8b000b",
+                window.styleSheet(),
+            )
+
+        finally:
+            if original is None:
+                window.settings.remove("dark_mode")
+            else:
+                window.settings.setValue("dark_mode", original)
+            window.close()
 
     def test_data_output_folder_opens_default_run_folder(self):
         window = MainWindow()

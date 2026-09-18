@@ -61,7 +61,7 @@ not change run data or COC data, move switch channels, or turn on lasers.
 No Python installation is needed.
 
 Use Help > About inside the application to view the current
-version and project capabilities. The current release is Light Workbench 1.6.1.
+version and project capabilities. The current release is Light Workbench 1.6.2.
 
 
 3. VERIFY VISA

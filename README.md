@@ -95,7 +95,11 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the current release version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.6.1**.
+current Light Workbench release is version **1.6.2**.
+
+Use `Tools > Dark Mode` to switch between the light and dark application
+themes. The preference is saved for the next launch; the red operator-action
+accent remains the same in both themes.
 
 It can open an existing CSV, display both wavelength values, show recorded
 metadata, highlight channels over the configurable loss limit, and summarize

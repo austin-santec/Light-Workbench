@@ -96,6 +96,64 @@ STANDARD_PART_NUMBERS = [
     "OSX-150-1A-036-09-FA-00B-2H",
 ]
 
+LIGHT_STYLESHEET = """
+QMainWindow { background: #eceff1; }
+QWidget#central_widget { background: #eceff1; }
+QGroupBox { background: #f7f8f9; font-weight: 600; border: 1px solid #c7cdd1; border-radius: 6px; margin-top: 12px; padding: 12px; }
+QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; color: #e60013; }
+QPushButton { background: #e60013; color: white; border: none; border-radius: 4px; padding: 8px 14px; font-weight: 600; }
+QPushButton:hover { background: #b80010; }
+QPushButton:disabled { background: #8b000b; color: #f3c7ca; }
+QPushButton#primary_action { padding: 11px 20px; font-size: 14px; font-weight: 800; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: white; }
+QDoubleSpinBox { padding: 5px; }
+QTableWidget { background: white; border: 1px solid #c8d5d6; gridline-color: #dbe4e5; }
+QHeaderView::section { background: #e4eeee; padding: 7px; border: none; font-weight: 600; }
+QLabel#title { color: #e60013; font-size: 22px; font-weight: 700; }
+QLabel#subtitle { color: #587073; }
+QLabel#metric { color: #a6000d; font-size: 14px; font-weight: 700; }
+QLabel#reading { color: #164e6b; font-size: 28px; font-weight: 800; }
+QLabel#reading_channel { color: #587073; font-size: 16px; font-weight: 700; }
+QLabel#reading_status { color: #587073; font-size: 16px; font-weight: 600; }
+QLabel#button_title { color: white; font-size: 14px; font-weight: 800; }
+QLabel#button_shortcut { color: #ffe8e8; font-size: 8px; font-weight: 500; }
+"""
+
+DARK_STYLESHEET = """
+QMainWindow, QWidget#central_widget { background: #202124; color: #e8eaed; }
+QWidget { color: #e8eaed; }
+QMenuBar { background: #292b2f; color: #e8eaed; border-bottom: 1px solid #454a52; }
+QMenuBar::item { background: transparent; padding: 5px 9px; }
+QMenuBar::item:selected, QMenu::item:selected { background: #e60013; color: white; }
+QMenu { background: #2d3035; color: #e8eaed; border: 1px solid #4a4f57; }
+QMenu::item { padding: 6px 24px 6px 12px; }
+QGroupBox { background: #2b2e33; color: #e8eaed; font-weight: 600; border: 1px solid #4a4f57; border-radius: 6px; margin-top: 12px; padding: 12px; }
+QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; color: #e60013; }
+QPushButton { background: #e60013; color: white; border: none; border-radius: 4px; padding: 8px 14px; font-weight: 600; }
+QPushButton:hover { background: #b80010; }
+QPushButton:disabled { background: #8b000b; color: #f3c7ca; }
+QPushButton#primary_action { padding: 11px 20px; font-size: 14px; font-weight: 800; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit { background: #373a40; color: #e8eaed; border: 1px solid #5a6069; selection-background-color: #e60013; selection-color: white; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { background: #2b2e33; color: #9299a3; }
+QComboBox QAbstractItemView { background: #373a40; color: #e8eaed; selection-background-color: #e60013; }
+QDoubleSpinBox { padding: 5px; }
+QTableWidget { background: #25272b; alternate-background-color: #2b2e33; color: #e8eaed; border: 1px solid #4a4f57; gridline-color: #454a52; selection-background-color: #8b000b; selection-color: white; }
+QHeaderView::section { background: #3a3e45; color: #f0f2f4; padding: 7px; border: none; font-weight: 600; }
+QStatusBar { background: #292b2f; color: #c7cdd4; }
+QLabel#title { color: #e60013; font-size: 22px; font-weight: 700; }
+QLabel#subtitle { color: #b3bbc5; }
+QLabel#metric { color: #ff6670; font-size: 14px; font-weight: 700; }
+QLabel#reading { color: #8bc9ee; font-size: 28px; font-weight: 800; }
+QLabel#reading_channel { color: #b3bbc5; font-size: 16px; font-weight: 700; }
+QLabel#reading_status { color: #b3bbc5; font-size: 16px; font-weight: 600; }
+QLabel#button_title { color: white; font-size: 14px; font-weight: 800; }
+QLabel#button_shortcut { color: #ffe8e8; font-size: 8px; font-weight: 500; }
+QToolTip { background: #373a40; color: #e8eaed; border: 1px solid #5a6069; }
+"""
+
+DARK_DANGER = QColor("#5b1f25")
+DARK_DANGER_TEXT = QColor("#ffd7d7")
+
 
 def parse_hardware_channels(value):
     """Expand positive channel numbers and inclusive ranges in entered order."""
@@ -283,6 +341,11 @@ class MainWindow(QMainWindow):
         self.displayed_records = []
         self.settings = QSettings("Light Workbench", "LightWorkbench")
         self._migrate_legacy_settings()
+        self.dark_mode_enabled = self.settings.value(
+            "dark_mode",
+            False,
+            type=bool,
+        )
         self.continue_shortcut = None
         self.keypad_enter_shortcut = None
         self.retest_shortcut = None
@@ -293,30 +356,7 @@ class MainWindow(QMainWindow):
             self.load_path(Path(initial_path))
 
     def _build_ui(self):
-        self.setStyleSheet(
-            """
-            QMainWindow { background: #eceff1; }
-            QWidget#central_widget { background: #eceff1; }
-            QGroupBox { background: #f7f8f9; font-weight: 600; border: 1px solid #c7cdd1; border-radius: 6px; margin-top: 12px; padding: 12px; }
-            QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; color: #e60013; }
-            QPushButton { background: #e60013; color: white; border: none; border-radius: 4px; padding: 8px 14px; font-weight: 600; }
-            QPushButton:hover { background: #b80010; }
-            QPushButton:disabled { background: #8b000b; color: #f3c7ca; }
-            QPushButton#primary_action { padding: 11px 20px; font-size: 14px; font-weight: 800; }
-            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: white; }
-            QDoubleSpinBox { padding: 5px; }
-            QTableWidget { background: white; border: 1px solid #c8d5d6; gridline-color: #dbe4e5; }
-            QHeaderView::section { background: #e4eeee; padding: 7px; border: none; font-weight: 600; }
-            QLabel#title { color: #e60013; font-size: 22px; font-weight: 700; }
-            QLabel#subtitle { color: #587073; }
-            QLabel#metric { color: #a6000d; font-size: 14px; font-weight: 700; }
-            QLabel#reading { color: #164e6b; font-size: 28px; font-weight: 800; }
-            QLabel#reading_channel { color: #587073; font-size: 16px; font-weight: 700; }
-            QLabel#reading_status { color: #587073; font-size: 16px; font-weight: 600; }
-            QLabel#button_title { color: white; font-size: 14px; font-weight: 800; }
-            QLabel#button_shortcut { color: #ffe8e8; font-size: 8px; font-weight: 500; }
-            """
-        )
+        self.setStyleSheet(self._theme_stylesheet(self.dark_mode_enabled))
 
         self.open_csv_action = QAction("Open CSV Run...", self)
         self.open_csv_action.triggered.connect(self.open_csv)
@@ -341,6 +381,11 @@ class MainWindow(QMainWindow):
         live_il_action = QAction("Live IL Reading...", self)
         live_il_action.triggered.connect(self.show_live_il_reading)
         tools_menu.addAction(live_il_action)
+        self.dark_mode_action = QAction("Dark Mode", self)
+        self.dark_mode_action.setCheckable(True)
+        self.dark_mode_action.setChecked(self.dark_mode_enabled)
+        self.dark_mode_action.triggered.connect(self.toggle_dark_mode)
+        tools_menu.addAction(self.dark_mode_action)
 
         lookup_folder_action = QAction("Part Number Lookup Folder...", self)
         lookup_folder_action.triggered.connect(self.choose_part_lookup_folder)
@@ -702,6 +747,22 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("Ready. Open a saved CSV run to begin.")
+
+    def _theme_stylesheet(self, dark_mode):
+        """Return the stylesheet for the selected application appearance."""
+        return DARK_STYLESHEET if dark_mode else LIGHT_STYLESHEET
+
+    def toggle_dark_mode(self, enabled):
+        """Apply and persist the operator's light/dark appearance choice."""
+        self.dark_mode_enabled = bool(enabled)
+        if hasattr(self, "dark_mode_action"):
+            self.dark_mode_action.setChecked(self.dark_mode_enabled)
+        self.settings.setValue("dark_mode", self.dark_mode_enabled)
+        self.setStyleSheet(self._theme_stylesheet(self.dark_mode_enabled))
+        self._refresh_reading_status_color()
+        self.statusBar().showMessage(
+            "Dark mode enabled." if self.dark_mode_enabled else "Light mode enabled."
+        )
 
     def open_csv(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -2282,6 +2343,21 @@ class MainWindow(QMainWindow):
         else:
             self.current_channel_label.setText("Channel: %d" % channel)
 
+    def _refresh_reading_status_color(self):
+        """Keep the live-reading status readable in either theme."""
+        if self.current_loss_1310 is None or self.current_loss_1550 is None:
+            color = "#b3bbc5" if self.dark_mode_enabled else "#587073"
+        else:
+            limit = self.limit_spin.value()
+            over_limit = (
+                self.current_loss_1310 > limit or self.current_loss_1550 > limit
+            )
+            if over_limit:
+                color = "#ff8f86" if self.dark_mode_enabled else "#a33b2f"
+            else:
+                color = "#72d19a" if self.dark_mode_enabled else "#28704a"
+        self.reading_status_label.setStyleSheet("color: %s;" % color)
+
     def clear_current_reading(self, channel=None, status="No reading yet"):
         """Clear stale values while optionally showing the routed channel."""
         self.set_current_reading_channel(channel)
@@ -2290,7 +2366,7 @@ class MainWindow(QMainWindow):
         self.demo_1310_label.setText("1310 nm: -")
         self.demo_1550_label.setText("1550 nm: -")
         self.reading_status_label.setText(status)
-        self.reading_status_label.setStyleSheet("color: #587073;")
+        self._refresh_reading_status_color()
 
     def refresh_current_reading(self):
         if self.current_loss_1310 is None or self.current_loss_1550 is None:
@@ -2307,9 +2383,7 @@ class MainWindow(QMainWindow):
         else:
             status = "Within configured limit"
         self.reading_status_label.setText(status)
-        self.reading_status_label.setStyleSheet(
-            "color: %s;" % ("#a33b2f" if flagged_1310 or flagged_1550 else "#28704a")
-        )
+        self._refresh_reading_status_color()
 
     def scroll_to_channel(self, channel):
         for row_index in range(self.table.rowCount()):
@@ -2391,7 +2465,9 @@ class MainWindow(QMainWindow):
                 if column == 0:
                     item.setTextAlignment(Qt.AlignCenter)
                 if flagged:
-                    item.setBackground(DANGER)
+                    item.setBackground(DARK_DANGER if self.dark_mode_enabled else DANGER)
+                    if self.dark_mode_enabled:
+                        item.setForeground(DARK_DANGER_TEXT)
                 self.table.setItem(row_index, column, item)
         self.table.resizeColumnsToContents()
 
