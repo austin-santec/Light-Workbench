@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from zipfile import ZipFile
 
 from openpyxl import Workbook, load_workbook
 
@@ -64,6 +65,38 @@ class CocExportTests(unittest.TestCase):
             second = export_coc(template, directory, [], "PART", "12345")
             self.assertEqual(first.name, "COC OSX-150 12345.xlsx")
             self.assertEqual(second.name, "COC OSX-150 12345 (2).xlsx")
+
+    def test_bundled_template_graphics_are_preserved(self):
+        template = (
+            Path(__file__).resolve().parents[1]
+            / "Templates"
+            / "OSX-100 Single Mode COC Template 1.xlsx"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = export_coc(template, directory, [], "PART", "12345")
+            with ZipFile(template) as template_zip, ZipFile(output) as output_zip:
+                for name in (
+                    "xl/media/image1.png",
+                    "xl/media/image2.png",
+                    "xl/drawings/drawing1.xml",
+                    "xl/drawings/_rels/drawing1.xml.rels",
+                ):
+                    self.assertIn(name, output_zip.namelist())
+                    self.assertEqual(template_zip.read(name), output_zip.read(name))
+                sheet_relationships = output_zip.read(
+                    "xl/worksheets/_rels/sheet2.xml.rels"
+                )
+                self.assertIn(b"relationships/drawing", sheet_relationships)
+                self.assertIn(b"../drawings/drawing1.xml", sheet_relationships)
+                sheet_xml = output_zip.read("xl/worksheets/sheet2.xml")
+                self.assertIn(b"<drawing ", sheet_xml)
+                self.assertIn(
+                    b'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"',
+                    sheet_xml,
+                )
+            workbook = load_workbook(output)
+            self.assertIn("OSX Template", workbook.sheetnames)
+            workbook.close()
 
     def test_finds_part_number_from_serial_folder(self):
         with tempfile.TemporaryDirectory() as directory:

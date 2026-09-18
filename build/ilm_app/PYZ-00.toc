@@ -1207,6 +1207,10 @@
   ('subprocess',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\subprocess.py',
    'PYMODULE'),
+  ('switch_timing',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\switch_timing.py',
+   'PYMODULE'),
   ('tarfile',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\tarfile.py',
    'PYMODULE'),

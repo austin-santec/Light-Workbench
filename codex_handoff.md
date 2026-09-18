@@ -22,7 +22,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current user-facing release is **Light Workbench 1.3.6**. The single
+The current user-facing release is **Light Workbench 1.5.1**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -40,8 +40,9 @@ The main window exposes this through `Help > About`.
 | app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
 | run_data.py | MeasurementRecord, RunData, CSV loading, over-limit filtering, and analysis counts. |
 | run_persistence.py | Modern atomic CSV/JSON persistence and accepted-attempt history for the desktop app. |
+| switch_timing.py | Real switch-test session timing; accumulates across continuation sessions and excludes Live IL/Red Light Test. |
 | replacement_analysis.py | Hardware-independent selection of worthwhile replacements and best remaining designated spares, including displaced production ports. |
-| coc_export.py | XLSX COC template export, merged-cell mapping, collision-safe filenames, and Main Board serial lookup. |
+| coc_export.py | XLSX COC template export, merged-cell mapping, collision-safe filenames, Main Board serial lookup, and preservation of embedded template graphics. |
 | ILMReadLoss.py | Older, still functional console workflow. Owns prompts, validation, calculations, legacy CSV naming/output, retests, and legacy replacement-port metadata. |
 | ilm_app.spec | PyInstaller one-folder build for ilm_app.py, including OP815M.dll. |
 | assets/Lulu - CandC.png | Bundled header logo displayed at a capped size so it does not increase the window layout height. |
@@ -111,9 +112,14 @@ short range.
    measures both wavelengths and emits reading_ready(channel, physical_port,
    loss_1310, loss_1550).
 7. The operator can read again or choose Write IL Values. The accepted value
-   replaces any existing row for that channel and is saved immediately.
-   `RunRecorder` defers creating the run folder and output files until the
-   first accepted measurement, so a zero-written run leaves no empty artifact.
+    replaces any existing row for that channel and is saved immediately.
+    `RunRecorder` defers creating the run folder and output files until the
+    first accepted measurement, so a zero-written run leaves no empty artifact.
+    `Change Channel...` can replace the current uncommitted step without
+    disconnecting the instruments. Manual-order runs reopen the channel picker;
+    ordered full passes ask whether to continue sequentially from the selected
+    channel or resume the interrupted channel. Existing saved data is preserved
+    until a replacement is written.
 8. On completion, stop, or hardware failure, the instruments are closed. Rows
    accepted before interruption remain persisted.
 9. Existing CSVs can be opened for analysis. The table highlights either
@@ -224,12 +230,17 @@ metadata in E-F:
 ### Modern desktop CSV/JSON (run_persistence.py)
 
 RunRecorder defaults to `Documents\ILM-Reads`. Each run is stored in a folder
-named `ILM-Run_YYMMDD_HHMM_[main board serial]-[switch serial]`; missing serials
-are omitted and unsafe filename characters are normalized. The Open Existing
-CSV dialog starts in this same default run folder, and File > Data Output Folder
-opens it directly. Each run writes output.csv
-plus run.json. Both are written through a temporary
+named `ILM-Run_YYMMDD_HHMMSS_[main board serial]-[switch serial]`; missing serials
+are omitted and unsafe filename characters are normalized. The run CSV uses the
+final folder name with a `.csv` extension. The Open Existing CSV dialog starts
+in this same default run folder, and File > Data Output Folder opens it directly.
+Each run writes same-named CSV and JSON files. Older runs using output.csv and
+run.json remain supported. Both are written through a temporary
 file and os.replace() so an accepted row is not lost to a partial write.
+Real switch runs add readable timing metadata for first start, latest stop,
+continuation times, session count, and accumulated duration; JSON also stores
+the individual session records. Live IL and Red Light Test do not affect these
+fields.
 The CSV remains compatible with load_run_csv; JSON contains the warning
 limit, metadata, current measurements, and an attempts list with timestamp,
 channel, physical port, losses, and retest flag.

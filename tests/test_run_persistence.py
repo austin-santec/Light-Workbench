@@ -7,14 +7,16 @@ from pathlib import Path
 from run_data import MeasurementRecord
 from run_persistence import (
     RunRecorder,
+    build_run_csv_path,
     build_run_directory_name,
+    find_run_json_path,
     load_run_json,
 )
 
 
 class RunPersistenceTests(unittest.TestCase):
     def test_run_directory_name_uses_optional_serials_in_requested_order(self):
-        now = datetime(2026, 9, 16, 11, 26)
+        now = datetime(2026, 9, 16, 11, 26, 53)
         self.assertEqual(
             build_run_directory_name(
                 {
@@ -23,19 +25,26 @@ class RunPersistenceTests(unittest.TestCase):
                 },
                 now,
             ),
-            "ILM-Run_260916_1126_17688-12345678901",
+            "ILM-Run_260916_112653_17688-12345678901",
         )
         self.assertEqual(
             build_run_directory_name({"Main board serial": "17688"}, now),
-            "ILM-Run_260916_1126_17688",
+            "ILM-Run_260916_112653_17688",
         )
         self.assertEqual(
             build_run_directory_name({"Switch serial": "SW/123"}, now),
-            "ILM-Run_260916_1126_SW-123",
+            "ILM-Run_260916_112653_SW-123",
         )
         self.assertEqual(
             build_run_directory_name({}, now),
-            "ILM-Run_260916_1126",
+            "ILM-Run_260916_112653",
+        )
+
+    def test_run_csv_uses_final_directory_name(self):
+        directory = Path("ILM-Run_260916_112653_test1-test1")
+        self.assertEqual(
+            build_run_csv_path(directory),
+            directory / "ILM-Run_260916_112653_test1-test1.csv",
         )
 
     def test_save_writes_csv_json_and_attempt_history(self):
@@ -81,7 +90,70 @@ class RunPersistenceTests(unittest.TestCase):
             recorder.save([MeasurementRecord(1, 1.5, 1.6, 1)])
             self.assertTrue(recorder.directory.is_dir())
             self.assertTrue(recorder.csv_path.is_file())
+            self.assertEqual(
+                recorder.csv_path.name,
+                "%s.csv" % recorder.directory.name,
+            )
+            self.assertEqual(
+                recorder.json_path.name,
+                "%s.json" % recorder.directory.name,
+            )
             self.assertTrue(recorder.json_path.is_file())
+
+    def test_existing_legacy_run_json_remains_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            csv_path = Path(directory) / "output.csv"
+            legacy_json_path = Path(directory) / "run.json"
+            csv_path.write_text("channel,1310 IL,1550 IL\n1,1.0,1.0\n", encoding="utf-8")
+            legacy_json_path.write_text("{}\n", encoding="utf-8")
+
+            self.assertEqual(find_run_json_path(csv_path), legacy_json_path)
+            recorder = RunRecorder.from_existing(csv_path)
+            self.assertEqual(recorder.json_path, legacy_json_path)
+
+    def test_rename_for_metadata_updates_run_files_and_coc(self):
+        with tempfile.TemporaryDirectory() as directory:
+            recorder = RunRecorder(
+                root=directory,
+                metadata={
+                    "Main board serial": "17688",
+                    "Switch serial": "12345",
+                    "COC output file": "COC OSX-150 17688.xlsx",
+                    "COC output path": "placeholder",
+                },
+            )
+            recorder.save([MeasurementRecord(1, 1.0, 1.1, 1)])
+            coc_path = recorder.directory / "COC OSX-150 17688.xlsx"
+            coc_path.write_bytes(b"test workbook")
+
+            original_timestamp = recorder.directory.name.split("_")[1:3]
+            updated_metadata = recorder.rename_for_metadata(
+                {
+                    "Main board serial": "17689",
+                    "Switch serial": "67890",
+                    "COC output file": "COC OSX-150 17688.xlsx",
+                    "COC output path": str(coc_path),
+                }
+            )
+
+            self.assertEqual(
+                recorder.directory.name,
+                "ILM-Run_%s_%s_17689-67890"
+                % (original_timestamp[0], original_timestamp[1]),
+            )
+            self.assertTrue(recorder.csv_path.is_file())
+            self.assertTrue(recorder.json_path.is_file())
+            self.assertTrue(
+                (recorder.directory / "COC OSX-150 17689.xlsx").is_file()
+            )
+            self.assertEqual(
+                updated_metadata["COC output file"],
+                "COC OSX-150 17689.xlsx",
+            )
+            self.assertEqual(
+                updated_metadata["COC output path"],
+                str(recorder.directory / "COC OSX-150 17689.xlsx"),
+            )
 
 
 if __name__ == "__main__":

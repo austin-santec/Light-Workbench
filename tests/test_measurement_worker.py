@@ -131,6 +131,87 @@ class MeasurementWorkerTests(unittest.TestCase):
         self.assertAlmostEqual(readings[-1][2], 1.92)
         self.assertAlmostEqual(readings[-1][3], 1.58)
 
+    def test_full_pass_can_resume_interrupted_channel_after_override(self):
+        meter = FakePowerMeter()
+        switch = FakeSwitch()
+        switch.configured_channel_count = lambda: 3
+        worker = MeasurementWorker(
+            meter,
+            switch,
+            None,
+            {1310: 0.72, 1550: 0.28},
+        )
+        routed_channels = []
+
+        def operator_required(channel, _port):
+            routed_channels.append(channel)
+            if channel == 2 and routed_channels.count(2) == 1:
+                worker.change_channel(1, True)
+            else:
+                worker.continue_current()
+
+        worker.operator_required.connect(operator_required)
+        worker.reading_ready.connect(lambda *_values: worker.write_current())
+
+        worker.run()
+
+        self.assertEqual(routed_channels, [1, 2, 1, 2, 3])
+        self.assertTrue(meter.closed)
+        self.assertTrue(switch.closed)
+
+    def test_full_pass_can_continue_sequentially_from_override(self):
+        meter = FakePowerMeter()
+        switch = FakeSwitch()
+        switch.configured_channel_count = lambda: 4
+        worker = MeasurementWorker(
+            meter,
+            switch,
+            None,
+            {1310: 0.72, 1550: 0.28},
+        )
+        routed_channels = []
+
+        def operator_required(channel, _port):
+            routed_channels.append(channel)
+            if channel == 2 and routed_channels.count(2) == 1:
+                worker.change_channel(4, False)
+            else:
+                worker.continue_current()
+
+        worker.operator_required.connect(operator_required)
+        worker.reading_ready.connect(lambda *_values: worker.write_current())
+
+        worker.run()
+
+        self.assertEqual(routed_channels, [1, 2, 4, 2, 3])
+
+    def test_existing_full_pass_retests_selected_start_then_skips_saved_channels(self):
+        meter = FakePowerMeter()
+        switch = FakeSwitch()
+        switch.configured_channel_count = lambda: 4
+        worker = MeasurementWorker(
+            meter,
+            switch,
+            None,
+            {1310: 0.72, 1550: 0.28},
+            existing_channels=[1, 2],
+            resume_existing=True,
+            resume_full_pass=True,
+        )
+        routed_channels = []
+
+        worker.continuation_selection_required.connect(
+            lambda _count, _completed, _default: worker.select_resume_channel(2)
+        )
+        worker.operator_required.connect(
+            lambda channel, _port: (routed_channels.append(channel), worker.continue_current())
+        )
+        worker.reading_ready.connect(lambda *_values: worker.write_current())
+
+        worker.run()
+
+        self.assertEqual(routed_channels, [2, 3, 4])
+
     def test_manual_channel_order_allows_repeated_channels(self):
         meter = FakePowerMeter()
         switch = FakeSwitch()

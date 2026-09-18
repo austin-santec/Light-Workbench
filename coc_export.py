@@ -1,11 +1,15 @@
 """Write completed or partial ILM runs into the XLSX COC template."""
 
 import os
+import posixpath
 import re
 import shutil
 import tempfile
 from datetime import date
 from pathlib import Path
+from copy import deepcopy
+from xml.etree import ElementTree
+from zipfile import ZIP_DEFLATED, ZipFile
 
 
 DEFAULT_PART_LOOKUP_ROOT = Path(
@@ -83,6 +87,182 @@ def _measurement_rows():
     return list(range(11, 56)) + list(range(67, 70))
 
 
+def _restore_template_drawings(template_path, output_path):
+    """Restore template drawings that openpyxl cannot round-trip reliably.
+
+    The COC template contains two anchored PNG graphics on the OSX Template
+    sheet. openpyxl preserves normal worksheet data but drops those drawing
+    package parts when saving. Merge the original drawing package back into
+    the edited workbook without replacing any edited worksheet XML.
+    """
+    relationships_namespace = "http://schemas.openxmlformats.org/package/2006/relationships"
+    office_relationships_namespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    content_types_namespace = "http://schemas.openxmlformats.org/package/2006/content-types"
+    drawing_relationship_type = (
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"
+    )
+
+    with ZipFile(template_path, "r") as template_zip:
+        template_names = set(template_zip.namelist())
+        drawing_parts = {
+            name
+            for name in template_names
+            if name.startswith("xl/drawings/") or name.startswith("xl/media/")
+        }
+        if not drawing_parts:
+            return
+
+        worksheet_drawings = []
+        for relationship_name in template_names:
+            if not relationship_name.startswith("xl/worksheets/_rels/"):
+                continue
+            if not relationship_name.endswith(".rels"):
+                continue
+            relationship_root = ElementTree.fromstring(
+                template_zip.read(relationship_name)
+            )
+            for relationship in relationship_root:
+                if relationship.get("Type") != drawing_relationship_type:
+                    continue
+                worksheet_filename = relationship_name.rsplit("/", 1)[1][:-5]
+                worksheet_name = "xl/worksheets/%s" % worksheet_filename
+                worksheet_drawings.append(
+                    (worksheet_name, relationship_name, relationship.get("Target"))
+                )
+
+        with ZipFile(output_path, "r") as output_zip:
+            output_names = set(output_zip.namelist())
+            replacement_names = set(drawing_parts)
+            replacement_names.add("[Content_Types].xml")
+            replacement_names.update(
+                relationship_name
+                for _, relationship_name, _ in worksheet_drawings
+            )
+            replacement_names.update(worksheet_name for worksheet_name, _, _ in worksheet_drawings)
+
+            output_content_types = ElementTree.fromstring(
+                output_zip.read("[Content_Types].xml")
+            )
+            template_content_types = ElementTree.fromstring(
+                template_zip.read("[Content_Types].xml")
+            )
+            existing_defaults = {
+                child.get("Extension")
+                for child in output_content_types
+                if child.tag.endswith("Default")
+            }
+            existing_overrides = {
+                child.get("PartName")
+                for child in output_content_types
+                if child.tag.endswith("Override")
+            }
+            for child in template_content_types:
+                if child.tag.endswith("Default"):
+                    if child.get("Extension") not in existing_defaults and child.get("Extension") == "png":
+                        output_content_types.append(deepcopy(child))
+                        existing_defaults.add(child.get("Extension"))
+                elif child.tag.endswith("Override"):
+                    part_name = child.get("PartName", "")
+                    if part_name.startswith("/xl/drawings/") and part_name not in existing_overrides:
+                        output_content_types.append(deepcopy(child))
+                        existing_overrides.add(part_name)
+            ElementTree.register_namespace("", content_types_namespace)
+            content_types_bytes = ElementTree.tostring(
+                output_content_types,
+                encoding="utf-8",
+                xml_declaration=True,
+            )
+
+            modified_worksheets = {}
+            modified_relationships = {}
+            for worksheet_name, relationship_name, target in worksheet_drawings:
+                worksheet_bytes = output_zip.read(worksheet_name)
+                relationship_bytes = output_zip.read(relationship_name) if relationship_name in output_names else None
+                if relationship_bytes:
+                    relationship_root = ElementTree.fromstring(relationship_bytes)
+                else:
+                    relationship_root = ElementTree.Element(
+                        "{%s}Relationships" % relationships_namespace
+                    )
+
+                drawing_relationship = next(
+                    (
+                        relationship
+                        for relationship in relationship_root
+                        if relationship.get("Type") == drawing_relationship_type
+                    ),
+                    None,
+                )
+                if drawing_relationship is None:
+                    used_ids = {
+                        relationship.get("Id")
+                        for relationship in relationship_root
+                    }
+                    relationship_id = "rId1"
+                    index = 1
+                    while relationship_id in used_ids:
+                        index += 1
+                        relationship_id = "rId%d" % index
+                    drawing_relationship = ElementTree.SubElement(
+                        relationship_root,
+                        "{%s}Relationship" % relationships_namespace,
+                        {
+                            "Id": relationship_id,
+                            "Type": drawing_relationship_type,
+                            "Target": target,
+                        },
+                    )
+                relationship_id = drawing_relationship.get("Id")
+                worksheet_text = worksheet_bytes.decode("utf-8")
+                if "<drawing " not in worksheet_text:
+                    if "xmlns:r=" not in worksheet_text:
+                        worksheet_text = worksheet_text.replace(
+                            "<worksheet ",
+                            '<worksheet xmlns:r="%s" ' % office_relationships_namespace,
+                            1,
+                        )
+                    worksheet_text = worksheet_text.replace(
+                        "</worksheet>",
+                        '<drawing r:id="%s"/></worksheet>' % relationship_id,
+                    )
+                modified_worksheets[worksheet_name] = worksheet_text.encode("utf-8")
+                ElementTree.register_namespace("", relationships_namespace)
+                modified_relationships[relationship_name] = ElementTree.tostring(
+                    relationship_root,
+                    encoding="utf-8",
+                    xml_declaration=True,
+                )
+
+            merge_tempfile = tempfile.NamedTemporaryFile(
+                prefix=".coc-merge-",
+                suffix=".xlsx",
+                dir=str(Path(output_path).parent),
+                delete=False,
+            )
+            merge_path = Path(merge_tempfile.name)
+            merge_tempfile.close()
+            try:
+                with ZipFile(merge_path, "w", ZIP_DEFLATED) as merged_zip:
+                    for item in output_zip.infolist():
+                        if item.filename in replacement_names:
+                            continue
+                        merged_zip.writestr(item, output_zip.read(item.filename))
+                    merged_zip.writestr("[Content_Types].xml", content_types_bytes)
+                    for name in drawing_parts:
+                        merged_zip.writestr(name, template_zip.read(name))
+                    for name, value in modified_worksheets.items():
+                        merged_zip.writestr(name, value)
+                    for name, value in modified_relationships.items():
+                        merged_zip.writestr(name, value)
+                # Windows cannot replace the original XLSX while the source
+                # ZipFile handle is still open.
+                output_zip.close()
+                os.replace(merge_path, output_path)
+            finally:
+                if merge_path.exists():
+                    merge_path.unlink()
+
+
 def export_coc(
     template_path,
     output_directory,
@@ -145,6 +325,7 @@ def export_coc(
         workbook.save(temporary_path)
         workbook.close()
         workbook = None
+        _restore_template_drawings(template, temporary_path)
         os.replace(temporary_path, output_path)
     finally:
         if workbook is not None:

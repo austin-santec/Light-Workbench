@@ -21,6 +21,7 @@ class RunData:
     attempts: list[dict] = field(default_factory=list)
     warning_limit: float | None = None
     replacement_analysis: dict | None = None
+    switch_test_sessions: list[dict] = field(default_factory=list)
 
     def over_limit(self, limit: float) -> list[MeasurementRecord]:
         """Return channels exceeding the limit at either wavelength."""

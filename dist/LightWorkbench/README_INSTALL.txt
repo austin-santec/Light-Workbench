@@ -61,7 +61,7 @@ not change run data or COC data, move switch channels, or turn on lasers.
 No Python installation is needed.
 
 Use Help > About inside the application to view the current
-version and project capabilities. The current release is Light Workbench 1.3.6.
+version and project capabilities. The current release is Light Workbench 1.5.1.
 
 
 3. VERIFY VISA
@@ -106,15 +106,26 @@ not record IL readings or create run/COC data.
 
 Accepted results are saved automatically under:
 
-  Documents\ILM-Reads\ILM-Run_YYMMDD_HHMM_[main board serial]-[switch serial]\
+  Documents\ILM-Reads\ILM-Run_YYMMDD_HHMMSS_[main board serial]-[switch serial]\
 
-Missing serial numbers are omitted. Each run contains output.csv and run.json.
+Missing serial numbers are omitted. Each run contains same-named CSV and JSON
+files. Older runs containing output.csv and run.json remain supported.
+
+When continuing a loaded run, the part number, Main Board serial, and Switch
+serial are restored into Hardware test setup. If they are corrected, the
+program asks whether to update the saved metadata and whether to rename the run
+folder, CSV/JSON files, and existing COC workbook. The original run timestamp
+is preserved and existing files are never overwritten.
+
+Real switch runs also record start time, stop time, continuation times, session
+count, and accumulated switch-test duration in the CSV metadata. Live IL and
+Red Light Test are not included in this timing.
 
 
 5. SAVED RUNS AND COC EXPORT
 ----------------------------
 
-Open Existing CSV starts in Documents\ILM-Reads. Select a run's output.csv to
+Open Existing CSV starts in Documents\ILM-Reads. Select a run's same-named CSV to
 review its readings, warning-limit analysis, retests, and replacement analysis.
 File > Data Output Folder opens the same Documents\ILM-Reads folder containing
 all saved run folders.
@@ -126,6 +137,7 @@ lookup, the computer must have access to:
   U:\Product Log\Units-COCs-Param Files\OSX-150
 
 If that network path is unavailable, enter the part number manually.
+The two graphics included in the COC template are preserved in exported files.
 
 
 6. COMMON PROBLEMS

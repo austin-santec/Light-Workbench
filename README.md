@@ -78,7 +78,7 @@ Updates` automatically refreshes both values without saving data and changes to
 | `assets/Lulu - CandC.png` | Compact header logo bundled with the desktop application |
 | `README_INSTALL.txt` | Light Workbench ZIP deployment, prerequisite, and quick-start instructions |
 | `Check Dependencies.cmd` | Optional launcher for the bundled dependency and connection report |
-| `IL-Reads/` | Automatically generated measurement-run folders; desktop runs use `ILM-Run_YYMMDD_HHMM_[main board serial]-[switch serial]` with missing serials omitted |
+| `IL-Reads/` | Automatically generated measurement-run folders; desktop runs use `ILM-Run_YYMMDD_HHMMSS_[main board serial]-[switch serial]` with missing serials omitted, and the CSV uses the same base name as its folder |
 | `tests/` | Hardware-free automated tests for the application and data models |
 
 The vendor `OP815M.dll` is not modified by this project. `power_meter.py`
@@ -95,7 +95,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the current release version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.3.6**.
+current Light Workbench release is version **1.5.1**.
 
 It can open an existing CSV, display both wavelength values, show recorded
 metadata, highlight channels over the configurable loss limit, and summarize
@@ -106,7 +106,7 @@ directly from PowerShell:
 py -3.11-32 ilm_app.py path\to\output.csv
 ```
 
-When `run.json` is beside the selected CSV, the viewer also restores the saved
+When the same-named JSON file is beside the selected CSV, the viewer also restores the saved
 warning limit and displays the number of retest attempts recorded for that run.
 
 Select one or more completed rows in the results table and choose `Retest
@@ -216,6 +216,7 @@ The first output is named `COC OSX-150 <Main Board serial>.xlsx` and is saved
 in the run folder. Existing files receive a numeric suffix instead of being
 overwritten. The original template is never modified. The COC export uses
 `openpyxl`, so Microsoft Excel is not required on the target computer.
+The template's embedded graphics are preserved in each exported workbook.
 
 The Hardware test setup includes a Part number field and a lookup button. The
 default lookup folder is
@@ -230,6 +231,18 @@ non-destructive report for bundled files, VISA, connected instruments, run
 folder permissions, the optional U: lookup path, and Santec Terminal status.
 Its timestamp and computer name are diagnostic-only and are never added to run
 metadata or COC exports.
+
+When continuing a loaded run, Light Workbench loads its part number and both
+serial fields back into Hardware test setup. If those values are corrected,
+the program asks whether to update the saved metadata and whether to rename the
+run folder, same-named CSV/JSON files, and existing COC workbook. Renaming
+preserves the original run timestamp, avoids overwriting an existing run, and
+updates the COC filename to the new Main Board serial.
+
+Real switch runs also record their first start time, latest stop time,
+continuation timestamps, session count, and accumulated switch-test duration in
+CSV metadata. The structured JSON stores each session separately. Live IL and
+Red Light Test activity is intentionally excluded.
 
 ## Requirements
 
@@ -326,11 +339,17 @@ Then follow these steps:
 8. Move the cable to the channel shown in the prompt and press Enter.
 9. Review the displayed 1310 nm and 1550 nm insertion losses.
 10. Press Enter to accept the reading, write it to the CSV, and continue. To
-   clean the connection and try again, enter `-` and press Enter; the rejected
-   values are not saved and the switch stays on the same channel.
+    clean the connection and try again, enter `-` and press Enter; the rejected
+    values are not saved and the switch stays on the same channel.
 11. After all selected channels are complete, enter any completed channels or
-   ranges to retest, or press Enter to finish. Accepted retest readings
-   replace the earlier row for that channel in the CSV.
+    ranges to retest, or press Enter to finish. Accepted retest readings
+    replace the earlier row for that channel in the CSV.
+
+During an active run, `Change Channel...` can replace the current uncommitted
+step without disconnecting the instruments. Manual-order runs reopen the channel
+selector. Ordered full passes also ask whether to continue sequentially from the
+new channel or resume the interrupted channel afterward. Previously saved data
+is preserved until a replacement reading is written.
 
 At a reference prompt, pressing Enter without typing a number uses the default
 shown in square brackets. Entering the actual references for the current setup
@@ -409,8 +428,9 @@ hyphens in the folder and CSV names. The original serial entry is preserved in
 the metadata table.
 
 The current desktop GUI stores runs under `Documents\ILM-Reads` using folders
-named `ILM-Run_YYMMDD_HHMM_[main board serial]-[switch serial]`. Missing serials
-are omitted, and the Open Existing CSV dialog starts in this same folder. The
+named `ILM-Run_YYMMDD_HHMMSS_[main board serial]-[switch serial]`. Missing serials
+are omitted, and the run CSV uses the final folder name with a `.csv` extension.
+The Open Existing CSV dialog starts in this same folder. The
 File > Data Output Folder menu item opens this folder directly. The legacy
 console workflow above retains its separate naming convention.
 

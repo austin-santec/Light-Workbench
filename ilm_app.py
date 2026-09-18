@@ -52,7 +52,12 @@ from PyQt5.QtWidgets import (
 from measurement_worker import MeasurementWorker
 from osx150_driver import OSX150
 from power_meter import SantecPowerMeter, SimulatedPowerMeter
-from run_persistence import DEFAULT_RUN_ROOT, RunRecorder, load_run_json
+from run_persistence import (
+    DEFAULT_RUN_ROOT,
+    RunRecorder,
+    find_run_json_path,
+    load_run_json,
+)
 from run_data import MeasurementRecord, RunData, load_run_csv
 from replacement_analysis import (
     ReplacementReading,
@@ -70,6 +75,7 @@ from dependency_check import DependencyReport, collect_dependency_report
 from red_light_test import RedLightTestDialog
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION, about_text
 from live_il_reading import LiveILReadingDialog, LiveILReadingWorker
+from switch_timing import SwitchTestTimer
 
 
 ACCENT = "#e60013"
@@ -264,6 +270,9 @@ class MainWindow(QMainWindow):
         self.hardware_pending_channel = None
         self.hardware_pending_physical_port = None
         self.hardware_manual_channel_order = False
+        self.hardware_full_pass = False
+        self.hardware_configured_channel_count = None
+        self.switch_test_timer = None
         self.displayed_records = []
         self.settings = QSettings("Light Workbench", "LightWorkbench")
         self._migrate_legacy_settings()
@@ -503,6 +512,16 @@ class MainWindow(QMainWindow):
         measurement_controls_layout.addWidget(self.write_hardware_button)
         controls_layout.addLayout(measurement_controls_layout)
 
+        self.change_hardware_channel_button = QPushButton("Change Channel...")
+        self.change_hardware_channel_button.setToolTip(
+            "Change the channel being measured without stopping the run."
+        )
+        self.change_hardware_channel_button.setEnabled(False)
+        self.change_hardware_channel_button.clicked.connect(
+            self.change_hardware_channel
+        )
+        controls_layout.addWidget(self.change_hardware_channel_button)
+
         self.retest_button = QPushButton("Retest selected")
         self.retest_button.setToolTip("Retest the selected completed channels.")
         self.retest_button.setEnabled(False)
@@ -522,6 +541,7 @@ class MainWindow(QMainWindow):
             self.start_hardware_button,
             self.continue_hardware_button,
             self.write_hardware_button,
+            self.change_hardware_channel_button,
             self.stop_hardware_button,
             self.retest_button,
             self.write_coc_button,
@@ -941,12 +961,19 @@ class MainWindow(QMainWindow):
         self.run_data = run_data
         self.run_recorder = None
         self.replacement_analysis = None
+        self.switch_test_timer = None
         self.clear_current_reading()
         self.file_label.setText(str(path))
         self.metadata_labels["Source file"].setText(path.name)
         self.hardware_part_number.setText(run_data.metadata.get("Part number", ""))
         self.hardware_main_board_serial.setText(
             run_data.metadata.get("Main board serial", "")
+        )
+        self.hardware_switch_serial.setText(
+            run_data.metadata.get(
+                "Switch serial",
+                run_data.metadata.get("Switch serial (last 5 digits)", ""),
+            )
         )
         self.metadata_labels["Part number"].setText(
             run_data.metadata.get("Part number", "Not recorded")
@@ -957,12 +984,18 @@ class MainWindow(QMainWindow):
                 value = run_data.metadata.get("Switch serial (last 5 digits)")
             self.metadata_labels[key].setText(value or "Not recorded")
         self.metadata_labels["Retest attempts"].setText("Not recorded")
-        json_path = path.with_name("run.json")
+        json_path = find_run_json_path(path)
         if json_path.is_file():
             try:
                 payload = load_run_json(json_path)
                 run_data.attempts = payload.get("attempts", [])
                 run_data.replacement_analysis = payload.get("replacement_analysis")
+                switch_test_sessions = payload.get("switch_test_sessions", [])
+                run_data.switch_test_sessions = (
+                    switch_test_sessions
+                    if isinstance(switch_test_sessions, list)
+                    else []
+                )
                 self.replacement_analysis = run_data.replacement_analysis
                 physical_ports = {
                     int(item["channel"]): item.get("physical_port")
@@ -989,6 +1022,28 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(
                     "Loaded CSV; the companion run.json could not be read."
                 )
+        for metadata_key, reference_spin in (
+            ("1310 reference dBm", self.reference_1310_spin),
+            ("1550 reference dBm", self.reference_1550_spin),
+        ):
+            try:
+                if metadata_key in run_data.metadata:
+                    reference_spin.setValue(float(run_data.metadata[metadata_key]))
+            except (TypeError, ValueError):
+                pass
+        self.run_recorder = RunRecorder.from_existing(
+            path,
+            metadata=run_data.metadata,
+            limit=self.limit_spin.value(),
+            attempts=run_data.attempts,
+            replacement_analysis=run_data.replacement_analysis,
+            switch_test_sessions=run_data.switch_test_sessions,
+        )
+        run_data.source_path = self.run_recorder.csv_path
+        self.switch_test_timer = SwitchTestTimer(
+            run_data.metadata,
+            run_data.switch_test_sessions,
+        )
         self.refresh_analysis()
         self.refresh_replacement_summary()
         self.statusBar().showMessage("Loaded %d measurements." % len(run_data.measurements))
@@ -1036,6 +1091,7 @@ class MainWindow(QMainWindow):
         )
         self.replacement_analysis = None
         self.run_data.replacement_analysis = None
+        self.switch_test_timer = None
         self.run_data.source_path = self.run_recorder.csv_path
         self.file_label.setText(str(self.run_recorder.csv_path))
         self.metadata_labels["Main board serial"].setText("SIMULATED")
@@ -1166,6 +1222,150 @@ class MainWindow(QMainWindow):
         self.retest_button.setEnabled(True)
         self.statusBar().showMessage("Selected simulation channels retested and saved.")
 
+    def choose_hardware_run_mode(self):
+        """Ask whether Start Run should continue or replace the loaded run."""
+        choice = QMessageBox(self)
+        choice.setWindowTitle("Choose run mode")
+        choice.setText("A run is already loaded or paused.")
+        choice.setInformativeText(
+            "Continue editing that run, or start a separate new run?"
+        )
+        continue_button = choice.addButton(
+            "Continue/Edit Current Run",
+            QMessageBox.AcceptRole,
+        )
+        new_button = choice.addButton("Start New Run", QMessageBox.ActionRole)
+        cancel_button = choice.addButton(QMessageBox.Cancel)
+        choice.setDefaultButton(continue_button)
+        choice.exec_()
+        clicked_button = choice.clickedButton()
+        if clicked_button == continue_button:
+            return "continue"
+        if clicked_button == new_button:
+            return "new"
+        if clicked_button == cancel_button:
+            return None
+        return None
+
+    def _current_hardware_identity(self):
+        """Return the editable identity fields used to name a hardware run."""
+        return {
+            "Part number": self.hardware_part_number.text().strip(),
+            "Main board serial": self.hardware_main_board_serial.text().strip(),
+            "Switch serial": self.hardware_switch_serial.text().strip(),
+        }
+
+    def _restore_hardware_identity(self, metadata):
+        """Restore loaded identity values after declining an update."""
+        self.hardware_part_number.setText(metadata.get("Part number", ""))
+        self.hardware_main_board_serial.setText(
+            metadata.get("Main board serial", "")
+        )
+        self.hardware_switch_serial.setText(
+            metadata.get(
+                "Switch serial",
+                metadata.get("Switch serial (last 5 digits)", ""),
+            )
+        )
+
+    def confirm_existing_run_identity(self):
+        """Offer to update a loaded run's identity before continuing it."""
+        if self.run_data is None:
+            return True
+
+        saved_identity = {
+            key: self.run_data.metadata.get(key, "")
+            for key in ("Part number", "Main board serial", "Switch serial")
+        }
+        current_identity = self._current_hardware_identity()
+        changed = [
+            key
+            for key in saved_identity
+            if str(saved_identity[key] or "").strip()
+            != str(current_identity[key] or "").strip()
+        ]
+        if not changed:
+            return True
+
+        changed_text = ", ".join(changed)
+        choice = QMessageBox(self)
+        choice.setWindowTitle("Update loaded run information?")
+        choice.setText("The loaded run information has changed.")
+        choice.setInformativeText(
+            "Changed fields: %s\n\nUpdate the saved run before continuing?"
+            % changed_text
+        )
+        update_button = choice.addButton(
+            "Update Saved Information",
+            QMessageBox.AcceptRole,
+        )
+        keep_button = choice.addButton(
+            "Keep Saved Information",
+            QMessageBox.DestructiveRole,
+        )
+        cancel_button = choice.addButton(QMessageBox.Cancel)
+        choice.setDefaultButton(update_button)
+        choice.exec_()
+        clicked_button = choice.clickedButton()
+        if clicked_button == cancel_button:
+            return False
+        if clicked_button == keep_button:
+            self._restore_hardware_identity(saved_identity)
+            return True
+
+        rename_files = QMessageBox.question(
+            self,
+            "Rename run files?",
+            "Rename the run folder, CSV, JSON, and COC workbook to match the "
+            "updated serial numbers?\n\n"
+            "The original run timestamp will be preserved.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        new_metadata = dict(self.run_data.metadata)
+        new_metadata.update(current_identity)
+        try:
+            if rename_files == QMessageBox.Yes:
+                if self.run_recorder is None:
+                    self.run_recorder = RunRecorder.from_existing(
+                        self.run_data.source_path,
+                        metadata=self.run_data.metadata,
+                        limit=self.limit_spin.value(),
+                        attempts=self.run_data.attempts,
+                        replacement_analysis=self.run_data.replacement_analysis,
+                    )
+                new_metadata = self.run_recorder.rename_for_metadata(new_metadata)
+                self.run_data.source_path = self.run_recorder.csv_path
+            else:
+                self.run_data.metadata = new_metadata
+                self.persist_run_metadata()
+        except (OSError, ValueError, TypeError) as error:
+            QMessageBox.critical(
+                self,
+                "Could not update run information",
+                str(error),
+            )
+            return False
+
+        self.run_data.metadata = new_metadata
+        if self.run_recorder is not None:
+            self.run_recorder.metadata = dict(new_metadata)
+        self.file_label.setText(str(self.run_data.source_path))
+        self.metadata_labels["Source file"].setText(self.run_data.source_path.name)
+        self.metadata_labels["Part number"].setText(
+            new_metadata.get("Part number") or "Not recorded"
+        )
+        self.metadata_labels["Main board serial"].setText(
+            new_metadata.get("Main board serial") or "Not recorded"
+        )
+        self.metadata_labels["Switch serial"].setText(
+            new_metadata.get("Switch serial") or "Not recorded"
+        )
+        if rename_files == QMessageBox.Yes:
+            self.persist_run_metadata()
+        self.statusBar().showMessage("Loaded run information updated.")
+        return True
+
     def start_hardware(self, channels=None, retest=False):
         if self.hardware_thread is not None:
             return
@@ -1180,11 +1380,22 @@ class MainWindow(QMainWindow):
         if confirmation != QMessageBox.Yes:
             return
 
+        run_mode = "new"
+        if not retest and self.run_data is not None:
+            run_mode = self.choose_hardware_run_mode()
+            if run_mode is None:
+                return
+            if run_mode == "continue" and not self.confirm_existing_run_identity():
+                return
+
         manual_channel_order = False
+        full_pass = False
+        continuing_existing = run_mode == "continue"
         if not retest:
             try:
                 if self.hardware_channel_mode.currentIndex() == 0:
                     channels = None
+                    full_pass = True
                     manual_channel_order = (
                         self.manual_channel_order_checkbox.isChecked()
                     )
@@ -1207,7 +1418,9 @@ class MainWindow(QMainWindow):
 
         self.hardware_retest = retest
         self.hardware_manual_channel_order = manual_channel_order
-        if not retest:
+        self.hardware_full_pass = full_pass
+        self.hardware_configured_channel_count = None
+        if not retest and run_mode == "new":
             self.run_data = RunData(
                 Path("Hardware run"),
                 [],
@@ -1225,10 +1438,34 @@ class MainWindow(QMainWindow):
                 metadata=self.run_data.metadata,
                 limit=self.limit_spin.value(),
             )
+            self.switch_test_timer = SwitchTestTimer(
+                self.run_data.metadata,
+                self.run_data.switch_test_sessions,
+            )
             self.replacement_analysis = None
             self.run_data.replacement_analysis = None
             self.run_data.source_path = self.run_recorder.csv_path
-        self.file_label.setText("Hardware run - not yet saved")
+        elif not retest:
+            if self.run_recorder is None:
+                self.run_recorder = RunRecorder.from_existing(
+                    self.run_data.source_path,
+                    metadata=self.run_data.metadata,
+                    limit=self.limit_spin.value(),
+                    attempts=self.run_data.attempts,
+                    replacement_analysis=self.run_data.replacement_analysis,
+                    switch_test_sessions=self.run_data.switch_test_sessions,
+                )
+            self.run_data.source_path = self.run_recorder.csv_path
+            self.replacement_analysis = self.run_data.replacement_analysis
+
+        if continuing_existing:
+            self.file_label.setText(str(self.run_data.source_path))
+            self.metadata_labels["Source file"].setText(
+                self.run_data.source_path.name
+            )
+        else:
+            self.file_label.setText("Hardware run - not yet saved")
+            self.metadata_labels["Source file"].setText("Hardware run")
         self.metadata_labels["Part number"].setText(
             self.run_data.metadata.get("Part number", "Not recorded")
         )
@@ -1241,7 +1478,6 @@ class MainWindow(QMainWindow):
         self.metadata_labels["Operating band"].setText(
             self.run_data.metadata.get("Operating band", "O band")
         )
-        self.metadata_labels["Source file"].setText("Hardware run")
         self.refresh_analysis()
 
         self.hardware_thread = QThread(self)
@@ -1254,11 +1490,26 @@ class MainWindow(QMainWindow):
                 1550: self.reference_1550_spin.value(),
             },
             manual_channel_order=manual_channel_order,
+            existing_channels=(
+                [record.channel for record in self.run_data.measurements]
+                if continuing_existing
+                else None
+            ),
+            resume_existing=continuing_existing,
+            resume_full_pass=(
+                continuing_existing and full_pass and not manual_channel_order
+            ),
         )
         self.hardware_worker.moveToThread(self.hardware_thread)
         self.hardware_thread.started.connect(self.hardware_worker.run)
         self.hardware_worker.channel_selection_required.connect(
             self.hardware_channel_selection_required
+        )
+        self.hardware_worker.continuation_selection_required.connect(
+            self.hardware_continuation_selection_required
+        )
+        self.hardware_worker.channel_configuration_ready.connect(
+            self.hardware_channel_configuration_ready
         )
         self.hardware_worker.operator_required.connect(self.hardware_operator_required)
         self.hardware_worker.reading_ready.connect(self.hardware_reading_ready)
@@ -1275,9 +1526,70 @@ class MainWindow(QMainWindow):
         self.set_open_csv_available(False)
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(False)
         self.retest_button.setEnabled(False)
         self.statusBar().showMessage("Starting hardware run...")
+        self.begin_switch_test_session()
         self.hardware_thread.start()
+
+    def begin_switch_test_session(self):
+        """Start timing one real switch-test session."""
+        if self.run_data is None:
+            return
+        if (
+            self.switch_test_timer is None
+            or self.switch_test_timer.metadata is not self.run_data.metadata
+        ):
+            self.switch_test_timer = SwitchTestTimer(
+                self.run_data.metadata,
+                self.run_data.switch_test_sessions,
+            )
+        self.switch_test_timer.start_session()
+        self.run_data.switch_test_sessions = self.switch_test_timer.sessions
+        self.persist_run_metadata()
+
+    def finish_switch_test_session(self):
+        """Stop timing the current real switch-test session and save it."""
+        if self.switch_test_timer is None or not self.switch_test_timer.active:
+            return
+        self.switch_test_timer.stop_session()
+        self.run_data.switch_test_sessions = self.switch_test_timer.sessions
+        try:
+            self.persist_run_metadata()
+        except (OSError, ValueError, TypeError) as error:
+            self.statusBar().showMessage(
+                "Switch timing updated in memory but could not be saved: %s" % error
+            )
+
+    def hardware_channel_configuration_ready(self, channel_count):
+        self.hardware_configured_channel_count = int(channel_count)
+
+    def hardware_continuation_selection_required(
+        self,
+        channel_count,
+        completed_channels,
+        default_channel,
+    ):
+        """Choose where a loaded full-pass run should resume."""
+        if self.hardware_worker is None:
+            return
+        channel, accepted = QInputDialog.getInt(
+            self,
+            "Continue Existing Run",
+            (
+                "%d of %d channels already have saved readings.\n"
+                "Choose the first channel to measure or retest:"
+                % (len(completed_channels), channel_count)
+            ),
+            default_channel,
+            1,
+            channel_count,
+            1,
+        )
+        if accepted:
+            self.hardware_worker.select_resume_channel(channel)
+        else:
+            self.hardware_worker.stop()
 
     def hardware_channel_selection_required(self, channel_count, completed_channels):
         """Ask for the next channel during an optional manual-order pass."""
@@ -1314,6 +1626,66 @@ class MainWindow(QMainWindow):
         else:
             self.hardware_worker.stop()
 
+    def change_hardware_channel(self):
+        """Replace the current uncommitted hardware step with another channel."""
+        if self.hardware_worker is None:
+            return
+
+        maximum_channel = self.hardware_configured_channel_count or 256
+        current_channel = self.hardware_pending_channel or 1
+        channel, accepted = QInputDialog.getInt(
+            self,
+            "Change Channel",
+            "Enter the channel to measure next:",
+            current_channel,
+            1,
+            maximum_channel,
+            1,
+        )
+        if not accepted:
+            return
+
+        resume_interrupted = False
+        if self.hardware_full_pass and not self.hardware_manual_channel_order:
+            choice = QMessageBox(self)
+            choice.setWindowTitle("After the channel change")
+            choice.setText(
+                "After channel %d is written, how should the full pass continue?"
+                % channel
+            )
+            choice.setInformativeText(
+                "Continue sequentially from the selected channel, or return to "
+                "the channel that was interrupted?"
+            )
+            sequential_button = choice.addButton(
+                "Continue sequentially",
+                QMessageBox.AcceptRole,
+            )
+            resume_button = choice.addButton(
+                "Resume interrupted channel",
+                QMessageBox.ActionRole,
+            )
+            cancel_button = choice.addButton(QMessageBox.Cancel)
+            choice.setDefaultButton(sequential_button)
+            choice.exec_()
+            clicked_button = choice.clickedButton()
+            if clicked_button is None or clicked_button == cancel_button:
+                return
+            resume_interrupted = clicked_button == resume_button
+
+        self.hardware_pending_reading = None
+        self.hardware_pending_channel = None
+        self.hardware_pending_physical_port = None
+        self.continue_hardware_button.setEnabled(False)
+        self.write_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(False)
+        self.clear_current_reading(channel, "Changing to channel %d..." % channel)
+        self.refresh_table()
+        self.demo_channel_label.setText(
+            "Changing to channel %d without stopping the run" % channel
+        )
+        self.hardware_worker.change_channel(channel, resume_interrupted)
+
     def hardware_operator_required(self, channel, physical_port):
         self.hardware_pending_channel = channel
         self.hardware_pending_physical_port = physical_port
@@ -1321,6 +1693,7 @@ class MainWindow(QMainWindow):
         self.clear_current_reading(channel, "Move cable, then read values")
         self.continue_hardware_button.setEnabled(True)
         self.write_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(True)
         self.refresh_table()
         self.demo_channel_label.setText(
             "Channel %d routed to physical port %d - move cable, then read"
@@ -1330,6 +1703,7 @@ class MainWindow(QMainWindow):
     def continue_hardware(self):
         if self.hardware_worker is not None:
             self.continue_hardware_button.setEnabled(False)
+            self.change_hardware_channel_button.setEnabled(False)
             if self.hardware_pending_reading is None:
                 self.hardware_worker.continue_current()
             else:
@@ -1339,6 +1713,7 @@ class MainWindow(QMainWindow):
         if self.hardware_worker is not None and self.hardware_pending_reading is not None:
             self.commit_hardware_reading()
             self.write_hardware_button.setEnabled(False)
+            self.change_hardware_channel_button.setEnabled(False)
             self.hardware_worker.write_current()
 
     def commit_hardware_reading(self):
@@ -1476,6 +1851,7 @@ class MainWindow(QMainWindow):
         self.demo_1550_label.setText("1550 nm: %.4f dB" % loss_1550)
         self.continue_hardware_button.setEnabled(True)
         self.write_hardware_button.setEnabled(True)
+        self.change_hardware_channel_button.setEnabled(True)
         self.demo_channel_label.setText(
             "Channel %d measured - read again or write values" % channel
         )
@@ -1494,24 +1870,30 @@ class MainWindow(QMainWindow):
             )
 
     def hardware_completed(self):
+        self.finish_switch_test_session()
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(False)
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(True)
         self.statusBar().showMessage("Hardware run complete. CSV and JSON are saved.")
         QTimer.singleShot(0, self.offer_coc_export)
 
     def hardware_stopped(self):
+        self.finish_switch_test_session()
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(False)
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(bool(self.run_data and self.run_data.measurements))
         self.statusBar().showMessage("Hardware run stopped. Completed readings remain visible.")
         QTimer.singleShot(0, self.offer_coc_export)
 
     def hardware_failed(self, message):
+        self.finish_switch_test_session()
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(False)
         self.stop_hardware_button.setEnabled(False)
         QMessageBox.critical(self, "Hardware run stopped", message)
         QTimer.singleShot(0, self.offer_coc_export)
@@ -1521,6 +1903,9 @@ class MainWindow(QMainWindow):
             self.hardware_worker.stop()
 
     def hardware_thread_finished(self):
+        # This is a fallback for shutdown paths where the worker's queued
+        # stopped/failed signal cannot be delivered before the thread closes.
+        self.finish_switch_test_session()
         if self.hardware_thread is not None:
             self.hardware_thread.deleteLater()
         if self.hardware_worker is not None:
@@ -1528,6 +1913,7 @@ class MainWindow(QMainWindow):
         self.hardware_thread = None
         self.hardware_worker = None
         self.start_hardware_button.setEnabled(True)
+        self.change_hardware_channel_button.setEnabled(False)
         self.set_open_csv_available(True)
 
     def set_open_csv_available(self, available):
@@ -1542,6 +1928,7 @@ class MainWindow(QMainWindow):
             self.hardware_worker.stop()
             self.hardware_thread.quit()
             self.hardware_thread.wait(5000)
+            self.finish_switch_test_session()
         event.accept()
 
     def refresh_analysis(self):
@@ -1756,12 +2143,16 @@ class MainWindow(QMainWindow):
                 limit=self.limit_spin.value(),
                 attempts=self.run_data.attempts,
                 replacement_analysis=self.run_data.replacement_analysis,
+                switch_test_sessions=self.run_data.switch_test_sessions,
             )
         else:
             self.run_recorder.metadata = dict(self.run_data.metadata)
             self.run_recorder.limit = self.limit_spin.value()
             self.run_recorder.attempts = list(self.run_data.attempts)
             self.run_recorder.replacement_analysis = self.run_data.replacement_analysis
+            self.run_recorder.switch_test_sessions = list(
+                self.run_data.switch_test_sessions
+            )
         self.run_recorder.save(self.run_data.measurements)
 
     def write_coc(self):
