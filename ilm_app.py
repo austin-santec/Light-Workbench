@@ -88,6 +88,13 @@ FILTER_ANY_OVER_LIMIT = 2
 FILTER_1310_OVER_LIMIT = 3
 FILTER_1550_OVER_LIMIT = 4
 FILTER_BOTH_OVER_LIMIT = 5
+STANDARD_PART_NUMBERS = [
+    "OSX-150-1A-008-09-FA-00B-1H",
+    "OSX-150-1A-012-09-FA-00B-2HD",
+    "OSX-150-1A-016-PM-FA-00B-2H",
+    "OSX-150-1A-048-09-FA-00B-3H",
+    "OSX-150-1A-036-09-FA-00B-2H",
+]
 
 
 def parse_hardware_channels(value):
@@ -419,8 +426,16 @@ class MainWindow(QMainWindow):
         self.hardware_channel_ranges.setPlaceholderText("Example: 1, 9, 10-15, 27")
         hardware_setup_layout.addWidget(self.hardware_channel_ranges, 1, 1, 1, 3)
         hardware_setup_layout.addWidget(QLabel("Part number:"), 2, 0)
-        self.hardware_part_number = QLineEdit()
-        self.hardware_part_number.setPlaceholderText("Lookup or enter part number")
+        self.hardware_part_number = QComboBox()
+        self.hardware_part_number.setEditable(True)
+        self.hardware_part_number.addItems(STANDARD_PART_NUMBERS)
+        self.hardware_part_number.setCurrentIndex(-1)
+        self.hardware_part_number.lineEdit().setPlaceholderText(
+            "Type, select, or look up part number"
+        )
+        self.hardware_part_number.setToolTip(
+            "Type a part number, choose a standard part number, or use lookup."
+        )
         hardware_setup_layout.addWidget(self.hardware_part_number, 2, 1)
         self.lookup_part_number_button = QPushButton("Lookup Part Number")
         self.lookup_part_number_button.clicked.connect(self.lookup_part_number)
@@ -432,7 +447,9 @@ class MainWindow(QMainWindow):
         self.hardware_switch_serial = QLineEdit()
         hardware_setup_layout.addWidget(self.hardware_switch_serial, 3, 3)
         hardware_setup_layout.addWidget(QLabel("Operating band:"), 4, 0)
-        self.hardware_operating_band = QLineEdit("O band")
+        self.hardware_operating_band = QComboBox()
+        self.hardware_operating_band.addItems(["O band", "C band"])
+        self.hardware_operating_band.setCurrentText("O band")
         hardware_setup_layout.addWidget(self.hardware_operating_band, 4, 1)
         hardware_setup_layout.addWidget(QLabel("1310 ref:"), 4, 2)
         self.reference_1310_spin = QDoubleSpinBox()
@@ -520,13 +537,22 @@ class MainWindow(QMainWindow):
         self.change_hardware_channel_button.clicked.connect(
             self.change_hardware_channel
         )
-        controls_layout.addWidget(self.change_hardware_channel_button)
 
         self.retest_button = QPushButton("Retest selected")
         self.retest_button.setToolTip("Retest the selected completed channels.")
         self.retest_button.setEnabled(False)
         self.retest_button.clicked.connect(self.retest_selected)
-        controls_layout.addWidget(self.retest_button)
+
+        # Keep channel navigation actions together beneath the primary
+        # measurement buttons.  Change Channel keeps the compact height of a
+        # normal control button while matching the primary button width. Keep
+        # Retest selected fixed as well so it does not stretch across the row.
+        channel_controls_layout = QHBoxLayout()
+        self.change_hardware_channel_button.setFixedWidth(125)
+        self.retest_button.setFixedWidth(125)
+        channel_controls_layout.addWidget(self.change_hardware_channel_button)
+        channel_controls_layout.addWidget(self.retest_button)
+        controls_layout.addLayout(channel_controls_layout)
         self.demo_channel_label = QLabel("No hardware run active")
         self.demo_channel_label.setWordWrap(True)
         # Retain the internal status target for existing run updates, but keep
@@ -922,7 +948,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Part number lookup", str(error))
             return
 
-        self.hardware_part_number.setText(part_number)
+        self.hardware_part_number.setCurrentText(part_number)
         self.metadata_labels["Part number"].setText(part_number)
         if self.run_data is not None:
             self.run_data.metadata["Part number"] = part_number
@@ -965,7 +991,9 @@ class MainWindow(QMainWindow):
         self.clear_current_reading()
         self.file_label.setText(str(path))
         self.metadata_labels["Source file"].setText(path.name)
-        self.hardware_part_number.setText(run_data.metadata.get("Part number", ""))
+        self.hardware_part_number.setCurrentText(
+            run_data.metadata.get("Part number", "")
+        )
         self.hardware_main_board_serial.setText(
             run_data.metadata.get("Main board serial", "")
         )
@@ -975,6 +1003,10 @@ class MainWindow(QMainWindow):
                 run_data.metadata.get("Switch serial (last 5 digits)", ""),
             )
         )
+        operating_band = run_data.metadata.get("Operating band", "O band")
+        if self.hardware_operating_band.findText(operating_band) < 0:
+            operating_band = "O band"
+        self.hardware_operating_band.setCurrentText(operating_band)
         self.metadata_labels["Part number"].setText(
             run_data.metadata.get("Part number", "Not recorded")
         )
@@ -1250,14 +1282,15 @@ class MainWindow(QMainWindow):
     def _current_hardware_identity(self):
         """Return the editable identity fields used to name a hardware run."""
         return {
-            "Part number": self.hardware_part_number.text().strip(),
+            "Part number": self.hardware_part_number.currentText().strip(),
             "Main board serial": self.hardware_main_board_serial.text().strip(),
             "Switch serial": self.hardware_switch_serial.text().strip(),
+            "Operating band": self.hardware_operating_band.currentText().strip(),
         }
 
     def _restore_hardware_identity(self, metadata):
         """Restore loaded identity values after declining an update."""
-        self.hardware_part_number.setText(metadata.get("Part number", ""))
+        self.hardware_part_number.setCurrentText(metadata.get("Part number", ""))
         self.hardware_main_board_serial.setText(
             metadata.get("Main board serial", "")
         )
@@ -1267,6 +1300,10 @@ class MainWindow(QMainWindow):
                 metadata.get("Switch serial (last 5 digits)", ""),
             )
         )
+        operating_band = metadata.get("Operating band", "O band")
+        if self.hardware_operating_band.findText(operating_band) < 0:
+            operating_band = "O band"
+        self.hardware_operating_band.setCurrentText(operating_band)
 
     def confirm_existing_run_identity(self):
         """Offer to update a loaded run's identity before continuing it."""
@@ -1275,7 +1312,12 @@ class MainWindow(QMainWindow):
 
         saved_identity = {
             key: self.run_data.metadata.get(key, "")
-            for key in ("Part number", "Main board serial", "Switch serial")
+            for key in (
+                "Part number",
+                "Main board serial",
+                "Switch serial",
+                "Operating band",
+            )
         }
         current_identity = self._current_hardware_identity()
         changed = [
@@ -1313,15 +1355,22 @@ class MainWindow(QMainWindow):
             self._restore_hardware_identity(saved_identity)
             return True
 
-        rename_files = QMessageBox.question(
-            self,
-            "Rename run files?",
-            "Rename the run folder, CSV, JSON, and COC workbook to match the "
-            "updated serial numbers?\n\n"
-            "The original run timestamp will be preserved.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+        serials_changed = any(
+            str(saved_identity[key] or "").strip()
+            != str(current_identity[key] or "").strip()
+            for key in ("Main board serial", "Switch serial")
         )
+        rename_files = QMessageBox.No
+        if serials_changed:
+            rename_files = QMessageBox.question(
+                self,
+                "Rename run files?",
+                "Rename the run folder, CSV, JSON, and COC workbook to match "
+                "the updated serial numbers?\n\n"
+                "The original run timestamp will be preserved.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
         new_metadata = dict(self.run_data.metadata)
         new_metadata.update(current_identity)
         try:
@@ -1426,10 +1475,10 @@ class MainWindow(QMainWindow):
                 [],
                 {
                     "Mode": "Real hardware",
-                    "Part number": self.hardware_part_number.text().strip(),
+                    "Part number": self.hardware_part_number.currentText().strip(),
                     "Main board serial": self.hardware_main_board_serial.text().strip(),
                     "Switch serial": self.hardware_switch_serial.text().strip(),
-                    "Operating band": self.hardware_operating_band.text().strip() or "O band",
+                    "Operating band": self.hardware_operating_band.currentText().strip() or "O band",
                     "1310 reference dBm": "%.2f" % self.reference_1310_spin.value(),
                     "1550 reference dBm": "%.2f" % self.reference_1550_spin.value(),
                 },
@@ -2164,7 +2213,7 @@ class MainWindow(QMainWindow):
         serial = self.hardware_main_board_serial.text().strip()
         if not serial:
             serial = self.run_data.metadata.get("Main board serial", "").strip()
-        part_number = self.hardware_part_number.text().strip()
+        part_number = self.hardware_part_number.currentText().strip()
         if not part_number:
             part_number = self.run_data.metadata.get("Part number", "").strip()
         if not part_number and serial:
@@ -2174,7 +2223,7 @@ class MainWindow(QMainWindow):
             )
             try:
                 part_number = find_part_number(serial, lookup_root)
-                self.hardware_part_number.setText(part_number)
+                self.hardware_part_number.setCurrentText(part_number)
             except (OSError, LookupError, ValueError):
                 pass
 
@@ -2209,7 +2258,7 @@ class MainWindow(QMainWindow):
                     "COC template": str(template),
                 }
             )
-            self.hardware_part_number.setText(part_number)
+            self.hardware_part_number.setCurrentText(part_number)
             self.hardware_main_board_serial.setText(normalise_serial(serial))
             self.metadata_labels["Part number"].setText(part_number)
             self.metadata_labels["Main board serial"].setText(normalise_serial(serial))

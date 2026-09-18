@@ -95,7 +95,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the current release version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.5.1**.
+current Light Workbench release is version **1.6.1**.
 
 It can open an existing CSV, display both wavelength values, show recorded
 metadata, highlight channels over the configurable loss limit, and summarize
@@ -225,6 +225,9 @@ as `17688`, the lookup finds a directory beginning with
 `SN17688_` and uses the remainder of that directory name as the part number.
 The lookup folder can be changed from `File > Part Number Lookup Folder...`,
 and the part number can always be entered manually.
+The Part number field is also an editable drop-down containing the current
+standard OSX-150 part numbers. Operating band is selected from `O band` or
+`C band`.
 
 The packaged ZIP includes `Check Dependencies.cmd`, which launches a
 non-destructive report for bundled files, VISA, connected instruments, run

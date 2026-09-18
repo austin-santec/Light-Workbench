@@ -12,7 +12,13 @@ from PyQt5.QtCore import QEventLoop, QTimer, Qt
 from PyQt5.QtTest import QTest
 
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
-from ilm_app import AboutDialog, DEFAULT_RUN_ROOT, MainWindow, format_channel_summary
+from ilm_app import (
+    AboutDialog,
+    DEFAULT_RUN_ROOT,
+    MainWindow,
+    STANDARD_PART_NUMBERS,
+    format_channel_summary,
+)
 from run_data import MeasurementRecord, RunData
 
 
@@ -280,6 +286,40 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(window.hardware_switch_serial.text(), serial)
         self.assertEqual(window.metadata_labels["Switch serial"].text(), "-")
         window.close()
+
+    def test_part_number_and_operating_band_controls_support_selection_and_typing(self):
+        window = MainWindow()
+        try:
+            self.assertEqual(
+                [
+                    window.hardware_part_number.itemText(index)
+                    for index in range(window.hardware_part_number.count())
+                ],
+                STANDARD_PART_NUMBERS,
+            )
+            self.assertTrue(window.hardware_part_number.isEditable())
+            window.hardware_part_number.setEditText("CUSTOM-PART-NUMBER")
+            self.assertEqual(
+                window.hardware_part_number.currentText(),
+                "CUSTOM-PART-NUMBER",
+            )
+            window.hardware_part_number.setCurrentText(STANDARD_PART_NUMBERS[2])
+            self.assertEqual(
+                window.hardware_part_number.currentText(),
+                STANDARD_PART_NUMBERS[2],
+            )
+            self.assertFalse(window.hardware_operating_band.isEditable())
+            self.assertEqual(
+                [
+                    window.hardware_operating_band.itemText(index)
+                    for index in range(window.hardware_operating_band.count())
+                ],
+                ["O band", "C band"],
+            )
+            window.hardware_operating_band.setCurrentText("C band")
+            self.assertEqual(window.hardware_operating_band.currentText(), "C band")
+        finally:
+            window.close()
 
     def test_current_readings_share_the_top_row_with_hardware_controls(self):
         window = MainWindow()

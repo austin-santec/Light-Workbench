@@ -61,7 +61,7 @@ not change run data or COC data, move switch channels, or turn on lasers.
 No Python installation is needed.
 
 Use Help > About inside the application to view the current
-version and project capabilities. The current release is Light Workbench 1.5.1.
+version and project capabilities. The current release is Light Workbench 1.6.1.
 
 
 3. VERIFY VISA
@@ -138,6 +138,8 @@ lookup, the computer must have access to:
 
 If that network path is unavailable, enter the part number manually.
 The two graphics included in the COC template are preserved in exported files.
+Hardware test setup also provides an editable standard-part-number list and an
+O band/C band operating-band selector.
 
 
 6. COMMON PROBLEMS
