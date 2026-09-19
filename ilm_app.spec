@@ -22,6 +22,10 @@ a = Analysis(
             str(project_root / "assets" / "Lulu - C&C-white_square.ico"),
             "assets",
         ),
+        (
+            str(project_root / "ILM_READING_GUIDE.html"),
+            ".",
+        ),
     ],
     hiddenimports=["PyQt5.sip", "pyvisa"],
     hookspath=[],

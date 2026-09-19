@@ -343,7 +343,7 @@ class MainWindow(QMainWindow):
         self._migrate_legacy_settings()
         self.dark_mode_enabled = self.settings.value(
             "dark_mode",
-            False,
+            True,
             type=bool,
         )
         self.continue_shortcut = None
@@ -400,6 +400,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction("Exit", self.close)
 
         help_menu = self.menuBar().addMenu("Help")
+        instructions_action = QAction("IL Instructions", self)
+        instructions_action.triggered.connect(self.show_il_instructions)
+        help_menu.addAction(instructions_action)
         about_action = QAction("About", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
@@ -815,6 +818,33 @@ class MainWindow(QMainWindow):
     def show_about(self):
         """Show the current Light Workbench version and capabilities."""
         AboutDialog(self).exec_()
+
+    def show_il_instructions(self):
+        """Open the bundled IL operator guide in the system web browser."""
+        guide_roots = [Path(__file__).resolve().parent]
+        if getattr(sys, "_MEIPASS", None):
+            guide_roots.insert(0, Path(sys._MEIPASS))
+        guide_path = next(
+            (
+                root_path / "ILM_READING_GUIDE.html"
+                for root_path in guide_roots
+                if (root_path / "ILM_READING_GUIDE.html").is_file()
+            ),
+            None,
+        )
+        if guide_path is None:
+            QMessageBox.warning(
+                self,
+                "IL Instructions",
+                "The IL instruction guide could not be found.",
+            )
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(guide_path))):
+            QMessageBox.warning(
+                self,
+                "IL Instructions",
+                "Could not open the IL instruction guide in a web browser.",
+            )
 
     def show_red_light_test(self):
         """Open the red-light test setup without connecting automatically."""

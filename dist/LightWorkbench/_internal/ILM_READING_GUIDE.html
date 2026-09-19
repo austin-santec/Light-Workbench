@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Light Workbench - IL Reading Guide</title>
+  <style>
+    :root {
+      --red: #e60013;
+      --red-dark: #8b000b;
+      --red-soft: #ff6670;
+      --bg: #202124;
+      --panel: #2b2e33;
+      --panel-2: #373a40;
+      --border: #4a4f57;
+      --text: #e8eaed;
+      --muted: #b3bbc5;
+      --blue: #8bc9ee;
+      --green: #72d19a;
+      --warning-bg: #5b1f25;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.55 "Segoe UI", Arial, sans-serif;
+    }
+    .page { max-width: 1080px; margin: 0 auto; padding: 28px 24px 56px; }
+    header {
+      border-bottom: 2px solid var(--red);
+      padding: 12px 0 22px;
+      margin-bottom: 24px;
+    }
+    .brand { color: var(--red); font-size: 31px; font-weight: 800; margin: 0; }
+    .tagline { color: var(--muted); margin: 4px 0 0; }
+    h2 { color: var(--red); font-size: 22px; margin: 34px 0 12px; }
+    h3 { color: var(--blue); font-size: 18px; margin: 22px 0 7px; }
+    p { margin: 8px 0 12px; }
+    a { color: var(--blue); }
+    .notice, .tip, .warning {
+      border-left: 4px solid var(--red);
+      background: var(--panel);
+      border-radius: 6px;
+      padding: 14px 17px;
+      margin: 14px 0;
+    }
+    .tip { border-left-color: var(--green); }
+    .warning { border-left-color: #ff9b8f; background: var(--warning-bg); }
+    .notice strong, .tip strong, .warning strong { color: white; }
+
+    .screen-map {
+      display: grid;
+      grid-template-columns: 1.45fr .95fr .95fr;
+      gap: 10px;
+      margin: 18px 0;
+    }
+    .map-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px;
+      min-height: 116px;
+    }
+    .map-card h3 { margin: 0 0 8px; color: var(--red); font-size: 16px; }
+    .map-card ul { margin: 0; padding-left: 20px; color: var(--muted); }
+
+    .steps { counter-reset: step; list-style: none; padding: 0; margin: 12px 0; }
+    .steps li {
+      counter-increment: step;
+      position: relative;
+      padding: 10px 12px 10px 52px;
+      margin: 8px 0;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 14px;
+      top: 10px;
+      width: 25px;
+      height: 25px;
+      line-height: 25px;
+      border-radius: 50%;
+      background: var(--red);
+      color: white;
+      text-align: center;
+      font-weight: 800;
+    }
+    .steps strong, th { color: white; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; }
+    th, td { border: 1px solid var(--border); padding: 9px 11px; vertical-align: top; text-align: left; }
+    th { background: #3a3e45; }
+    td { background: var(--panel); }
+    td:first-child { color: var(--blue); font-weight: 700; white-space: nowrap; }
+    code, kbd {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      color: #ffd7d7;
+      font-family: Consolas, monospace;
+    }
+    .workflow-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .workflow-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 15px;
+    }
+    .workflow-card h3 { margin-top: 0; }
+    .button {
+      display: inline-block;
+      background: var(--red);
+      color: white;
+      border-radius: 4px;
+      padding: 3px 8px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .button.disabled { background: var(--red-dark); color: #f3c7ca; }
+    .cheat-sheet {
+      background: #17181a;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      color: #f4f5f6;
+      font: 14px/1.55 Consolas, monospace;
+      user-select: all;
+    }
+    footer { color: var(--muted); border-top: 1px solid var(--border); margin-top: 36px; padding-top: 16px; font-size: 13px; }
+    @media (max-width: 760px) {
+      .page { padding: 20px 14px 40px; }
+      .screen-map, .workflow-grid { grid-template-columns: 1fr; }
+      td:first-child { white-space: normal; }
+    }
+    @media print {
+      body { background: white; color: #111; }
+      .page { max-width: none; padding: 0; }
+      .map-card, .workflow-card, td, .steps li, .notice, .tip, .warning { background: white; color: #111; border-color: #aaa; }
+      h2, h3, .brand, .map-card h3, td:first-child { color: #b0000e; }
+      th { background: #eee; color: #111; }
+      .cheat-sheet { background: #f5f5f5; color: #111; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <h1 class="brand">Light Workbench</h1>
+      <p class="tagline">ILM insertion-loss testing guide</p>
+    </header>
+
+    <div class="notice">
+      <strong>Scope:</strong> This guide covers the normal hardware IL-reading workflow using the ILM/OP815 and switch. It does not cover the Red Light Test, Live IL Reading, or Repeatability Test tools.
+    </div>
+
+    <h2>1. Understand the main screen</h2>
+    <div class="screen-map">
+      <section class="map-card">
+        <h3>Hardware test setup</h3>
+        <ul>
+          <li>Choose the channels and test mode.</li>
+          <li>Enter identifying information.</li>
+          <li>Set or calculate the 1310/1550 references.</li>
+        </ul>
+      </section>
+      <section class="map-card">
+        <h3>Hardware controls</h3>
+        <ul>
+          <li>Start and stop the run.</li>
+          <li>Read, review, and write IL values.</li>
+          <li>Change channel or retest.</li>
+        </ul>
+      </section>
+      <section class="map-card">
+        <h3>Current readings</h3>
+        <ul>
+          <li>Shows the active channel.</li>
+          <li>Shows 1310 nm and 1550 nm IL.</li>
+          <li>Shows the next operator action.</li>
+        </ul>
+      </section>
+    </div>
+
+    <h2>2. Prepare the test</h2>
+    <ol class="steps">
+      <li><strong>Connect the equipment.</strong> Connect the ILM/OP815, the switch, and the fiber/cable arrangement required for the test. Make sure the approved USB driver and VISA setup are installed on the computer. If needed, use <strong>Tools &gt; Check Dependencies...</strong> before starting.</li>
+      <li><strong>Open Light Workbench.</strong> Confirm that no other hardware run is active. The program normally opens in dark mode, but the appearance does not change the test process.</li>
+      <li><strong>Enter identifying information.</strong> Enter the part number, main board serial, and switch serial when available. The part number may be typed, selected from the list, or found with <strong>Lookup Part Number</strong> after entering the main board serial.</li>
+      <li><strong>Select the operating band.</strong> Choose <code>O band</code> or <code>C band</code>. This is recorded with the run.</li>
+      <li><strong>Set the warning limit.</strong> The Analysis panel defaults to <code>2.0000 dB</code>. Change it if your test standard requires another limit. This limit flags and filters results; it does not prevent a reading from being written.</li>
+    </ol>
+
+    <h2>3. Calculate the reference</h2>
+    <div class="tip">
+      <strong>Recommended practice:</strong> Calculate the reference before every new switch test, using the normal reference connection for your station. New reference fields start at <code>0.00 dBm</code> so the operator deliberately performs this step.
+    </div>
+    <ol class="steps">
+      <li>Connect the reference path/cable used by your test procedure. Make sure the reference condition is stable before starting.</li>
+      <li>Confirm the 1310 nm and 1550 nm reference fields are at the intended starting values, normally <code>0.00 dBm</code>.</li>
+      <li>Click <span class="button">Calculate Reference</span>. A progress window appears while Light Workbench connects to the ILM and takes the reference measurement.</li>
+      <li>Wait for the calculation to finish. The two reference fields are updated automatically, the progress window closes, and the ILM remote connection is released.</li>
+      <li>Do not calculate a reference while a hardware run is active. If the reference must be changed, stop the run first.</li>
+    </ol>
+    <div class="warning"><strong>Important:</strong> If the calculated values look unreasonable, stop and verify the reference connection, fiber seating, wavelength setup, and ILM state before testing the switch.</div>
+
+    <h2>4. Choose the channel plan</h2>
+    <table>
+      <thead><tr><th>Control</th><th>Use</th></tr></thead>
+      <tbody>
+        <tr><td>Full configured pass</td><td>Normal mode. Light Workbench steps through the configured channel count in order and asks you to move the cable as needed.</td></tr>
+        <tr><td>Channel only</td><td>Tests one selected channel. The channel field appears when this mode is selected.</td></tr>
+        <tr><td>Channels / range</td><td>Tests a selected list or range, such as <code>1, 3, 7-10</code>. The range field appears when this mode is selected.</td></tr>
+        <tr><td>Choose channel order manually</td><td>Optional full-pass mode for scattered hardware. The program asks which channel to test next. Repeating a channel writes a replacement reading over the previous table value while retaining the attempt history.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>5. Run the IL test</h2>
+    <ol class="steps">
+      <li><strong>Click Start Run.</strong> Confirm the hardware warning. Light Workbench connects to the OP815 and switch. In a full pass, it routes the first channel and displays a prompt such as <code>Move cable, then read values</code>.</li>
+      <li><strong>Move the physical cable.</strong> Connect the cable to the channel/port shown in Current readings. Confirm the channel number before measuring.</li>
+      <li><strong>Click Read IL.</strong> The button reads both wavelengths and displays them in Current readings. The keyboard shortcut is shown under the button; by default it is <kbd>Return</kbd>.</li>
+      <li><strong>Review the values.</strong> Confirm the channel, 1310 nm value, and 1550 nm value. Reading again is safe and does not write to the table. Use this if the cable was not seated correctly or you want to verify a result.</li>
+      <li><strong>Click Write IL.</strong> When the reading is acceptable, click <span class="button">Write IL</span> or press its displayed shortcut, normally <kbd>+</kbd>. This commits the result to the table and run files, then advances the test.</li>
+      <li><strong>Repeat.</strong> Move the cable to the next requested channel and repeat the Read IL / review / Write IL sequence until the pass is complete.</li>
+    </ol>
+    <div class="tip"><strong>Remember:</strong> <span class="button">Read IL</span> measures only. <span class="button">Write IL</span> saves and advances. If you read a value too early, simply read again before writing.</div>
+
+    <h2>6. Correct the channel or retest</h2>
+    <div class="workflow-grid">
+      <section class="workflow-card">
+        <h3>Change Channel...</h3>
+        <p>Use this during an active run when the next physical cable/channel is not the one currently shown.</p>
+        <ol>
+          <li>Click <span class="button">Change Channel...</span>.</li>
+          <li>Enter the channel number and confirm.</li>
+          <li>Move the cable to the newly requested channel.</li>
+          <li>Read and write the value normally.</li>
+        </ol>
+        <p>In a sequential full pass, the program asks whether to continue from the selected channel or resume the interrupted channel afterward.</p>
+      </section>
+      <section class="workflow-card">
+        <h3>Retest selected</h3>
+        <p>Use this after readings have been written:</p>
+        <ol>
+          <li>Select one or more rows in the results table.</li>
+          <li>Click <span class="button">Retest selected</span>.</li>
+          <li>Move the cable when prompted, then Read IL and Write IL.</li>
+        </ol>
+        <p>The latest accepted value replaces the displayed/table value. Earlier attempts remain available in the JSON history.</p>
+      </section>
+    </div>
+
+    <h2>7. Read the table and analysis</h2>
+    <table>
+      <thead><tr><th>Area</th><th>What it tells you</th></tr></thead>
+      <tbody>
+        <tr><td>Current readings</td><td>The channel currently being measured and its 1310/1550 nm IL values. A value shown here is not saved until Write IL is used.</td></tr>
+        <tr><td>Results table</td><td>Saved readings, one row per logical channel. Red/pink rows indicate that at least one wavelength exceeds the warning limit.</td></tr>
+        <tr><td>Show readings</td><td>Filters the visible table to all channels, within limit, any over limit, 1310 over, 1550 over, or both over. Filtering does not interrupt a run or change saved data.</td></tr>
+        <tr><td>Analysis</td><td>Shows the total channel count and over-limit channel lists. For example, <code>2 (3, 7)</code> means two channels—3 and 7—exceeded the limit.</td></tr>
+        <tr><td>Select Over-Limit</td><td>Selects all currently displayed channels that exceed the warning limit so they can be retested together.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>8. Finish and find the results</h2>
+    <ol class="steps">
+      <li><strong>Finish the pass or click Stop run.</strong> Completed written readings remain visible if the run is stopped early.</li>
+      <li><strong>Use the output files.</strong> Each saved run is stored under the configured IL-Reads output folder. The folder name includes the run date/time and available serial numbers. The CSV contains the table data and metadata; the same-named JSON contains run details and attempt history.</li>
+      <li><strong>Continue later if needed.</strong> Load the existing CSV with <strong>File &gt; Open CSV Run...</strong> or the top-right button, then click Start Run. Choose to continue the loaded run when prompted.</li>
+      <li><strong>Optional COC.</strong> After a completed or stopped run, the program may offer to write a COC. This is separate from saving the IL measurements and can be skipped if not needed.</li>
+    </ol>
+
+    <h2>Quick operator checklist</h2>
+    <div class="cheat-sheet">1. Connect ILM/OP815, switch, and test cable.
+2. Enter part number and serial information.
+3. Select O band or C band.
+4. Calculate Reference with the normal reference connection.
+5. Choose the channel mode.
+6. Click Start Run and confirm the hardware prompt.
+7. Move cable to the displayed channel.
+8. Read IL (Return) and review both wavelengths.
+9. Read again if needed; nothing is saved yet.
+10. Write IL (+) to save and advance.
+11. Repeat until finished.
+12. Use Change Channel or Retest selected when necessary.
+13. Check the table filters and Analysis panel.
+14. Stop/finish the run and confirm the CSV/JSON output.</div>
+
+    <footer>
+      Light Workbench IL Reading Guide · Use the software's current on-screen prompts if they differ from this document.
+    </footer>
+  </main>
+</body>
+</html>

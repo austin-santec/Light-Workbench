@@ -127,7 +127,22 @@ class MainWindowTests(unittest.TestCase):
                 "Dark Mode",
             ],
         )
-        self.assertEqual([action.text() for action in menus["Help"].actions()], ["About"])
+        self.assertEqual(
+            [action.text() for action in menus["Help"].actions()],
+            ["IL Instructions", "About"],
+        )
+        window.close()
+
+    def test_il_instructions_opens_the_bundled_guide(self):
+        window = MainWindow()
+        with patch(
+            "ilm_app.QDesktopServices.openUrl", return_value=True
+        ) as open_url:
+            window.show_il_instructions()
+
+        opened_path = Path(open_url.call_args.args[0].toLocalFile())
+        self.assertEqual(opened_path.name, "ILM_READING_GUIDE.html")
+        self.assertTrue(opened_path.is_file())
         window.close()
 
     def test_dark_mode_is_checkable_and_preserves_red_accent(self):

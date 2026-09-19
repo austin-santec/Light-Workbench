@@ -58,10 +58,13 @@ The ZIP also includes Check Dependencies.cmd. Run it on a new computer for a
 quick diagnostic report before attempting a hardware test. The checker does
 not change run data or COC data, move switch channels, or turn on lasers.
 
+Open ILM_READING_GUIDE.html in any web browser for the operator's ILM testing
+instructions. It is a self-contained guide and does not require internet access.
+
 No Python installation is needed.
 
 Use Help > About inside the application to view the current
-version and project capabilities. The current release is Light Workbench 1.6.2.
+version and project capabilities. The current release is Light Workbench 1.6.4.
 
 
 3. VERIFY VISA

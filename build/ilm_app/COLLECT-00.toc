@@ -1,4 +1,8 @@
-([('LightWorkbench.exe',
+([('ILM_READING_GUIDE.html',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ILM_READING_GUIDE.html',
+   'DATA'),
+  ('LightWorkbench.exe',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\build\\ilm_app\\LightWorkbench.exe',
    'EXECUTABLE'),

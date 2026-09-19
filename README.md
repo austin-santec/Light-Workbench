@@ -78,6 +78,7 @@ Updates` automatically refreshes both values without saving data and changes to
 | `assets/Lulu - CandC.png` | Compact header logo bundled with the desktop application |
 | `README_INSTALL.txt` | Light Workbench ZIP deployment, prerequisite, and quick-start instructions |
 | `Check Dependencies.cmd` | Optional launcher for the bundled dependency and connection report |
+| `ILM_READING_GUIDE.html` | Browser-based operator guide for the hardware IL-reading workflow |
 | `IL-Reads/` | Automatically generated measurement-run folders; desktop runs use `ILM-Run_YYMMDD_HHMMSS_[main board serial]-[switch serial]` with missing serials omitted, and the CSV uses the same base name as its folder |
 | `tests/` | Hardware-free automated tests for the application and data models |
 
@@ -95,11 +96,15 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the current release version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.6.2**.
+current Light Workbench release is version **1.6.4**.
+
+Use `Help > IL Instructions` to open the bundled browser-based operator guide
+for the hardware IL-reading workflow.
 
 Use `Tools > Dark Mode` to switch between the light and dark application
-themes. The preference is saved for the next launch; the red operator-action
-accent remains the same in both themes.
+themes. New installations start in dark mode, and the last selected theme is
+saved for the next launch. The red operator-action accent remains the same in
+both themes.
 
 It can open an existing CSV, display both wavelength values, show recorded
 metadata, highlight channels over the configurable loss limit, and summarize
