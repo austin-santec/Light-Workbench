@@ -270,6 +270,7 @@ def export_coc(
     part_number,
     main_board_serial,
     export_date=None,
+    tested_by="",
 ):
     """Create a COC XLSX copy while preserving all non-output template cells."""
     try:
@@ -311,6 +312,7 @@ def export_coc(
         sheet["B4"] = part_number
         sheet["D4"] = serial
         sheet["F4"] = export_date or date.today()
+        sheet["G4"] = str(tested_by or "").strip()
 
         records_by_channel = {
             record.channel: record

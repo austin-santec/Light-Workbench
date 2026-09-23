@@ -71,7 +71,7 @@ class RedLightTestDialog(QDialog):
 
         self.selected_channel_label = QLabel("Selected channel: -")
         self.selected_channel_label.setStyleSheet(
-            "font-size: 18px; font-weight: 700; color: #164e6b;"
+            "font-size: 20px; font-weight: 700; color: #164e6b;"
         )
         layout.addWidget(self.selected_channel_label)
         self.status_label = QLabel("Not started. Click Start Red Light Test to connect.")
@@ -180,4 +180,3 @@ class RedLightTestDialog(QDialog):
         self._close_switch()
         self.started = False
         event.accept()
-

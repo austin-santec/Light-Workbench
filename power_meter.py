@@ -6,28 +6,13 @@ small application-facing contract without requiring hardware.
 """
 
 from collections.abc import Iterable, Mapping
-from typing import Protocol
 
-from op815_driver import OP815, WAVELENGTHS_NM
-
-
-class PowerMeter(Protocol):
-    """Application-facing contract for an ILM power meter."""
-
-    description: str | None
-    usb_serial: str | None
-
-    def connect(self) -> None:
-        """Connect to the meter and prepare it for measurements."""
-
-    def measure_both_wavelengths(self) -> Mapping[int, float]:
-        """Return absolute dBm readings keyed by wavelength in nanometers."""
-
-    def measure_reference_wavelengths(self) -> Mapping[int, float]:
-        """Return one stabilized absolute reading per wavelength for calibration."""
-
-    def close(self) -> None:
-        """Stop measurement activity and release the meter."""
+from hardware.interfaces import (
+    WAVELENGTHS_NM,
+    PowerMeter,
+    validate_wavelength_readings,
+)
+from op815_driver import OP815
 
 
 class SantecPowerMeter:
@@ -43,6 +28,10 @@ class SantecPowerMeter:
     @property
     def usb_serial(self):
         return self._driver.usb_serial
+
+    def find_devices(self):
+        """List connected OP815 meters without opening remote mode."""
+        return self._driver.find_devices()
 
     def connect(self):
         self._driver.connect()
@@ -87,12 +76,7 @@ class SimulatedPowerMeter:
                 raise RuntimeError("The simulated power meter has no readings.")
             reading = self._last_reading
 
-        missing_wavelengths = set(WAVELENGTHS_NM) - set(reading)
-        if missing_wavelengths:
-            raise ValueError(
-                "Simulated reading is missing wavelength(s): %s"
-                % ", ".join(str(wavelength) for wavelength in sorted(missing_wavelengths))
-            )
+        validate_wavelength_readings(reading, WAVELENGTHS_NM)
 
         self._last_reading = dict(reading)
         return dict(self._last_reading)

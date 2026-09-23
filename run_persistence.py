@@ -13,6 +13,30 @@ from run_data import MeasurementRecord, RunData
 DEFAULT_RUN_ROOT = Path.home() / "Documents" / "ILM-Reads"
 
 
+def _run_metadata(metadata):
+    """Keep CSV/JSON metadata focused on settings for this test run."""
+    excluded_exact = {
+        "1310 reference dBm",
+        "1550 reference dBm",
+        "Retest attempts",
+        "Completed replacements",
+        "Designated spare ports",
+    }
+    excluded_prefixes = (
+        "Replacement ",
+        "Required replacement recommendation ",
+        "Optional replacement recommendation ",
+        "Recommended designated spare",
+        "Completed replacement ",
+    )
+    return {
+        key: value
+        for key, value in metadata.items()
+        if key not in excluded_exact
+        and not key.startswith(excluded_prefixes)
+    }
+
+
 def _safe_serial_component(value):
     """Make an entered serial safe to use as one Windows path component."""
     value = str(value or "").strip()
@@ -98,24 +122,36 @@ def find_run_json_path(csv_path):
 
 
 class RunRecorder:
-    """Write the current results and every accepted attempt to disk."""
+    """Write the current table and run-level timing metadata to disk."""
 
-    def __init__(self, root: str | Path | None = None, metadata=None, limit=2.0):
+    def __init__(
+        self,
+        root: str | Path | None = None,
+        metadata=None,
+        limit=2.0,
+        directory: str | Path | None = None,
+    ):
         self.metadata = dict(metadata or {})
         self.limit = float(limit)
-        self.root_path = Path(root) if root is not None else DEFAULT_RUN_ROOT
-        base_name = build_run_directory_name(self.metadata)
-        directory = self.root_path / base_name
-        suffix = 2
-        while directory.exists():
-            directory = self.root_path / ("%s-%d" % (base_name, suffix))
-            suffix += 1
-        self.directory = directory
+        self._fixed_directory = directory is not None
+        if directory is not None:
+            self.directory = Path(directory)
+            self.root_path = self.directory.parent
+        else:
+            self.root_path = Path(root) if root is not None else DEFAULT_RUN_ROOT
+            base_name = build_run_directory_name(self.metadata)
+            directory = self.root_path / base_name
+            suffix = 2
+            while directory.exists():
+                directory = self.root_path / ("%s-%d" % (base_name, suffix))
+                suffix += 1
+            self.directory = directory
         self.csv_path = build_run_csv_path(directory)
         self.json_path = build_run_json_path(directory)
         self.attempts = []
         self.replacement_analysis = None
         self.switch_test_sessions = []
+        self.completed_replacements = []
         self._directory_created = False
 
     @classmethod
@@ -127,6 +163,7 @@ class RunRecorder:
         attempts=None,
         replacement_analysis=None,
         switch_test_sessions=None,
+        completed_replacements=None,
     ):
         """Create a recorder that updates an already-loaded CSV run."""
         recorder = cls.__new__(cls)
@@ -140,6 +177,7 @@ class RunRecorder:
         recorder.attempts = list(attempts or [])
         recorder.replacement_analysis = replacement_analysis
         recorder.switch_test_sessions = list(switch_test_sessions or [])
+        recorder.completed_replacements = list(completed_replacements or [])
         recorder._directory_created = True
         return recorder
 
@@ -152,10 +190,12 @@ class RunRecorder:
             return
         self._ensure_directory()
         self._write_csv(measurements)
+        stored_metadata = _run_metadata(self.metadata)
         payload = {
             "created_at": self.metadata.get("Created at", datetime.now().isoformat(timespec="seconds")),
+            "run_number": stored_metadata.get("Run number"),
             "warning_limit_db": self.limit,
-            "metadata": self.metadata,
+            "metadata": stored_metadata,
             "measurements": [
                 {
                     "channel": record.channel,
@@ -165,8 +205,6 @@ class RunRecorder:
                 }
                 for record in measurements
             ],
-            "attempts": self.attempts,
-            "replacement_analysis": self.replacement_analysis,
             "switch_test_sessions": self.switch_test_sessions,
         }
         temporary_path = self.json_path.with_suffix(".json.tmp")
@@ -184,6 +222,12 @@ class RunRecorder:
     def _ensure_directory(self):
         """Create the deferred run folder on the first real save."""
         if self._directory_created:
+            return
+        if self._fixed_directory:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            self.csv_path = build_run_csv_path(self.directory)
+            self.json_path = build_run_json_path(self.directory)
+            self._directory_created = True
             return
         self.root_path.mkdir(parents=True, exist_ok=True)
         if self.directory.exists():
@@ -223,8 +267,17 @@ class RunRecorder:
             return self.metadata
 
         old_directory = self.directory
-        timestamp = extract_run_timestamp(old_directory)
-        base_name = build_run_directory_name_for_timestamp(metadata, timestamp)
+        numbered_match = re.fullmatch(r"Run-(\d+)(?:-.+)?", old_directory.name)
+        if numbered_match:
+            # Numbered runs belong to a unit directory. Their switch serial is
+            # run-specific, so changing it only renames this run folder.
+            switch_serial = _safe_serial_component(metadata.get("Switch serial"))
+            base_name = "Run-%s" % numbered_match.group(1)
+            if switch_serial:
+                base_name += "-" + switch_serial
+        else:
+            timestamp = extract_run_timestamp(old_directory)
+            base_name = build_run_directory_name_for_timestamp(metadata, timestamp)
         new_directory = old_directory.parent / base_name
         suffix = 2
         while new_directory.exists() and new_directory != old_directory:
@@ -314,7 +367,9 @@ class RunRecorder:
             for record in measurements
         )
         metadata_rows = [["Metadata", "Value"]]
-        metadata_rows.extend(list(item) for item in sorted(self.metadata.items()))
+        metadata_rows.extend(
+            list(item) for item in sorted(_run_metadata(self.metadata).items())
+        )
         row_count = max(len(rows), len(metadata_rows))
         temporary_path = self.csv_path.with_suffix(".csv.tmp")
         try:

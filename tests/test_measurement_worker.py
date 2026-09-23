@@ -81,6 +81,28 @@ class MeasurementWorkerTests(unittest.TestCase):
         self.assertTrue(switch.connected)
         self.assertTrue(switch.closed)
 
+    def test_completed_signal_is_emitted_after_hardware_cleanup(self):
+        meter = FakePowerMeter()
+        switch = FakeSwitch()
+        worker = MeasurementWorker(
+            meter,
+            switch,
+            [1],
+            {1310: 0.72, 1550: 0.28},
+        )
+        terminal_state = []
+        worker.operator_required.connect(
+            lambda _channel, _port: worker.continue_current()
+        )
+        worker.reading_ready.connect(lambda *_values: worker.write_current())
+        worker.completed.connect(
+            lambda: terminal_state.append((meter.closed, switch.closed))
+        )
+
+        worker.run()
+
+        self.assertEqual(terminal_state, [(True, True)])
+
     def test_stop_before_operator_continuation(self):
         meter = FakePowerMeter()
         switch = FakeSwitch()
@@ -130,6 +152,34 @@ class MeasurementWorkerTests(unittest.TestCase):
         self.assertEqual(len(readings), 2)
         self.assertAlmostEqual(readings[-1][2], 1.92)
         self.assertAlmostEqual(readings[-1][3], 1.58)
+
+    def test_live_write_mode_updates_until_operator_writes(self):
+        meter = SequencePowerMeter()
+        switch = FakeSwitch()
+        worker = MeasurementWorker(
+            meter,
+            switch,
+            [1],
+            {1310: 0.72, 1550: 0.28},
+            live_write_mode=True,
+            live_write_interval=0.1,
+        )
+        readings = []
+        worker.operator_required.connect(lambda *_values: None)
+
+        def accept_second_live_reading(*values):
+            readings.append(values)
+            if len(readings) == 2:
+                worker.write_current()
+
+        worker.reading_ready.connect(accept_second_live_reading)
+        worker.run()
+
+        self.assertEqual(len(readings), 2)
+        self.assertAlmostEqual(readings[0][2], 1.72)
+        self.assertAlmostEqual(readings[1][2], 1.92)
+        self.assertTrue(meter.closed)
+        self.assertTrue(switch.closed)
 
     def test_full_pass_can_resume_interrupted_channel_after_override(self):
         meter = FakePowerMeter()

@@ -64,7 +64,7 @@ instructions. It is a self-contained guide and does not require internet access.
 No Python installation is needed.
 
 Use Help > About inside the application to view the current
-version and project capabilities. The current release is Light Workbench 1.6.4.
+version and project capabilities. The current release is Light Workbench 1.7.1.
 
 
 3. VERIFY VISA
@@ -94,7 +94,9 @@ folder; install VISA through the approved vendor installer.
      Calculate Reference, which reads both wavelengths from the ILM/OP815 and
      applies the measured offsets automatically; the values remain manually
      editable.
- 6. Click Start Run and confirm the hardware warning.
+ 6. Enter the numbered Run number for this test. Use 1 for the first test on
+    the unit, 2 for the next test, and so on. Click Start Run and confirm the
+    hardware warning.
 
 OPTIONAL RED-LIGHT PRE-TEST
 
@@ -109,10 +111,15 @@ not record IL readings or create run/COC data.
 
 Accepted results are saved automatically under:
 
-  Documents\ILM-Reads\ILM-Run_YYMMDD_HHMMSS_[main board serial]-[switch serial]\
+Documents\ILM-Reads\Unit-[main board serial]\Run-[run number]-[switch serial]\
 
-Missing serial numbers are omitted. Each run contains same-named CSV and JSON
-files. Older runs containing output.csv and run.json remain supported.
+If the main board serial is unavailable, the part number is used for the unit
+folder. The switch serial is stored with the individual run because a failed
+switch can be replaced while the unit remains the same. Each numbered run
+contains same-named CSV and JSON files. The unit folder also contains
+unit.json, which stores completed port replacements and designated spare ports
+shared by all runs for that unit.
+Older timestamped runs containing output.csv and run.json remain supported.
 
 When continuing a loaded run, the part number, Main Board serial, and Switch
 serial are restored into Hardware test setup. If they are corrected, the
@@ -129,9 +136,15 @@ Red Light Test are not included in this timing.
 ----------------------------
 
 Open Existing CSV starts in Documents\ILM-Reads. Select a run's same-named CSV to
-review its readings, warning-limit analysis, retests, and replacement analysis.
+review its written readings, warning-limit analysis, and replacement analysis.
+For the new unit layout, enter the unit identity and run number in Hardware test
+setup and click Load Run to load a numbered run directly.
 File > Data Output Folder opens the same Documents\ILM-Reads folder containing
 all saved run folders.
+The table's Compare with selector can add read-only 1310 nm and 1550 nm columns
+from another numbered run for the same unit. Choose No comparison to hide those
+columns again. Comparison data is display-only and does not change analysis or
+saved run files.
 
 The Write COC... option can write partial or complete readings to a copied XLSX
 COC template. Excel does not need to be installed. For automatic part-number
@@ -141,6 +154,9 @@ lookup, the computer must have access to:
 
 If that network path is unavailable, enter the part number manually.
 The two graphics included in the COC template are preserved in exported files.
+Replacement recommendations are calculated for the selected run but are not
+stored as permanent results. Completed replacements and designated spare ports
+are stored in the shared unit.json record.
 Hardware test setup also provides an editable standard-part-number list and an
 O band/C band operating-band selector.
 

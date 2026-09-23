@@ -3,6 +3,8 @@ import unittest
 from replacement_analysis import (
     ReplacementReading,
     analyze_replacements,
+    completed_replacement_metadata,
+    normalise_completed_replacements,
     parse_extra_readings,
     replacement_metadata,
 )
@@ -52,12 +54,20 @@ class ReplacementAnalysisTests(unittest.TestCase):
             [(1, 49), (2, 51)],
         )
         self.assertEqual(
+            [item["category"] for item in result["recommendations"]],
+            ["optional", "optional"],
+        )
+        self.assertEqual(
             [item["physical_port"] for item in result["bottom_spares"]],
             [52, 50],
         )
         metadata = replacement_metadata(result)
         self.assertIn("Logical 1 (physical 1", metadata["Replacement recommendation 1"])
         self.assertIn("Physical 49", metadata["Replacement recommendation 1"])
+        self.assertTrue(
+            metadata["Replacement recommendation 1"].startswith("Optional")
+        )
+        self.assertEqual(metadata["Optional Replacements"], "2")
         self.assertIn(
             "Physical 52", metadata["Recommended designated spare 1"]
         )
@@ -101,6 +111,77 @@ class ReplacementAnalysisTests(unittest.TestCase):
         )
         self.assertTrue(result["bottom_spares"][0]["within_warning_limit"])
         self.assertFalse(result["bottom_spares"][1]["within_warning_limit"])
+
+    def test_over_limit_channels_are_required_and_within_limit_swaps_optional(self):
+        result = analyze_replacements(
+            [
+                MeasurementRecord(1, 2.2, 1.8, 1),
+                MeasurementRecord(2, 1.9, 1.9, 2),
+            ],
+            [
+                ReplacementReading(49, 1.0, 1.0),
+                ReplacementReading(50, 1.5, 1.5),
+            ],
+            designed_channel_count=2,
+            warning_limit=2.0,
+            minimum_improvement=0.05,
+            bottom_spare_count=0,
+        )
+
+        self.assertEqual(
+            [(item["logical_channel"], item["category"])
+             for item in result["recommendations"]],
+            [(1, "required"), (2, "optional")],
+        )
+        metadata = replacement_metadata(result)
+        self.assertEqual(metadata["Required replacements"], "1")
+        self.assertEqual(metadata["Optional Replacements"], "1")
+        self.assertIn("Required replacement recommendation 1", metadata)
+        self.assertIn("Optional replacement recommendation 1", metadata)
+
+    def test_completed_replacements_are_normalized_and_exported_as_metadata(self):
+        records = normalise_completed_replacements(
+            [
+                {
+                    "current_port": "10",
+                    "replacement_port": "49",
+                }
+            ]
+        )
+        self.assertEqual(records[0]["replacement_port"], 49)
+        metadata = completed_replacement_metadata(records)
+        self.assertEqual(metadata["Completed replacements"], "1")
+        self.assertEqual(
+            metadata["Completed replacement 1"],
+            "Current Port 10 -> Replacement Port 49",
+        )
+
+    def test_legacy_completed_replacements_load_as_two_port_records(self):
+        records = normalise_completed_replacements(
+            [
+                {
+                    "logical_channel": 10,
+                    "original_physical_port": 10,
+                    "replacement_physical_port": 49,
+                }
+            ]
+        )
+        self.assertEqual(records, [{"current_port": 10, "replacement_port": 49}])
+
+    def test_completed_replacements_reject_duplicate_replacement_ports(self):
+        with self.assertRaises(ValueError):
+            normalise_completed_replacements(
+                [
+                    {
+                        "current_port": 10,
+                        "replacement_port": 49,
+                    },
+                    {
+                        "current_port": 11,
+                        "replacement_port": 49,
+                    },
+                ]
+            )
 
 
 if __name__ == "__main__":

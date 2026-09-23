@@ -22,7 +22,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current user-facing release is **Light Workbench 1.6.4**. The single
+The current user-facing release is **Light Workbench 1.7.1**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -32,16 +32,18 @@ The main window exposes this through `Help > About`.
 | --- | --- |
 | ilm_app.py | Current PyQt5 desktop viewer and real-hardware UI. Loads CSV runs, analyzes limits, starts hardware runs, displays readings, and commits accepted results. The header includes the bundled Lulu - CandC logo; the UI uses a light-grey shell and `#e60013` primary accent. |
 | measurement_worker.py | Qt worker/orchestrator. Connects instruments, routes channels, waits for operator cable placement, supports repeated reads, emits readings/progress, and always closes instruments. |
-| power_meter.py | Application-facing meter interface. SantecPowerMeter wraps the OP815 driver; SimulatedPowerMeter is deterministic and hardware-free. |
+| power_meter.py | Application-facing meter adapter. SantecPowerMeter wraps the OP815 driver; SimulatedPowerMeter is deterministic and hardware-free. The PowerMeter contract is re-exported here for backward compatibility. |
+| hardware/interfaces.py | Vendor-neutral PowerMeter, LaserSource, and OpticalSwitch protocols. This is the starting boundary for future OPM plus separate laser support. |
 | op815_driver.py | ctypes wrapper around the 32-bit OP815M.dll. Owns DLL discovery, function signatures, device selection, source control, wavelength selection, measurements, and cleanup. |
 | osx150_driver.py | PyVISA/SCPI driver for USB OSX-150 discovery, logical channel routing, configured-channel count, and physical-port reporting. |
 | red_light_test.py | Separate VFL pre-test dialog. Tools > Red Light Test opens it without connecting; its Start button connects and routes channels without creating readings or run/COC data. |
 | live_il_reading.py | Meter-only Live IL Reading dialog. It connects only to the OP815, calculates both wavelength losses from editable references, supports non-persistent reconnect repeatability testing and timed live updates, and never controls the switch or persists data. |
 | app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
 | run_data.py | MeasurementRecord, RunData, CSV loading, over-limit filtering, and analysis counts. |
-| run_persistence.py | Modern atomic CSV/JSON persistence and accepted-attempt history for the desktop app. |
+| run_persistence.py | Modern atomic CSV/JSON persistence for accepted measurements and switch timing metadata. |
+| unit_persistence.py | Device-level unit records, numbered run folders, shared replacements, and designated spares. |
 | switch_timing.py | Real switch-test session timing; accumulates across continuation sessions and excludes Live IL/Red Light Test. |
-| replacement_analysis.py | Hardware-independent selection of worthwhile replacements and best remaining designated spares, including displaced production ports. |
+| replacement_analysis.py | Hardware-independent selection of worthwhile replacements and best remaining designated spares, including displaced production ports, plus completed-replacement record validation and metadata formatting. |
 | coc_export.py | XLSX COC template export, merged-cell mapping, collision-safe filenames, Main Board serial lookup, and preservation of embedded template graphics. |
 | ILMReadLoss.py | Older, still functional console workflow. Owns prompts, validation, calculations, legacy CSV naming/output, retests, and legacy replacement-port metadata. |
 | ilm_app.spec | PyInstaller one-folder build for ilm_app.py, including OP815M.dll. |
@@ -55,6 +57,20 @@ The main window exposes this through `Help > About`.
 The normal direction for new desktop behavior is ilm_app.py; keep raw
 instrument protocol code in the two driver modules. Treat ILMReadLoss.py as a
 legacy/console path unless a change explicitly needs to preserve or improve it.
+
+## Architecture refactor status
+
+The first incremental refactor has been started without changing the current
+workflow. `hardware/interfaces.py` now defines the application-facing
+contracts for a power meter, separate laser source, and optical switch. The
+existing OP815 meter and OSX-150 switch continue to be used exactly as before;
+`power_meter.py` re-exports `PowerMeter` so existing imports remain compatible.
+The contracts are covered by hardware-free tests in
+`tests/test_hardware_interfaces.py`.
+
+The next planned phase is to extract run lifecycle/state management from
+`ilm_app.py`. Do not move or rename the current driver modules until that
+phase has its regression tests in place.
 
 ## Runtime and hardware requirements
 
@@ -120,35 +136,59 @@ short range.
     ordered full passes ask whether to continue sequentially from the selected
     channel or resume the interrupted channel. Existing saved data is preserved
     until a replacement is written.
-8. On completion, stop, or hardware failure, the instruments are closed. Rows
+    As an optional one-step alternative, `Tools > Noah Mode` changes the Read
+    button/keybind to Read & Write IL: successful readings are committed
+    immediately and the worker advances; failed reads are not saved. The mode
+    requires confirmation, cannot be toggled during a run, defaults off, and
+    is not persisted between application sessions.
+8. `Tools > Live Write Mode` is an optional hardware-run workflow. After the
+    worker routes each channel, it automatically emits complete IL readings
+    about once per second; the operator moves the cable to the shown channel
+    while the values update. The UI keeps the newest value pending until
+    `Write IL` is pressed; only then is it committed and the worker advances.
+    The mode has a red `LIVE` indicator, is mutually exclusive with Noah Mode,
+    is disabled while a run is active, and defaults on each application
+    session.
+9. On completion, stop, or hardware failure, the instruments are closed. Rows
    accepted before interruption remain persisted.
-9. Existing CSVs can be opened for analysis. The table highlights either
+10. Existing CSVs can be opened for analysis. The table highlights either
 wavelength over the warning limit and Select Over-Limit selects rows for
 retest.
-10. `Analyze Replacements` uses measured rows whose channel is above the
+11. `Analyze Replacements` uses measured rows whose channel is above the
 configured designed-channel count as extra physical-port candidates. It
 selects worthwhile replacements, adds displaced production ports back into the
 spare pool, then ranks the best remaining readings as designated spares. The
 spares do not need to be within the warning limit because they are emergency-
-use backups. The result is stored on `RunData`, in `run.json`, and
-as readable CSV metadata. A run with no extra measured rows reports the
-analysis as not applicable.
-11. COC export is available after a hardware completion, stop, or failure with
+use backups. Recommendations for current channels over the warning limit are
+classified as required; improvements to channels already within the limit are
+classified as optional. The result is stored on `RunData` and displayed on
+screen only; it is not stored as permanent run data. A run with no extra
+measured rows reports the analysis as not applicable. `Record Replaced
+Ports...` separately records physical swaps that were actually completed using
+Current Port and Replacement Port fields, and accepts designated spare ports.
+Completed swaps and designated spares are displayed in the Replacement
+analysis panel and saved in the shared unit `unit.json`; they are available to
+all numbered runs for that unit. Older replacement
+records with a logical-channel field are migrated when loaded.
+`Copy Replacement Notes` copies the completed Current Port -> Replacement Port
+pairs in a plain-text format for the Unit Editor notes.
+12. COC export is available after a hardware completion, stop, or failure with
 a run, and from the controls/File menu. It accepts partial and over-limit data;
 missing logical channels stay blank. `coc_export.py` copies the bundled XLSX
 template and writes the `OSX Template` sheet's split rows, Part Number, Main
 Board serial, and date while preserving other workbook content. It uses
 `openpyxl`, so Excel is not required. The default part lookup is
-`U:\Product Log\Units-COCs-Param Files\OSX-150` and can be changed from the
-File menu.
+`U:\Product Log\Units-COCs-Param Files\OSX-150`. `File > Part Number Lookup
+Folder` opens that fixed location in Windows File Explorer; it is not editable
+from the application.
 
-12. `Tools > Red Light Test...` opens a non-recording VFL pre-test dialog. The
+13. `Tools > Red Light Test...` opens a non-recording VFL pre-test dialog. The
 menu item only opens the dialog; `Start Red Light Test` performs the connection
 and selects channel 1. The operator can type a channel number, use the Up/Down
 keys, or use Previous/Next. The dialog displays the selected logical channel,
 configured total, and physical port, and disconnects when stopped or closed.
 
-13. `Tools > Live IL Reading...` opens a meter-only dialog. It does not connect
+14. `Tools > Live IL Reading...` opens a meter-only dialog. It does not connect
 to the OSX-150. `Start Meter` connects to the OP815, `Read IL` can be pressed
 repeatedly, and `Calculate Reference` derives both shared reference offsets
 from a zero-reference meter reading. Manual reference edits stay synchronized
@@ -229,52 +269,52 @@ metadata in E-F:
 
 ### Modern desktop CSV/JSON (run_persistence.py)
 
-RunRecorder defaults to `Documents\ILM-Reads`. Each run is stored in a folder
-named `ILM-Run_YYMMDD_HHMMSS_[main board serial]-[switch serial]`; missing serials
-are omitted and unsafe filename characters are normalized. The run CSV uses the
-final folder name with a `.csv` extension. The Open Existing CSV dialog starts
-in this same default run folder, and File > Data Output Folder opens it directly.
-Each run writes same-named CSV and JSON files. Older runs using output.csv and
-run.json remain supported. Both are written through a temporary
-file and os.replace() so an accepted row is not lost to a partial write.
-Real switch runs add readable timing metadata for first start, latest stop,
-continuation times, session count, and accumulated duration; JSON also stores
-the individual session records. Live IL and Red Light Test do not affect these
-fields.
-The CSV remains compatible with load_run_csv; JSON contains the warning
-limit, metadata, current measurements, and an attempts list with timestamp,
-channel, physical port, losses, and retest flag.
+RunRecorder defaults to `Documents\ILM-Reads`. New hardware runs are grouped
+under `Unit-[main board serial]\Run-N-[switch serial]\`, with a same-named CSV
+and JSON file in each numbered run folder. The unit folder also contains
+`unit.json`, which stores main-board/part identity, completed replacements,
+designated spares, and the index of available runs. Switch serial, operating
+band, and tested-by initials are run-specific. Legacy timestamped runs and
+older unsuffixed `Run-N` folders remain supported and can still be opened
+directly.
+
+Both run files and unit records are written through temporary files and
+`os.replace()` so an accepted row is not lost to a partial write. Real switch
+runs add readable timing metadata for first start, latest stop, continuation
+times, session count, and accumulated duration; Live IL and Red Light Test do
+not affect these fields. The CSV remains compatible with `load_run_csv`, and
+the JSON stores the warning limit, metadata, current measurements, physical
+ports, and timing sessions. Retest attempts and calculated replacement
+recommendations are intentionally not persisted.
 
 The difference between project-local legacy output and Documents-based desktop
 output is intentional in the current code but should be resolved or clearly
 versioned before broad deployment.
 
-Replacement-analysis details are saved under the metadata keys `Replacement
-recommendation N` and `Recommended designated spare N`. The structured `run.json` also stores
-the full replacement-analysis result and each current measurement's
-`physical_port`. The CSV measurement table remains three columns so it stays
-compatible with Excel and older CSV loading.
+Replacement analysis is calculated from the selected run and displayed in the
+UI only. Manually completed replacements and designated spare ports are stored
+in the shared `unit.json`, so they carry across numbered runs without changing
+the measurement table. The CSV measurement table remains three columns so it
+stays compatible with Excel and older CSV loading.
+
+The UI table has an optional `Compare with` selector populated from the active
+unit's numbered-run index. Selecting a previous run adds two read-only columns
+for that run's 1310 nm and 1550 nm values, matched by logical channel. Selecting
+`No comparison` removes them. Comparison data is never included in the active
+run's analysis, filtering, or saved output.
 
 COC export metadata includes `Part number`, `COC output file`, `COC output
 path`, `COC exported at`, and `COC template`. The current XLSX mapping is
 `OSX Template!D11:D55` and `E11:E55` for channels 1-45,
 `D67:D69` and `E67:E69` for channels 46-48, `B4` for the merged part-number
-cell, `D4` for the merged Main Board serial cell, and `F4` for the date.
+cell, `D4` for the merged Main Board serial cell, `F4` for the date, and `G4`
+for the Tested by initials.
 
 ## Known issues and inconsistencies
 
 These are observations from source inspection, not assumed fixes:
 
-1. Retesting a loaded CSV is not currently persisted. load_path() sets
-   self.run_recorder = None. retest_selected() starts a hardware retest,
-   but the retest branch of start_hardware() does not reconstruct a recorder
-   for the existing CSV/JSON. commit_hardware_reading() therefore updates the
-   in-memory table only when retesting an opened run. The intended behavior in
-   README.md is to replace the CSV value and append the JSON attempt history.
-   Fix this first, with a test proving an opened run's CSV and JSON are changed
-   only after Write IL Values.
-
-2. The documented simulation UI is disconnected. SimulatedPowerMeter and
+1. The documented simulation UI is disconnected. SimulatedPowerMeter and
    start_demo(), measure_demo(), and related methods remain in ilm_app.py, but
    _build_ui() creates no demo_channel_count, measure_demo_button, or
    accept_demo_button, and no UI action calls start_demo(). Calling the stale
@@ -282,29 +322,29 @@ These are observations from source inspection, not assumed fixes:
    into the GUI and test it, or remove the dead workflow and update the README.
    Keep SimulatedPowerMeter if it remains useful for worker/UI tests.
 
-3. Modern desktop runs preserve the physical port in `run.json` and use it for
+2. Modern desktop runs preserve the physical port in `run.json` and use it for
    replacement analysis, but the CSV measurement table intentionally remains
    logical-channel-only. If a human-readable mapping of every observed logical
    channel is needed in CSV metadata, add it without changing the CSV's first
    three measurement columns.
 
-4. The README describes one unified output convention, but the code has two.
+3. The README describes one unified output convention, but the code has two.
    ILMReadLoss.py uses serial/timestamp names in project-local IL-Reads, while
    RunRecorder uses generic output.csv/run.json in a Documents folder.
    run_data.py can read both layouts, but users and future tooling need an
    explicit compatibility policy.
 
-5. The build log reports a non-fatal missing hidden import warning for `sip`.
+4. The build log reports a non-fatal missing hidden import warning for `sip`.
    PyInstaller nevertheless completes successfully; validate the packaged
    executable on a clean 32-bit Windows machine.
 
-6. No hardware integration tests are present. Unit tests use fakes and do not
+5. No hardware integration tests are present. Unit tests use fakes and do not
    validate actual DLL return codes, VISA resource discovery, SCPI syntax,
    optical settling, replacement mappings, or cleanup on a real device.
    Hardware tests should be opt-in, visibly destructive, and never part of the
    normal unit-test command.
 
-7. COC export has hardware-free XLSX tests and a real-template round-trip
+6. COC export has hardware-free XLSX tests and a real-template round-trip
 smoke check, but its final printed appearance should still be reviewed once
 on the target printer. The network U: lookup path is environment-dependent;
 the application provides a configurable folder and manual part-number fallback.

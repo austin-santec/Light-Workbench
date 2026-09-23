@@ -3,17 +3,18 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtCore import QEventLoop, QTimer, Qt
 from PyQt5.QtTest import QTest
 
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
 from ilm_app import (
     AboutDialog,
+    CompletedReplacementDialog,
     DEFAULT_RUN_ROOT,
     MainWindow,
     STANDARD_PART_NUMBERS,
@@ -31,6 +32,9 @@ class ReferenceMeter:
         self.connected = False
         self.closed = False
         self.__class__.instances.append(self)
+
+    def find_devices(self):
+        return [(0, "OP815", "FAKE-123")]
 
     def connect(self):
         self.connected = True
@@ -52,7 +56,7 @@ class MainWindowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.application = QApplication.instance() or QApplication([])
 
-    def test_loads_saved_limit_and_retest_count_from_companion_json(self):
+    def test_loads_saved_limit_and_run_number_from_companion_json(self):
         with tempfile.TemporaryDirectory() as directory:
             csv_path = Path(directory) / "output.csv"
             csv_path.write_text(
@@ -76,7 +80,7 @@ class MainWindowTests(unittest.TestCase):
             window = MainWindow(str(csv_path))
 
             self.assertEqual(window.limit_spin.value(), 2.5)
-            self.assertEqual(window.metadata_labels["Retest attempts"].text(), "1")
+            self.assertEqual(window.metadata_labels["Run number"].text(), "1")
             self.assertEqual(window.metric_labels["over_limit"].text(), "0")
             window.close()
 
@@ -99,6 +103,48 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(dialog.tagline_label.text(), APP_TAGLINE)
         dialog.close()
 
+    def test_completed_replacement_dialog_prefills_recommendations(self):
+        dialog = CompletedReplacementDialog(
+            recommendations=[
+                {
+                    "current_physical_port": 10,
+                    "candidate_physical_port": 49,
+                }
+            ]
+        )
+
+        self.assertEqual(dialog.table.columnCount(), 2)
+        self.assertEqual(
+            [dialog.table.horizontalHeaderItem(i).text() for i in range(2)],
+            ["Current Port", "Replacement Port"],
+        )
+        self.assertEqual(dialog.table.rowCount(), 1)
+        self.assertEqual(dialog.table.cellWidget(0, 0).value(), 10)
+        self.assertEqual(dialog.table.cellWidget(0, 1).value(), 49)
+        dialog.close()
+
+    def test_copy_replacement_notes_formats_recorded_ports_for_unit_editor(self):
+        window = MainWindow()
+        window.completed_replacements = [
+            {"current_port": 4, "replacement_port": 43},
+            {"current_port": 3, "replacement_port": 37},
+            {"current_port": 17, "replacement_port": 39},
+            {"current_port": 23, "replacement_port": 40},
+        ]
+        window.refresh_replacement_summary()
+        window.copy_replacement_notes()
+
+        self.assertTrue(window.copy_replacement_notes_button.isEnabled())
+        self.assertEqual(
+            QApplication.clipboard().text(),
+            "Port replacements completed:\n"
+            "4 \u2192 43\n"
+            "3 \u2192 37\n"
+            "17 \u2192 39\n"
+            "23 \u2192 40",
+        )
+        window.close()
+
     def test_help_menu_contains_about_action(self):
         window = MainWindow()
         menus = {
@@ -109,7 +155,7 @@ class MainWindowTests(unittest.TestCase):
             [
                 "Open CSV Run...",
                 "Data Output Folder",
-                "Part Number Lookup Folder...",
+                "Part Number Lookup Folder",
                 "COC Template...",
                 "Write COC...",
                 "Exit",
@@ -124,12 +170,29 @@ class MainWindowTests(unittest.TestCase):
                 "Check Dependencies...",
                 "Red Light Test...",
                 "Live IL Reading...",
+                "Noah Mode",
+                "Live Write Mode",
                 "Dark Mode",
             ],
         )
         self.assertEqual(
             [action.text() for action in menus["Help"].actions()],
             ["IL Instructions", "About"],
+        )
+        window.close()
+
+    def test_part_number_lookup_folder_opens_fixed_designated_folder(self):
+        window = MainWindow()
+        with patch(
+            "ilm_app.DEFAULT_PART_LOOKUP_ROOT", Path(tempfile.gettempdir())
+        ), patch(
+            "ilm_app.QDesktopServices.openUrl", return_value=True
+        ) as open_url:
+            window.open_part_lookup_folder()
+
+        self.assertEqual(
+            Path(open_url.call_args.args[0].toLocalFile()),
+            Path(tempfile.gettempdir()),
         )
         window.close()
 
@@ -153,6 +216,18 @@ class MainWindowTests(unittest.TestCase):
             self.assertTrue(window.dark_mode_enabled)
             self.assertTrue(window.dark_mode_action.isChecked())
             self.assertIn("#202124", window.styleSheet())
+            self.assertIn(
+                "QDialog, QMessageBox, QInputDialog, QProgressDialog",
+                window.styleSheet(),
+            )
+            self.assertIn(
+                "QDialog, QMessageBox, QInputDialog, QProgressDialog { background: #202124; color: #e8eaed; font-size: 13px; }",
+                window.styleSheet(),
+            )
+            self.assertIn(
+                "QDialog QLabel, QMessageBox QLabel, QInputDialog QLabel, QProgressDialog QLabel { color: #e8eaed; font-size: 13px; }",
+                window.styleSheet(),
+            )
             self.assertIn("QPushButton { background: #e60013", window.styleSheet())
             self.assertIn(
                 "QPushButton:disabled { background: #8b000b",
@@ -239,6 +314,60 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(visible_channels(), [4, 6])
         window.close()
 
+    def test_previous_run_comparison_can_be_shown_and_cleared(self):
+        with tempfile.TemporaryDirectory() as directory:
+            unit_directory = Path(directory) / "Unit-17688"
+            previous_directory = unit_directory / "Run-1-SW1"
+            previous_directory.mkdir(parents=True)
+            previous_csv = previous_directory / "Run-1-SW1.csv"
+            previous_csv.write_text(
+                "channel,1310 IL,1550 IL,,Metadata,Value\n"
+                "1,1.5000,1.6000,,Run number,1\n",
+                encoding="utf-8",
+            )
+
+            window = MainWindow()
+            window.unit_directory = unit_directory
+            window.unit_record = {
+                "runs": [
+                    {
+                        "run_number": 1,
+                        "directory": "Run-1-SW1",
+                        "csv_file": "Run-1-SW1.csv",
+                    },
+                    {
+                        "run_number": 2,
+                        "directory": "Run-2-SW2",
+                        "csv_file": "Run-2-SW2.csv",
+                    },
+                ]
+            }
+            window.run_data = RunData(
+                unit_directory / "Run-2-SW2",
+                [
+                    MeasurementRecord(1, 1.7, 1.8),
+                    MeasurementRecord(2, 1.9, 2.0),
+                ],
+                {"Run number": "2"},
+            )
+            window.refresh_comparison_runs()
+
+            self.assertTrue(window.comparison_run_combo.isEnabled())
+            self.assertEqual(window.comparison_run_combo.count(), 2)
+            window.comparison_run_combo.setCurrentIndex(1)
+
+            self.assertEqual(window.table.columnCount(), 6)
+            self.assertEqual(
+                window.table.horizontalHeaderItem(4).text(),
+                "Run 1 1310 nm IL (dB)",
+            )
+            self.assertEqual(window.table.item(0, 4).text(), "1.5000")
+            self.assertEqual(window.table.item(1, 4).text(), "-")
+
+            window.comparison_run_combo.setCurrentIndex(0)
+            self.assertEqual(window.table.columnCount(), 4)
+            window.close()
+
     def test_select_over_limit_switches_to_any_over_limit_filter(self):
         window = MainWindow()
         window.run_data = RunData(
@@ -301,6 +430,29 @@ class MainWindowTests(unittest.TestCase):
         self.assertFalse(window.manual_channel_order_checkbox.isHidden())
         window.close()
 
+    def test_only_hardware_setup_fonts_are_doubled(self):
+        window = MainWindow()
+        try:
+            expected_size = QApplication.font().pointSizeF() * 1.2
+            self.assertAlmostEqual(
+                window.hardware_setup_box.font().pointSizeF(),
+                expected_size,
+            )
+            self.assertAlmostEqual(
+                window.hardware_main_board_serial.font().pointSizeF(),
+                expected_size,
+            )
+            self.assertAlmostEqual(
+                window.lookup_part_number_button.font().pointSizeF(),
+                expected_size,
+            )
+            self.assertEqual(
+                window.start_hardware_button.font().pointSizeF(),
+                QApplication.font().pointSizeF(),
+            )
+        finally:
+            window.close()
+
     def test_setup_reference_calculation_does_not_open_live_window_and_disconnects(self):
         ReferenceMeter.instances.clear()
         ReferenceMeter.reference_measurements = 0
@@ -319,6 +471,49 @@ class MainWindowTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_setup_reference_calculation_warns_when_no_ilm_is_detected(self):
+        class MissingMeter(ReferenceMeter):
+            def find_devices(self):
+                return []
+
+        with patch("ilm_app.SantecPowerMeter", MissingMeter), patch(
+            "ilm_app.QMessageBox.warning"
+        ) as warning:
+            window = MainWindow()
+            try:
+                QTest.mouseClick(window.calculate_reference_button, Qt.LeftButton)
+
+                warning.assert_called_once()
+                self.assertIn("Connect and power on", warning.call_args.args[2])
+                self.assertTrue(window.calculate_reference_button.isEnabled())
+                self.assertIsNone(window.reference_progress)
+                self.assertIsNone(window.reference_thread)
+                self.assertTrue(MissingMeter.instances[-1].closed)
+            finally:
+                window.close()
+
+    def test_reference_connection_failure_cleans_up_without_crashing(self):
+        class DisconnectedMeter(ReferenceMeter):
+            def connect(self):
+                raise RuntimeError("No OP815/ILM was detected over USB.")
+
+        DisconnectedMeter.instances.clear()
+        with patch("ilm_app.SantecPowerMeter", DisconnectedMeter), patch(
+            "ilm_app.QMessageBox.critical"
+        ) as critical:
+            window = MainWindow()
+            try:
+                QTest.mouseClick(window.calculate_reference_button, Qt.LeftButton)
+                QTest.qWait(200)
+
+                critical.assert_called_once()
+                self.assertIsNone(window.reference_progress)
+                self.assertIsNone(window.reference_thread)
+                self.assertTrue(window.calculate_reference_button.isEnabled())
+                self.assertTrue(DisconnectedMeter.instances[-1].closed)
+            finally:
+                window.close()
+
     def test_switch_serial_accepts_unrestricted_text(self):
         window = MainWindow()
         serial = "SW-12345678901234567890"
@@ -326,6 +521,51 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertEqual(window.hardware_switch_serial.text(), serial)
         self.assertEqual(window.metadata_labels["Switch serial"].text(), "-")
+        window.close()
+
+    def test_tested_by_field_is_saved_as_hardware_identity_metadata(self):
+        window = MainWindow()
+        window.hardware_tested_by.setText("AJ")
+
+        self.assertEqual(window.hardware_tested_by.text(), "AJ")
+        self.assertEqual(window._current_hardware_identity()["Tested by"], "AJ")
+        self.assertIn("Tested by", window.metadata_labels)
+        window.close()
+
+    def test_start_run_uses_separate_metadata_and_reference_warnings(self):
+        window = MainWindow()
+        metadata_dialog = MagicMock()
+        metadata_return = object()
+        metadata_continue = object()
+        metadata_dialog.addButton.side_effect = [
+            metadata_return,
+            metadata_continue,
+        ]
+        metadata_dialog.clickedButton.return_value = metadata_continue
+
+        reference_dialog = MagicMock()
+        reference_return = object()
+        reference_continue = object()
+        reference_dialog.addButton.side_effect = [
+            reference_return,
+            reference_continue,
+        ]
+        reference_dialog.clickedButton.return_value = reference_continue
+
+        with patch(
+            "ilm_app.QMessageBox",
+            side_effect=[metadata_dialog, reference_dialog],
+        ):
+            self.assertTrue(window.confirm_hardware_setup_complete())
+
+        self.assertEqual(
+            metadata_dialog.addButton.call_args_list[1].args[0],
+            "Continue Without Metadata",
+        )
+        self.assertEqual(
+            reference_dialog.addButton.call_args_list[1].args[0],
+            "Continue Anyways",
+        )
         window.close()
 
     def test_part_number_and_operating_band_controls_support_selection_and_typing(self):
@@ -381,7 +621,18 @@ class MainWindowTests(unittest.TestCase):
         ):
             self.assertEqual(button.minimumWidth(), 125)
             self.assertEqual(button.minimumHeight(), 48)
-        self.assertEqual(window.continue_hardware_button.title_label.text(), "Read IL")
+            self.assertEqual(button.objectName(), "hardware_primary_control")
+        self.assertIn(
+            "QPushButton#hardware_primary_control { padding: 11px 20px; font-size: 16px",
+            window.styleSheet(),
+        )
+        self.assertIn(
+            "QPushButton#hardware_primary_control QLabel#button_title { font-size: 16px; }",
+            window.styleSheet(),
+        )
+        self.assertEqual(
+            window.continue_hardware_button.title_label.text(), "Live Reading"
+        )
         self.assertEqual(window.write_hardware_button.title_label.text(), "Write IL")
         self.assertEqual(
             window.continue_hardware_button.shortcut_label.text(),
@@ -393,6 +644,21 @@ class MainWindowTests(unittest.TestCase):
         )
         self.assertTrue(window.demo_channel_label.isHidden())
         window.close()
+
+    def test_information_panels_are_inside_a_vertical_scroll_area(self):
+        window = MainWindow()
+        try:
+            self.assertIs(window.info_scroll_area.widget(), window.info_panel)
+            self.assertEqual(
+                window.info_scroll_area.verticalScrollBarPolicy(),
+                Qt.ScrollBarAsNeeded,
+            )
+            self.assertEqual(
+                window.info_scroll_area.horizontalScrollBarPolicy(),
+                Qt.ScrollBarAlwaysOff,
+            )
+        finally:
+            window.close()
 
     def test_all_buttons_have_a_dark_red_disabled_style(self):
         window = MainWindow()
@@ -453,6 +719,178 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(window.write_hardware_button.shortcut_label.text(), "[Ctrl+W]")
         window.close()
 
+    def test_noah_mode_is_session_only_and_updates_controls_and_keybinds(self):
+        window = MainWindow()
+        try:
+            window.toggle_live_write_mode(False)
+            self.assertFalse(window.noah_mode_enabled)
+            self.assertFalse(window.noah_mode_action.isChecked())
+            self.assertEqual(window.continue_hardware_button.title_label.text(), "Read IL")
+            self.assertTrue(window.write_shortcut.isEnabled())
+
+            with patch(
+                "ilm_app.QMessageBox.question",
+                return_value=QMessageBox.Yes,
+            ) as confirm:
+                window.noah_mode_action.trigger()
+
+            confirm.assert_called_once()
+            self.assertTrue(window.noah_mode_enabled)
+            self.assertTrue(window.noah_mode_action.isChecked())
+            self.assertEqual(
+                window.continue_hardware_button.title_label.text(),
+                "Read & Write IL",
+            )
+            self.assertFalse(window.write_shortcut.isEnabled())
+            self.assertFalse(window.write_hardware_button.isEnabled())
+
+            window.noah_mode_action.trigger()
+            self.assertFalse(window.noah_mode_enabled)
+            self.assertFalse(window.noah_mode_action.isChecked())
+            self.assertEqual(window.continue_hardware_button.title_label.text(), "Read IL")
+            self.assertTrue(window.write_shortcut.isEnabled())
+        finally:
+            window.close()
+
+    def test_noah_mode_cancellation_leaves_normal_mode_active(self):
+        window = MainWindow()
+        try:
+            window.toggle_live_write_mode(False)
+            with patch(
+                "ilm_app.QMessageBox.question",
+                return_value=QMessageBox.No,
+            ):
+                window.noah_mode_action.trigger()
+
+            self.assertFalse(window.noah_mode_enabled)
+            self.assertFalse(window.noah_mode_action.isChecked())
+            self.assertEqual(window.continue_hardware_button.title_label.text(), "Read IL")
+            self.assertTrue(window.write_shortcut.isEnabled())
+        finally:
+            window.close()
+
+    def test_live_write_mode_is_confirmed_and_updates_the_reading_controls(self):
+        window = MainWindow()
+        try:
+            self.assertTrue(window.live_write_mode_enabled)
+            self.assertTrue(window.live_write_mode_action.isChecked())
+            self.assertEqual(
+                window.continue_hardware_button.title_label.text(), "Live Reading"
+            )
+            window.live_write_mode_action.trigger()
+            self.assertFalse(window.live_write_mode_enabled)
+            self.assertEqual(
+                window.continue_hardware_button.title_label.text(), "Read IL"
+            )
+            with patch(
+                "ilm_app.QMessageBox.question",
+                return_value=QMessageBox.Yes,
+            ) as confirm:
+                window.live_write_mode_action.trigger()
+
+            confirm.assert_called_once()
+            self.assertTrue(window.live_write_mode_enabled)
+            self.assertTrue(window.live_write_mode_action.isChecked())
+            self.assertEqual(
+                window.continue_hardware_button.title_label.text(),
+                "Live Reading",
+            )
+            self.assertTrue(window.write_shortcut.isEnabled())
+        finally:
+            window.close()
+
+    def test_live_write_mode_keeps_reading_pending_until_write(self):
+        window = MainWindow()
+        try:
+            window.run_data = RunData(Path("test-run"), [], {})
+            recorder = MagicMock()
+            recorder.attempts = []
+            window.run_recorder = recorder
+            worker_calls = []
+            worker = type("FakeWorker", (), {})()
+            worker.write_current = lambda: worker_calls.append("write")
+            window.hardware_worker = worker
+
+            with patch(
+                "ilm_app.QMessageBox.question",
+                return_value=QMessageBox.Yes,
+            ):
+                window.toggle_live_write_mode(True)
+
+            window.scroll_to_channel = MagicMock()
+            window.hardware_operator_required(7, 49)
+            self.assertFalse(window.hardware_live_indicator.isHidden())
+            self.assertFalse(window.continue_hardware_button.isEnabled())
+            window.hardware_reading_ready(7, 49, 1.2, 1.3)
+
+            self.assertFalse(window.hardware_live_indicator.isHidden())
+            self.assertEqual(window.run_data.measurements, [])
+            self.assertIsNotNone(window.hardware_pending_reading)
+            window.scroll_to_channel.assert_not_called()
+
+            window.write_hardware()
+
+            self.assertEqual(
+                [(record.channel, record.loss_1310, record.loss_1550)
+                 for record in window.run_data.measurements],
+                [(7, 1.2, 1.3)],
+            )
+            recorder.save.assert_called()
+            self.assertEqual(worker_calls, ["write"])
+            window.scroll_to_channel.assert_called_once_with(7)
+        finally:
+            window.close()
+
+    def test_noah_mode_commits_successful_read_and_advances_worker(self):
+        window = MainWindow()
+        try:
+            window.toggle_live_write_mode(False)
+            window.run_data = RunData(Path("test-run"), [], {})
+            recorder = MagicMock()
+            recorder.attempts = []
+            window.run_recorder = recorder
+            worker_calls = []
+            worker = type("FakeWorker", (), {})()
+            worker.write_current = lambda: worker_calls.append("write")
+            window.hardware_worker = worker
+            window.scroll_to_channel = lambda _channel: None
+
+            with patch(
+                "ilm_app.QMessageBox.question",
+                return_value=QMessageBox.Yes,
+            ):
+                window.toggle_noah_mode(True)
+
+            window.hardware_operator_required(7, 49)
+            window.hardware_reading_ready(7, 49, 1.2, 1.3)
+
+            self.assertEqual(
+                [(item.channel, item.physical_port, item.loss_1310, item.loss_1550)
+                 for item in window.run_data.measurements],
+                [(7, 49, 1.2, 1.3)],
+            )
+            recorder.record_attempt.assert_not_called()
+            recorder.save.assert_called()
+            self.assertEqual(worker_calls, ["write"])
+            self.assertIsNone(window.hardware_pending_reading)
+            self.assertFalse(window.write_hardware_button.isEnabled())
+            self.assertFalse(window.continue_hardware_button.isEnabled())
+        finally:
+            window.close()
+
+    def test_noah_mode_cannot_be_changed_during_a_hardware_run(self):
+        window = MainWindow()
+        try:
+            window.hardware_thread = object()
+            window.noah_mode_action.setChecked(True)
+            window.toggle_noah_mode(True)
+
+            self.assertFalse(window.noah_mode_enabled)
+            self.assertFalse(window.noah_mode_action.isChecked())
+        finally:
+            window.hardware_thread = None
+            window.close()
+
     def test_reference_controls_use_two_decimals_and_point_zero_one_steps(self):
         window = MainWindow()
 
@@ -511,6 +949,7 @@ class MainWindowTests(unittest.TestCase):
 
     def test_enter_can_read_repeatedly_before_writing(self):
         window = MainWindow()
+        window.toggle_live_write_mode(False)
         window.run_data = RunData(Path("test-run"), [], {})
         calls = []
 

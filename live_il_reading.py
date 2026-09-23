@@ -51,8 +51,11 @@ class LiveILReadingWorker(QObject):
             self.meter.connect()
             self.connected.emit(self.meter.description or "OP815 connected")
         except Exception as error:
+            # Leave the worker event loop available until the UI receives the
+            # error and asks this worker to close. Otherwise the worker can be
+            # deleted before the queued failure handler has a chance to clean
+            # up its thread safely.
             self.failed.emit(str(error))
-            self._finish()
 
     @pyqtSlot(float, float)
     def read(self, reference_1310, reference_1550):
@@ -624,6 +627,9 @@ class LiveILReadingDialog(QDialog):
             self.repeatability_read_pending = False
             self.repeatability_read_button.setEnabled(self.connected)
         self.status_label.setText("Reading failed: %s" % message)
+        if not self.connected and self.thread is not None:
+            self._shutdown_worker()
+            self.status_label.setText("Connection failed: %s" % message)
 
     def stop_meter(self):
         if self.worker is None or self.thread is None:

@@ -11,6 +11,9 @@ class FakeOP815:
         self.connected = False
         self.closed = False
 
+    def find_devices(self):
+        return [(0, "OP815", "FAKE-123")]
+
     def connect(self):
         self.connected = True
 
@@ -28,6 +31,7 @@ class PowerMeterTests(unittest.TestCase):
 
         self.assertEqual(meter.description, "Fake OP815")
         self.assertEqual(meter.usb_serial, "FAKE-123")
+        self.assertEqual(meter.find_devices(), [(0, "OP815", "FAKE-123")])
         meter.connect()
         self.assertTrue(driver.connected)
         self.assertEqual(

@@ -47,7 +47,7 @@ class RunPersistenceTests(unittest.TestCase):
             directory / "ILM-Run_260916_112653_test1-test1.csv",
         )
 
-    def test_save_writes_csv_json_and_attempt_history(self):
+    def test_save_writes_measurements_without_derived_analysis_or_attempt_history(self):
         with tempfile.TemporaryDirectory() as directory:
             recorder = RunRecorder(
                 root=directory,
@@ -59,6 +59,12 @@ class RunPersistenceTests(unittest.TestCase):
             recorder.save(rows)
             recorder.record_attempt(1, 1.7, 1.8, 1, retest=True)
             recorder.replacement_analysis = {"applicable": False}
+            recorder.completed_replacements = [
+                {
+                    "current_port": 1,
+                    "replacement_port": 49,
+                }
+            ]
             recorder.save([MeasurementRecord(1, 1.7, 1.8, 1)])
 
             self.assertTrue(recorder.csv_path.is_file())
@@ -66,9 +72,9 @@ class RunPersistenceTests(unittest.TestCase):
             payload = load_run_json(recorder.json_path)
             self.assertEqual(payload["warning_limit_db"], 2.0)
             self.assertEqual(payload["measurements"][0]["physical_port"], 1)
-            self.assertEqual(payload["replacement_analysis"]["applicable"], False)
-            self.assertEqual(len(payload["attempts"]), 2)
-            self.assertTrue(payload["attempts"][1]["retest"])
+            self.assertNotIn("replacement_analysis", payload)
+            self.assertNotIn("completed_replacements", payload)
+            self.assertNotIn("attempts", payload)
             with recorder.csv_path.open(newline="", encoding="utf-8") as csv_file:
                 csv_rows = list(csv.reader(csv_file))
             self.assertEqual(csv_rows[1][:3], ["1", "1.7000", "1.8000"])
@@ -99,6 +105,19 @@ class RunPersistenceTests(unittest.TestCase):
                 "%s.json" % recorder.directory.name,
             )
             self.assertTrue(recorder.json_path.is_file())
+
+    def test_fixed_directory_recorder_writes_a_numbered_run_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_directory = Path(directory) / "Unit-17688" / "Run-2"
+            recorder = RunRecorder(
+                metadata={"Run number": "2", "Operating band": "C band"},
+                directory=run_directory,
+            )
+            recorder.save([MeasurementRecord(1, 1.0, 1.1, 1)])
+
+            self.assertEqual(recorder.csv_path, run_directory / "Run-2.csv")
+            self.assertTrue((run_directory / "Run-2.csv").is_file())
+            self.assertTrue((run_directory / "Run-2.json").is_file())
 
     def test_existing_legacy_run_json_remains_supported(self):
         with tempfile.TemporaryDirectory() as directory:

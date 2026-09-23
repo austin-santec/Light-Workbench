@@ -37,6 +37,11 @@ class FakeMeter:
         self.closed = True
 
 
+class DisconnectedFakeMeter(FakeMeter):
+    def connect(self):
+        raise RuntimeError("No OP815/ILM was detected over USB.")
+
+
 class LiveILReadingDialogTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -84,6 +89,18 @@ class LiveILReadingDialogTests(unittest.TestCase):
         dialog.close()
         QTest.qWait(100)
         self.assertTrue(meter.closed)
+
+    def test_connection_failure_is_reported_and_worker_is_cleaned_up(self):
+        dialog = LiveILReadingDialog(meter_factory=DisconnectedFakeMeter)
+
+        QTest.mouseClick(dialog.start_button, Qt.LeftButton)
+        QTest.qWait(150)
+
+        self.assertIn("Connection failed", dialog.status_label.text())
+        self.assertIsNone(dialog.worker)
+        self.assertIsNone(dialog.thread)
+        self.assertTrue(DisconnectedFakeMeter.instances[-1].closed)
+        dialog.close()
 
     def test_reference_changes_can_be_shared_with_main_setup(self):
         dialog = LiveILReadingDialog(

@@ -53,6 +53,20 @@ def _production_reading(record):
     )
 
 
+def recommendation_category(recommendation, warning_limit):
+    """Return required for any over-limit current wavelength, otherwise optional."""
+    category = recommendation.get("category")
+    if category in ("required", "optional"):
+        return category
+    current_1310 = recommendation.get("current_loss_1310_db")
+    current_1550 = recommendation.get("current_loss_1550_db")
+    if current_1310 is not None and current_1550 is not None:
+        is_over_limit = current_1310 > warning_limit or current_1550 > warning_limit
+    else:
+        is_over_limit = recommendation.get("current_worst_loss_db", 0) > warning_limit
+    return "required" if is_over_limit else "optional"
+
+
 def analyze_replacements(
     production_records,
     extra_readings,
@@ -136,6 +150,13 @@ def analyze_replacements(
         result["recommendations"].append(
             {
                 "logical_channel": channel,
+                "category": recommendation_category(
+                    {
+                        "current_loss_1310_db": current.loss_1310,
+                        "current_loss_1550_db": current.loss_1550,
+                    },
+                    warning_limit,
+                ),
                 "current_physical_port": current.port,
                 "current_loss_1310_db": current.loss_1310,
                 "current_loss_1550_db": current.loss_1550,
@@ -172,8 +193,80 @@ def analyze_replacements(
     return result
 
 
+def normalise_completed_replacements(records):
+    """Validate and normalize current-port to replacement-port records.
+
+    The former record schema also stored a logical channel. Continue accepting
+    it when loading older run JSON, but normalize it to the two-port schema.
+    """
+    normalized = []
+    current_ports = set()
+    replacement_ports = set()
+    for index, record in enumerate(records or [], start=1):
+        if not isinstance(record, dict):
+            raise ValueError("Completed replacement %d is not a record." % index)
+        try:
+            current_port = int(
+                record.get("current_port", record.get("original_physical_port"))
+            )
+            replacement_port = int(
+                record.get("replacement_port", record.get("replacement_physical_port"))
+            )
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("Completed replacement %d contains invalid ports." % index)
+        if current_port < 1 or replacement_port < 1:
+            raise ValueError("Completed replacement ports must be positive numbers.")
+        if current_port in current_ports:
+            raise ValueError(
+                "Current Port %d is recorded more than once." % current_port
+            )
+        if replacement_port in replacement_ports:
+            raise ValueError(
+                "Replacement Port %d is recorded more than once."
+                % replacement_port
+            )
+        current_ports.add(current_port)
+        replacement_ports.add(replacement_port)
+        normalized.append(
+            {
+                "current_port": current_port,
+                "replacement_port": replacement_port,
+            }
+        )
+    return normalized
+
+
+def completed_replacement_metadata(records):
+    """Convert completed replacement records into readable CSV metadata."""
+    records = normalise_completed_replacements(records)
+    metadata = {
+        "Completed replacements": str(len(records)) if records else "None recorded"
+    }
+    for index, record in enumerate(records, start=1):
+        metadata["Completed replacement %d" % index] = (
+            "Current Port %d -> Replacement Port %d"
+            % (
+                record["current_port"],
+                record["replacement_port"],
+            )
+        )
+    return metadata
+
+
 def replacement_metadata(result: dict) -> dict[str, str]:
     """Convert analysis results into readable CSV metadata rows."""
+    recommendations = result["recommendations"]
+    required_recommendations = [
+        recommendation
+        for recommendation in recommendations
+        if recommendation_category(recommendation, result["warning_limit_db"])
+        == "required"
+    ]
+    optional_recommendations = [
+        recommendation
+        for recommendation in recommendations
+        if recommendation not in required_recommendations
+    ]
     metadata = {
         "Replacement analysis": result["status"],
         "Designed channel count": str(result["designed_channel_count"]),
@@ -183,14 +276,39 @@ def replacement_metadata(result: dict) -> dict[str, str]:
         "Replacement warning limit dB": "%.4f" % result["warning_limit_db"],
         "Replacement minimum improvement dB": "%.4f"
         % result["minimum_improvement_db"],
+        "Required replacements": str(len(required_recommendations)),
+        "Optional Replacements": str(len(optional_recommendations)),
     }
     if result["missing_channels"]:
         metadata["Replacement missing production channels"] = ", ".join(
             str(channel) for channel in result["missing_channels"]
         )
-    if result["recommendations"]:
-        for index, recommendation in enumerate(result["recommendations"], start=1):
-            metadata["Replacement recommendation %d" % index] = (
+    if recommendations:
+        for category, categorized in (
+            ("Required", required_recommendations),
+            ("Optional", optional_recommendations),
+        ):
+            for index, recommendation in enumerate(categorized, start=1):
+                metadata["%s replacement recommendation %d" % (category, index)] = (
+                    "Logical %d (physical %d, 1310 %.4f dB, 1550 %.4f dB) -> "
+                    "Physical %d (1310 %.4f dB, 1550 %.4f dB); improvement %.4f dB"
+                    % (
+                        recommendation["logical_channel"],
+                        recommendation["current_physical_port"],
+                        recommendation["current_loss_1310_db"],
+                        recommendation["current_loss_1550_db"],
+                        recommendation["candidate_physical_port"],
+                        recommendation["candidate_loss_1310_db"],
+                        recommendation["candidate_loss_1550_db"],
+                        recommendation["improvement_db"],
+                    )
+                )
+
+        for index, recommendation in enumerate(recommendations, start=1):
+            category_label = recommendation_category(
+                recommendation, result["warning_limit_db"]
+            ).title()
+            metadata["Replacement recommendation %d" % index] = category_label + (
                 "Logical %d (physical %d, 1310 %.4f dB, 1550 %.4f dB) -> "
                 "Physical %d (1310 %.4f dB, 1550 %.4f dB); improvement %.4f dB"
                 % (

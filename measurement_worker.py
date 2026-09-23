@@ -5,6 +5,8 @@ from collections.abc import Mapping, Sequence
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
+from hardware.interfaces import OpticalSwitch, PowerMeter
+
 
 class MeasurementWorker(QObject):
     """Run a channel sequence away from the Qt UI thread.
@@ -26,14 +28,16 @@ class MeasurementWorker(QObject):
 
     def __init__(
         self,
-        power_meter,
-        switch,
+        power_meter: PowerMeter,
+        switch: OpticalSwitch,
         channels: Sequence[int] | None,
         reference_powers: Mapping[int, float],
         manual_channel_order=False,
         existing_channels: Sequence[int] | None = None,
         resume_existing=False,
         resume_full_pass=False,
+        live_write_mode=False,
+        live_write_interval=1.0,
     ):
         super().__init__()
         self.power_meter = power_meter
@@ -44,6 +48,8 @@ class MeasurementWorker(QObject):
         self.existing_channels = set(existing_channels or ())
         self.resume_existing = bool(resume_existing)
         self.resume_full_pass = bool(resume_full_pass)
+        self.live_write_mode = bool(live_write_mode)
+        self.live_write_interval = max(0.1, float(live_write_interval))
         self._stop_event = threading.Event()
         self._operator_ready = threading.Event()
         self._channel_selection_event = threading.Event()
@@ -60,6 +66,8 @@ class MeasurementWorker(QObject):
 
     @pyqtSlot()
     def run(self):
+        terminal_state = None
+        terminal_message = None
         try:
             self.switch.connect()
             self.power_meter.connect()
@@ -110,14 +118,43 @@ class MeasurementWorker(QObject):
                     start_channel,
                 )
 
-            self.completed.emit()
+            terminal_state = "completed"
         except InterruptedError:
-            self.stopped.emit()
+            terminal_state = "stopped"
         except Exception as error:
-            self.failed.emit(str(error))
+            terminal_state = "failed"
+            terminal_message = str(error)
         finally:
-            self.power_meter.close()
-            self.switch.close()
+            # Do not notify the UI that the worker has completed until both
+            # instruments have been released. The previous ordering emitted
+            # the terminal signal first, allowing QThread cleanup and queued
+            # UI callbacks to race with the worker's native-driver teardown.
+            cleanup_errors = []
+            for device in (self.power_meter, self.switch):
+                try:
+                    device.close()
+                except Exception as error:
+                    cleanup_errors.append(str(error))
+            if cleanup_errors:
+                cleanup_message = "; ".join(cleanup_errors)
+                if terminal_state == "completed":
+                    terminal_state = "failed"
+                    terminal_message = "Could not close hardware cleanly: %s" % cleanup_message
+                elif terminal_state == "failed":
+                    terminal_message = "%s (cleanup: %s)" % (
+                        terminal_message,
+                        cleanup_message,
+                    )
+
+        # Terminal signals are intentionally emitted after the finally block
+        # so the UI never starts thread shutdown while a device close is still
+        # executing in the worker thread.
+        if terminal_state == "completed":
+            self.completed.emit()
+        elif terminal_state == "stopped":
+            self.stopped.emit()
+        elif terminal_state == "failed":
+            self.failed.emit(terminal_message or "Hardware worker failed.")
 
     def _run_channels(self, channels, existing_channels=None, start_channel=None):
         """Run channels while allowing safe mid-run channel overrides."""
@@ -212,9 +249,10 @@ class MeasurementWorker(QObject):
         physical_port = self.switch.set_channel(channel)
         self._operator_ready.clear()
         self.operator_required.emit(channel, physical_port)
-        change = self._wait_for_operator()
-        if change is not None:
-            return change
+        if not self.live_write_mode:
+            change = self._wait_for_operator()
+            if change is not None:
+                return change
         self._raise_if_stopped()
 
         while True:
@@ -227,10 +265,14 @@ class MeasurementWorker(QObject):
                 loss_1310,
                 loss_1550,
             )
-            decision = self._wait_for_read_or_write()
+            decision = self._wait_for_read_or_write(
+                live_update=self.live_write_mode
+            )
             self._raise_if_stopped()
             if isinstance(decision, dict):
                 return decision
+            if decision == "live_update":
+                continue
             if decision == "write":
                 if emit_progress:
                     self.progress_changed.emit(index, total)
@@ -332,9 +374,14 @@ class MeasurementWorker(QObject):
             self._raise_if_stopped()
         return self._take_channel_change()
 
-    def _wait_for_read_or_write(self):
-        while not self._decision_event.wait(0.1):
-            self._raise_if_stopped()
+    def _wait_for_read_or_write(self, live_update=False):
+        if live_update:
+            if not self._decision_event.wait(self.live_write_interval):
+                self._raise_if_stopped()
+                return "live_update"
+        else:
+            while not self._decision_event.wait(0.1):
+                self._raise_if_stopped()
         with self._decision_lock:
             decision = self._decision
             self._decision = None

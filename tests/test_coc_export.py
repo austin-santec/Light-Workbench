@@ -43,6 +43,7 @@ class CocExportTests(unittest.TestCase):
                 "OSX-150-TEST",
                 "00123",
                 export_date=date(2026, 9, 16),
+                tested_by="AJ",
             )
             workbook = load_workbook(output)
             sheet = workbook["OSX Template"]
@@ -51,6 +52,7 @@ class CocExportTests(unittest.TestCase):
             self.assertEqual(sheet["B4"].value, "OSX-150-TEST")
             self.assertEqual(sheet["D4"].value, "00123")
             self.assertEqual(sheet["F4"].value.date(), date(2026, 9, 16))
+            self.assertEqual(sheet["G4"].value, "AJ")
             self.assertEqual(sheet["D11"].value, 1.2345)
             self.assertEqual(sheet["E11"].value, 2.3456)
             self.assertIsNone(sheet["D12"].value)

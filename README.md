@@ -36,6 +36,8 @@ For every channel, it can:
   encountered during the selected test channels.
 - Use the entered serial numbers in the run folder and CSV names.
 - Preserve every previously accepted row if the run is stopped with Ctrl+C.
+- Store multiple numbered runs for one unit while sharing completed replacements
+  and designated spare ports across those runs.
 
 The application does **not** change the references saved in the ILM or edit the
 replacement-channel configuration saved in the OSX-150.
@@ -62,13 +64,15 @@ Updates` automatically refreshes both values without saving data and changes to
 | `ILMReadLoss.py` | Main application: prompts, calculations, retesting, and CSV output |
 | `ilm_app.py` | Light Workbench PyQt5 desktop application for saved CSV runs, loss-limit analysis, and hardware control |
 | `run_data.py` | CSV loader and configurable over-limit analysis model |
-| `run_persistence.py` | Atomic CSV/JSON run persistence and retest attempt history |
+| `run_persistence.py` | Atomic CSV/JSON persistence for accepted measurements and timing metadata |
+| `unit_persistence.py` | Shared unit records, numbered runs, replacements, and designated spares |
 | `coc_export.py` | XLSX COC template copying, cell mapping, serial lookup, and export |
 | `ilm_app.spec` | PyInstaller one-folder build definition for the desktop application |
 | `build_windows.ps1` | Repeatable 32-bit Windows build command |
 | `requirements-win32.txt` | Pinned 32-bit application and packaging dependencies |
 | `op815_driver.py` | Documented 32-bit DLL wrapper for the ILM/OP815 |
 | `power_meter.py` | Application adapter for the OP815 driver plus a simulated meter for testing |
+| `hardware/interfaces.py` | Vendor-neutral power-meter, laser-source, and optical-switch contracts |
 | `osx150_driver.py` | Documented PyVISA/SCPI driver for the OSX-150 |
 | `red_light_test.py` | Separate VFL pre-test dialog for manually routing switch channels |
 | `live_il_reading.py` | Meter-only live IL reading dialog with no switch control or run persistence |
@@ -79,7 +83,7 @@ Updates` automatically refreshes both values without saving data and changes to
 | `README_INSTALL.txt` | Light Workbench ZIP deployment, prerequisite, and quick-start instructions |
 | `Check Dependencies.cmd` | Optional launcher for the bundled dependency and connection report |
 | `ILM_READING_GUIDE.html` | Browser-based operator guide for the hardware IL-reading workflow |
-| `IL-Reads/` | Automatically generated measurement-run folders; desktop runs use `ILM-Run_YYMMDD_HHMMSS_[main board serial]-[switch serial]` with missing serials omitted, and the CSV uses the same base name as its folder |
+| `ILM-Reads/` | Automatically generated unit folders containing numbered `Run-N-[switch serial]` folders; legacy timestamped and unsuffixed numbered run folders remain supported |
 | `tests/` | Hardware-free automated tests for the application and data models |
 
 The vendor `OP815M.dll` is not modified by this project. `power_meter.py`
@@ -87,6 +91,14 @@ keeps the measurement workflow dependent on a small Python interface: the
 real `SantecPowerMeter` delegates to the existing `OP815` wrapper, while
 `SimulatedPowerMeter` supplies deterministic readings for tests and future UI
 development without connected equipment.
+
+The vendor-neutral contracts in `hardware/interfaces.py` are the first step
+toward supporting more equipment. The current integrated ILM implements the
+`PowerMeter` contract and the OSX-150 implements the `OpticalSwitch` contract.
+A future OPM plus separate laser can implement `PowerMeter` and `LaserSource`
+independently without requiring the application workflow to know the vendor
+or connection protocol. Existing top-level driver modules remain in place for
+backward compatibility while the architecture is being migrated incrementally.
 
 The Light Workbench desktop application can be started with:
 
@@ -96,7 +108,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the current release version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.6.4**.
+current Light Workbench release is version **1.7.1**.
 
 Use `Help > IL Instructions` to open the bundled browser-based operator guide
 for the hardware IL-reading workflow.
@@ -116,11 +128,11 @@ py -3.11-32 ilm_app.py path\to\output.csv
 ```
 
 When the same-named JSON file is beside the selected CSV, the viewer also restores the saved
-warning limit and displays the number of retest attempts recorded for that run.
+warning limit, physical-port mappings, and switch-test timing metadata.
 
 Select one or more completed rows in the results table and choose `Retest
 Selected`. The latest accepted value replaces that channel in the CSV and
-table, while the JSON attempt history retains the earlier value.
+table; only the latest written value is retained for the run.
 
 Use `Select Over-Limit` to select every channel above the current warning
 limit. Each flagged row identifies whether 1310 nm, 1550 nm, or both
@@ -152,6 +164,23 @@ IL Values` then commits the result to the table and CSV/JSON files before the
 worker advances to the next channel. Starting and stopping a run without
 writing any measurement leaves no empty run folder, CSV, or JSON file behind.
 
+For a one-step workflow, select `Tools > Noah Mode` while no hardware run is
+active and confirm the warning. The Read button becomes `Read & Write IL`:
+each successful reading is immediately committed to the run and the worker
+advances to the next channel. A failed reading is not committed. Noah Mode is
+off by default, lasts only until the application closes, and disables the
+separate Write IL button and shortcut while active. Turn it off to restore the
+standard read-review-write workflow.
+
+`Tools > Live Write Mode` provides a second optional workflow. After the run
+routs each channel, the ILM automatically refreshes both wavelengths about
+once per second. The displayed value is not saved until `Write IL` is pressed;
+then the latest complete reading is committed and the run advances. The red
+`LIVE` indicator appears while updates are active.
+Live Write Mode is enabled by default on startup, lasts only for the current
+application session, and cannot be changed during an active run. It is separate from
+Noah Mode, which saves after a single reading.
+
 The same panel includes a guarded `Start Real Hardware` path. It runs the
 existing OP815 DLL and OSX-150 VISA calls in a background worker, asks the
 operator to move the cable before each reading, and provides a stop control
@@ -165,7 +194,13 @@ logical channel count instead of relying on the simulation channel setting.
 
 Before starting real hardware, the setup panel supports a full configured
 pass, one channel, or specific channels and inclusive ranges. It also captures
-the main-board serial, switch serial, and operating band in the run metadata.
+the main-board serial, switch serial, operating band, and operator initials in
+the run metadata.
+
+When `Start Run` is clicked, Light Workbench separately checks for missing
+setup metadata and warns when both reference values are `0.00`. Each warning
+allows the operator to return to setup or continue without metadata/with the
+entered reference values.
 For initial hardware validation, use the one-channel or short-range modes.
 
 The setup panel only shows the selector needed by the chosen channel mode:
@@ -176,10 +211,42 @@ Full configured pass also has an optional `Choose channel order manually`
 checkbox for scattered one-off setups. When enabled, the application asks for
 the next channel before each measurement. Previously accepted channels may be
 entered again; the newest accepted reading replaces that channel's current
-row while the JSON attempt history retains the earlier value. After every
+row. After every
 configured channel has been covered once, the operator can retest another
 channel or finish the pass. The checkbox is off by default, so the normal
 ordered full pass is unchanged.
+
+## Multiple runs for one unit
+
+Hardware test setup includes a `Run number` field. New numbered runs are stored
+under a shared unit folder:
+
+```text
+ILM-Reads/
+`-- Unit-17688/
+    |-- unit.json
+    |-- Run-1-12345678901/
+    |   |-- Run-1-12345678901.csv
+    |   `-- Run-1-12345678901.json
+    `-- Run-2-12345678901/
+        |-- Run-2-12345678901.csv
+        `-- Run-2-12345678901.json
+```
+
+The operating band, tested-by initials, timing, and written measurements belong
+to each run. Main board identity, part number, completed replacements, and
+designated spare ports belong to the unit. The switch serial belongs to the
+individual run because a failed switch can be replaced without changing the
+unit. Use `Load Run`
+beside the run number to open an existing numbered run for the entered unit.
+Replacement recommendations are recalculated from the selected run and are not
+stored as permanent results.
+
+The table also has an optional `Compare with` selector. Choose another numbered
+run for the same unit to add read-only 1310 nm and 1550 nm comparison columns.
+Choose `No comparison` to hide them again. Comparison values are matched by
+logical channel, do not affect the current run's analysis or filters, and are
+not written back to either run.
 
 ## Replacement analysis for switches with extra physical ports
 
@@ -198,13 +265,25 @@ candidate pool, adds displaced production ports back into the spare pool, and
 then designates the best remaining readings as the requested spares. The
 default is two designated spares, and they do not have to be within the
 warning limit because they are emergency-use backups; this is shown explicitly.
+Recommendations for channels currently over the warning limit are shown as
+required replacements. Improvements to channels already within the limit are
+shown separately as `Optional Replacements`.
 
-The logical channel, measured physical port, both losses, and accepted reading
-history are preserved in `run.json`. Replacement recommendations and the
-post-replacement designated-spare selections are also written to the CSV
-metadata, so they remain available when the run is opened on another computer.
+The logical channel, measured physical port, and both losses are preserved in
+the run's CSV/JSON files. Replacement recommendations are calculated and shown
+on screen only; they are not stored as run data.
 The program does not change the OSX-150 replacement configuration; the
 recommendations are an analysis for the operator to act on physically.
+
+After physically performing swaps, use `Record Replaced Ports...` in the
+Replacement analysis panel. Recommended swaps are pre-filled, and the table
+can be edited using the `Current Port` and `Replacement Port` fields.
+Completed replacements and designated spare ports are displayed in the panel
+and saved in the unit's shared `unit.json`; recording them does not alter the
+original measurements or recommendations. They remain available when another
+numbered run for the same unit is loaded.
+Use `Copy Replacement Notes` beside the recording button to copy the port pairs
+as plain text for pasting into the Unit Editor notes.
 
 ## COC workbook export
 
@@ -218,7 +297,8 @@ The current template's `OSX Template` sheet receives the values in its split
 table: channels 1-45 use rows 11-55 and channels 46-48 use rows 67-69. The
 1310 nm values go in column D and 1550 nm values go in column E. The Part
 Number is written to merged `B4:C4` through `B4`, the Main Board serial to
-merged `D4:E4` through `D4`, and the current date to `F4`. Other template
+merged `D4:E4` through `D4`, the current date to `F4`, and the Tested by
+initials to `G4`. Other template
 values, formatting, formulas, and print settings are preserved.
 
 The first output is named `COC OSX-150 <Main Board serial>.xlsx` and is saved
@@ -232,11 +312,13 @@ default lookup folder is
 `U:\Product Log\Units-COCs-Param Files\OSX-150`. For a Main Board serial such
 as `17688`, the lookup finds a directory beginning with
 `SN17688_` and uses the remainder of that directory name as the part number.
-The lookup folder can be changed from `File > Part Number Lookup Folder...`,
-and the part number can always be entered manually.
+`File > Part Number Lookup Folder` opens the designated lookup folder in
+Windows File Explorer. The location is fixed and is not editable in the
+application. The part number can always be entered manually.
 The Part number field is also an editable drop-down containing the current
 standard OSX-150 part numbers. Operating band is selected from `O band` or
-`C band`.
+`C band`. The `Tested by` field accepts the operator's initials and is saved
+with the run and copied into `G4` of the COC workbook.
 
 The packaged ZIP includes `Check Dependencies.cmd`, which launches a
 non-destructive report for bundled files, VISA, connected instruments, run
