@@ -6,8 +6,9 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from infrastructure.schema import CURRENT_UNIT_SCHEMA_VERSION, migrate_unit_payload
 
-UNIT_SCHEMA_VERSION = 2
+UNIT_SCHEMA_VERSION = CURRENT_UNIT_SCHEMA_VERSION
 UNIT_FILENAME = "unit.json"
 
 
@@ -149,7 +150,7 @@ def load_unit_record(unit_directory):
             "runs": [],
         }
     with path.open("r", encoding="utf-8") as json_file:
-        payload = json.load(json_file)
+        payload = migrate_unit_payload(json.load(json_file))
     return {
         "schema_version": payload.get("schema_version", UNIT_SCHEMA_VERSION),
         "unit_metadata": {

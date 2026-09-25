@@ -5,7 +5,9 @@ from collections.abc import Mapping, Sequence
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
+from domain.measurement import calculate_insertion_loss
 from hardware.interfaces import OpticalSwitch, PowerMeter
+from hardware.session import OpticalTestSession
 
 
 class MeasurementWorker(QObject):
@@ -42,6 +44,7 @@ class MeasurementWorker(QObject):
         super().__init__()
         self.power_meter = power_meter
         self.switch = switch
+        self.hardware_session = OpticalTestSession(power_meter, switch=switch)
         self.channels = list(channels) if channels is not None else None
         self.reference_powers = dict(reference_powers)
         self.manual_channel_order = bool(manual_channel_order)
@@ -69,8 +72,7 @@ class MeasurementWorker(QObject):
         terminal_state = None
         terminal_message = None
         try:
-            self.switch.connect()
-            self.power_meter.connect()
+            self.hardware_session.connect()
             configured_count = None
             if self.channels is not None:
                 channels = list(self.channels)
@@ -129,21 +131,19 @@ class MeasurementWorker(QObject):
             # instruments have been released. The previous ordering emitted
             # the terminal signal first, allowing QThread cleanup and queued
             # UI callbacks to race with the worker's native-driver teardown.
-            cleanup_errors = []
-            for device in (self.power_meter, self.switch):
-                try:
-                    device.close()
-                except Exception as error:
-                    cleanup_errors.append(str(error))
-            if cleanup_errors:
-                cleanup_message = "; ".join(cleanup_errors)
+            cleanup_error = None
+            try:
+                self.hardware_session.close()
+            except Exception as error:
+                cleanup_error = str(error)
+            if cleanup_error:
                 if terminal_state == "completed":
                     terminal_state = "failed"
-                    terminal_message = "Could not close hardware cleanly: %s" % cleanup_message
+                    terminal_message = "Could not close hardware cleanly: %s" % cleanup_error
                 elif terminal_state == "failed":
                     terminal_message = "%s (cleanup: %s)" % (
                         terminal_message,
-                        cleanup_message,
+                        cleanup_error,
                     )
 
         # Terminal signals are intentionally emitted after the finally block
@@ -257,13 +257,12 @@ class MeasurementWorker(QObject):
 
         while True:
             measurements = self.power_meter.measure_both_wavelengths()
-            loss_1310 = self.reference_powers[1310] - measurements[1310]
-            loss_1550 = self.reference_powers[1550] - measurements[1550]
+            losses = calculate_insertion_loss(self.reference_powers, measurements)
             self.reading_ready.emit(
                 channel,
                 physical_port,
-                loss_1310,
-                loss_1550,
+                losses[1310],
+                losses[1550],
             )
             decision = self._wait_for_read_or_write(
                 live_update=self.live_write_mode

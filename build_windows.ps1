@@ -1,6 +1,23 @@
 $ErrorActionPreference = "Stop"
 
-py -3.11-32 -m PyInstaller --noconfirm --clean ilm_app.spec
+$launcherCheck = $null
+try {
+    $launcherCheck = & py -3.11-32 -c "import sys; print(sys.executable)" 2>$null
+} catch {
+    $launcherCheck = $null
+}
+if ($LASTEXITCODE -eq 0) {
+    py -3.11-32 -m PyInstaller --noconfirm --clean ilm_app.spec
+} else {
+    $pythonDetails = & python -c "import struct, sys; print(sys.executable); print(struct.calcsize('P') * 8)" 2>$null
+    if ($LASTEXITCODE -ne 0 -or $pythonDetails[-1] -ne "32") {
+        throw "A registered 32-bit Python 3.11 interpreter is required to build Light Workbench."
+    }
+    python -m PyInstaller --noconfirm --clean ilm_app.spec
+}
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller failed with exit code $LASTEXITCODE."
+}
 
 $distributionPath = Join-Path $PSScriptRoot "dist\LightWorkbench"
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "README_INSTALL.txt") `

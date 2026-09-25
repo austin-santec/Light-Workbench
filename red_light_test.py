@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
+from application.red_light_controller import RedLightTestController
 from osx150_driver import OSX150
 
 
@@ -28,9 +29,15 @@ class RedLightTestDialog(QDialog):
         super().__init__(parent)
         self.switch_factory = switch_factory
         self.switch = None
+        self.red_controller = RedLightTestController(self)
+        self.red_controller.connected.connect(self._switch_connected)
+        self.red_controller.channel_selected.connect(self._channel_selected)
+        self.red_controller.failed.connect(self._switch_failed)
+        self.red_controller.thread_finished.connect(self._controller_finished)
         self.channel_count = 0
         self.started = False
         self._last_routed_channel = None
+        self._last_requested_channel = None
 
         self.setWindowTitle("Red Light Test")
         self.setMinimumWidth(500)
@@ -107,45 +114,61 @@ class RedLightTestDialog(QDialog):
         self.start_button.setEnabled(False)
         self.status_label.setText("Connecting to the OSX-150...")
         try:
-            self.switch = self.switch_factory()
-            self.switch.connect()
-            self.channel_count = self.switch.configured_channel_count()
-            if self.channel_count < 1:
-                raise RuntimeError("The switch reported no usable channels.")
-            self.channel_spin.setRange(1, self.channel_count)
-            self.channel_spin.setEnabled(True)
-            self.previous_button.setEnabled(True)
-            self.next_button.setEnabled(True)
-            self.started = True
-            self._last_routed_channel = None
-            self.channel_spin.setValue(1)
-            self.select_channel(1)
-            self.stop_button.setEnabled(True)
+            self.red_controller.start(self.switch_factory)
+            self.switch = self.red_controller.switch
         except Exception as exc:
             self._close_switch()
             self.start_button.setEnabled(True)
             self.status_label.setText("Unable to start the Red Light Test.")
             QMessageBox.critical(self, "Red Light Test", "Could not connect to the switch:\n%s" % exc)
 
+    def _switch_connected(self, channel_count):
+        self.channel_count = channel_count
+        self.channel_spin.setRange(1, self.channel_count)
+        self.channel_spin.setEnabled(True)
+        self.previous_button.setEnabled(True)
+        self.next_button.setEnabled(True)
+        self.started = True
+        self._last_routed_channel = None
+        self._last_requested_channel = None
+        self.channel_spin.setValue(1)
+        self.select_channel(1)
+        self.stop_button.setEnabled(True)
+
+    def _channel_selected(self, channel, physical_port):
+        self._last_routed_channel = channel
+        self.selected_channel_label.setText(
+            "Selected channel: %d of %d" % (channel, self.channel_count)
+        )
+        self.status_label.setText(
+            "Physical port %s selected. Observe the VFL output, then choose "
+            "another channel." % physical_port
+        )
+
+    def _switch_failed(self, message):
+        if not self.started:
+            self.status_label.setText("Unable to start the Red Light Test.")
+            self.start_button.setEnabled(True)
+            QMessageBox.critical(
+                self,
+                "Red Light Test",
+                "Could not connect to the switch:\n%s" % message,
+            )
+            return
+        self.status_label.setText(message)
+
+    def _controller_finished(self):
+        self.switch = None
+
     def select_channel(self, channel=None):
         """Route the selected channel and report the physical port returned."""
-        if not self.started or self.switch is None:
+        if not self.started or self.red_controller.worker is None:
             return
         channel = self.channel_spin.value() if channel is None else int(channel)
-        if channel == self._last_routed_channel:
+        if channel == self._last_requested_channel:
             return
-        try:
-            physical_port = self.switch.set_channel(channel)
-            self._last_routed_channel = channel
-            self.selected_channel_label.setText(
-                "Selected channel: %d of %d" % (channel, self.channel_count)
-            )
-            self.status_label.setText(
-                "Physical port %s selected. Observe the VFL output, then choose "
-                "another channel." % physical_port
-            )
-        except Exception as exc:
-            self.status_label.setText("Could not select channel %d: %s" % (channel, exc))
+        self._last_requested_channel = channel
+        self.red_controller.select_channel(channel)
 
     def previous_channel(self):
         if self.started and self.channel_spin.value() > 1:
@@ -156,7 +179,7 @@ class RedLightTestDialog(QDialog):
             self.channel_spin.setValue(self.channel_spin.value() + 1)
 
     def stop_test(self):
-        if self.switch is None:
+        if self.red_controller.worker is None:
             return
         self._close_switch()
         self.started = False
@@ -170,11 +193,9 @@ class RedLightTestDialog(QDialog):
         self.status_label.setText("Disconnected. Click Start Red Light Test to reconnect.")
 
     def _close_switch(self):
-        if self.switch is not None:
-            try:
-                self.switch.close()
-            finally:
-                self.switch = None
+        if self.red_controller.worker is not None:
+            self.red_controller.stop_and_wait()
+        self.switch = None
 
     def closeEvent(self, event):
         self._close_switch()

@@ -2,9 +2,13 @@ import unittest
 from datetime import datetime, timedelta
 
 from switch_timing import SwitchTestTimer
+from domain.timing import SwitchTestTimer as DomainSwitchTestTimer
 
 
 class SwitchTimingTests(unittest.TestCase):
+    def test_legacy_module_reexports_domain_timer(self):
+        self.assertIs(SwitchTestTimer, DomainSwitchTestTimer)
+
     def test_sessions_accumulate_and_record_continuations(self):
         current_time = [datetime(2026, 9, 18, 8, 42, 15)]
         current_monotonic = [100.0]

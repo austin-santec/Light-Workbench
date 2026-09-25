@@ -2,6 +2,7 @@ import unittest
 
 from PyQt5.QtWidgets import QApplication
 
+from hardware.session import OpticalTestSession
 from measurement_worker import MeasurementWorker
 
 
@@ -90,6 +91,7 @@ class MeasurementWorkerTests(unittest.TestCase):
             [1],
             {1310: 0.72, 1550: 0.28},
         )
+        self.assertIsInstance(worker.hardware_session, OpticalTestSession)
         terminal_state = []
         worker.operator_required.connect(
             lambda _channel, _port: worker.continue_current()

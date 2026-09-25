@@ -70,6 +70,7 @@ class RunPersistenceTests(unittest.TestCase):
             self.assertTrue(recorder.csv_path.is_file())
             self.assertTrue(recorder.json_path.is_file())
             payload = load_run_json(recorder.json_path)
+            self.assertEqual(payload["schema_version"], 1)
             self.assertEqual(payload["warning_limit_db"], 2.0)
             self.assertEqual(payload["measurements"][0]["physical_port"], 1)
             self.assertNotIn("replacement_analysis", payload)

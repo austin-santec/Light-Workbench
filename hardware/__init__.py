@@ -6,5 +6,16 @@ the incremental refactor.  New application code should import contracts from
 """
 
 from .interfaces import LaserSource, OpticalSwitch, PowerMeter
+from .factory import HardwareFactory
+from .simulated import SimulatedLaserSource, SimulatedOpticalSwitch
+from .session import OpticalTestSession
 
-__all__ = ["LaserSource", "OpticalSwitch", "PowerMeter"]
+__all__ = [
+    "HardwareFactory",
+    "LaserSource",
+    "OpticalSwitch",
+    "PowerMeter",
+    "OpticalTestSession",
+    "SimulatedLaserSource",
+    "SimulatedOpticalSwitch",
+]

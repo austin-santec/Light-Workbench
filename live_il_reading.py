@@ -1,9 +1,7 @@
 """Standalone ILM/OP815 live-reading tool with no switch or run persistence."""
 
 from PyQt5.QtCore import (
-    QMetaObject,
     QObject,
-    QThread,
     QTimer,
     Qt,
     pyqtSignal,
@@ -24,8 +22,11 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
+from application.live_controller import LiveILReadingController
+from domain.measurement import calculate_insertion_loss
+from domain.reference import calculate_reference_offsets
+from hardware.session import OpticalTestSession
 from power_meter import SantecPowerMeter
-from reference_calculation import calculate_reference_offsets
 
 
 LIVE_UPDATE_PAUSE_MS = 1000
@@ -43,12 +44,13 @@ class LiveILReadingWorker(QObject):
     def __init__(self, meter):
         super().__init__()
         self.meter = meter
+        self.hardware_session = OpticalTestSession(meter)
         self._finished = False
 
     @pyqtSlot()
     def start(self):
         try:
-            self.meter.connect()
+            self.hardware_session.connect()
             self.connected.emit(self.meter.description or "OP815 connected")
         except Exception as error:
             # Leave the worker event loop available until the UI receives the
@@ -63,9 +65,11 @@ class LiveILReadingWorker(QObject):
             return
         try:
             measurements = self.meter.measure_both_wavelengths()
-            loss_1310 = reference_1310 - measurements[1310]
-            loss_1550 = reference_1550 - measurements[1550]
-            self.reading_ready.emit(loss_1310, loss_1550)
+            losses = calculate_insertion_loss(
+                {1310: reference_1310, 1550: reference_1550},
+                measurements,
+            )
+            self.reading_ready.emit(losses[1310], losses[1550])
         except Exception as error:
             self.failed.emit(str(error))
 
@@ -90,7 +94,7 @@ class LiveILReadingWorker(QObject):
         self._finished = True
         close_error = None
         try:
-            self.meter.close()
+            self.hardware_session.close()
         except Exception as error:
             close_error = str(error)
         finally:
@@ -118,6 +122,17 @@ class LiveILReadingDialog(QDialog):
         self.meter_factory = meter_factory
         self.thread = None
         self.worker = None
+        self.live_controller = LiveILReadingController(
+            self,
+            worker_factory=LiveILReadingWorker,
+        )
+        self.live_controller.connected.connect(self.meter_connected)
+        self.live_controller.reading_ready.connect(self.reading_ready)
+        self.live_controller.reference_ready.connect(self.reference_ready)
+        self.live_controller.failed.connect(self.reading_failed)
+        self.live_controller.thread_finished.connect(self.thread_finished)
+        self.read_requested.connect(self.live_controller.read_requested)
+        self.reference_requested.connect(self.live_controller.reference_requested)
         self.connected = False
         self.auto_calculate_reference = auto_calculate_reference
         self.repeatability_active = False
@@ -289,22 +304,9 @@ class LiveILReadingDialog(QDialog):
         if self.thread is not None:
             return
         try:
-            meter = self.meter_factory()
-            self.thread = QThread(self)
-            self.worker = LiveILReadingWorker(meter)
-            self.worker.moveToThread(self.thread)
-            self.thread.started.connect(self.worker.start)
-            self.read_requested.connect(self.worker.read, Qt.UniqueConnection)
-            self.reference_requested.connect(
-                self.worker.calculate_reference, Qt.UniqueConnection
-            )
-            self.worker.connected.connect(self.meter_connected)
-            self.worker.reading_ready.connect(self.reading_ready)
-            self.worker.reference_ready.connect(self.reference_ready)
-            self.worker.failed.connect(self.reading_failed)
-            self.worker.finished.connect(self.thread.quit)
-            self.worker.finished.connect(self.worker.deleteLater)
-            self.thread.finished.connect(self.thread_finished)
+            self.live_controller.start(self.meter_factory)
+            self.thread = self.live_controller.thread
+            self.worker = self.live_controller.worker
             self.start_button.setEnabled(False)
             self.read_button.setEnabled(False)
             self.stop_button.setEnabled(True)
@@ -663,17 +665,10 @@ class LiveILReadingDialog(QDialog):
 
     def _shutdown_worker(self):
         """Stop the meter thread and wait for remote-mode cleanup to finish."""
-        worker = self.worker
-        thread = self.thread
-        if worker is None or thread is None:
+        if self.worker is None or self.thread is None:
             return
 
-        if thread.isRunning():
-            QMetaObject.invokeMethod(worker, "stop", Qt.BlockingQueuedConnection)
-            thread.quit()
-            thread.wait(5000)
-        else:
-            worker.stop()
+        self.live_controller.stop_and_wait()
 
         self.connected = False
         self._close_reference_progress()

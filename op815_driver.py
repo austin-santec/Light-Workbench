@@ -82,6 +82,11 @@ class OP815:
 
         resolved_dll_path = find_op815_dll(dll_path)
         self.dll = ctypes.WinDLL(str(resolved_dll_path))
+        # OpenUSBDevice succeeds before OpenDriver finishes initialization.
+        # Track that intermediate state so a later failure cannot leave the
+        # OP815 locked until the USB cable or computer is reset.
+        self.usb_device_open = False
+        self.usb_handle = None
         self.driver_open = False
         self.remote_enabled = False
         self.description = None
@@ -228,22 +233,33 @@ class OP815:
 
         status = self.open_usb_device(device_index, ctypes.byref(handle))
         self._require_success("OpenUSBDevice", status)
+        self.usb_handle = handle.value
+        self.usb_device_open = True
 
-        status = self.open_driver(handle.value)
-        self._require_success("OpenDriver", status)
-        self.driver_open = True
+        try:
+            status = self.open_driver(handle.value)
+            self._require_success("OpenDriver", status)
+            self.driver_open = True
 
-        status = self.remote_mode(1)
-        self._require_success("RemoteMode(1)", status)
-        self.remote_enabled = True
+            status = self.remote_mode(1)
+            self._require_success("RemoteMode(1)", status)
+            self.remote_enabled = True
 
-        # This legacy DLL build does not return a dependable status from
-        # OperationMode.  The physical sources are therefore controlled
-        # explicitly for every measurement below.
-        self.operation_mode(1)
-        time.sleep(0.5)
-        self.turn_all_sources_off()
-        time.sleep(SOURCE_OFF_SETTLING_TIME_SECONDS)
+            # This legacy DLL build does not return a dependable status from
+            # OperationMode.  The physical sources are therefore controlled
+            # explicitly for every measurement below.
+            self.operation_mode(1)
+            time.sleep(0.5)
+            self.turn_all_sources_off()
+            time.sleep(SOURCE_OFF_SETTLING_TIME_SECONDS)
+        except Exception:
+            # Preserve the original connection error. close() still releases
+            # CloseDriver when only OpenUSBDevice succeeded.
+            try:
+                self.close()
+            except Exception:
+                pass
+            raise
 
     def set_source_state(self, source_id, enabled):
         """Turn one zero-based physical laser source on or off."""
@@ -371,13 +387,16 @@ class OP815:
         finally:
             self.remote_enabled = False
 
-        if self.driver_open:
+        usb_device_open = getattr(self, "usb_device_open", self.driver_open)
+        if usb_device_open:
             try:
                 self.close_driver()
             except Exception as error:
                 if cleanup_error is None:
                     cleanup_error = error
             finally:
+                self.usb_device_open = False
+                self.usb_handle = None
                 self.driver_open = False
 
         if cleanup_error is not None:

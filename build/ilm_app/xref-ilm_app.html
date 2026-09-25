@@ -26,13 +26,19 @@ imports:
  &#8226;   <a href="#_weakrefset">_weakrefset</a>
  &#8226;   <a href="#abc">abc</a>
  &#8226;   <a href="#app_info">app_info</a>
- &#8226;   <a href="#coc_export">coc_export</a>
+ &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
+ &#8226;   <a href="#application.hardware_session">application.hardware_session</a>
+ &#8226;   <a href="#application.run_controller">application.run_controller</a>
  &#8226;   <a href="#codecs">codecs</a>
  &#8226;   <a href="#collections">collections</a>
  &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#copyreg">copyreg</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#dependency_check">dependency_check</a>
+ &#8226;   <a href="#domain.comparison">domain.comparison</a>
+ &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.replacements">domain.replacements</a>
+ &#8226;   <a href="#domain.timing">domain.timing</a>
  &#8226;   <a href="#encodings">encodings</a>
  &#8226;   <a href="#encodings.aliases">encodings.aliases</a>
  &#8226;   <a href="#encodings.ascii">encodings.ascii</a>
@@ -158,13 +164,16 @@ imports:
  &#8226;   <a href="#enum">enum</a>
  &#8226;   <a href="#functools">functools</a>
  &#8226;   <a href="#genericpath">genericpath</a>
+ &#8226;   <a href="#hardware.factory">hardware.factory</a>
  &#8226;   <a href="#heapq">heapq</a>
+ &#8226;   <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
+ &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
+ &#8226;   <a href="#infrastructure.unit_repository">infrastructure.unit_repository</a>
  &#8226;   <a href="#io">io</a>
  &#8226;   <a href="#keyword">keyword</a>
  &#8226;   <a href="#linecache">linecache</a>
  &#8226;   <a href="#live_il_reading">live_il_reading</a>
  &#8226;   <a href="#locale">locale</a>
- &#8226;   <a href="#measurement_worker">measurement_worker</a>
  &#8226;   <a href="#ntpath">ntpath</a>
  &#8226;   <a href="#operator">operator</a>
  &#8226;   <a href="#os">os</a>
@@ -183,19 +192,15 @@ imports:
  &#8226;   <a href="#re._constants">re._constants</a>
  &#8226;   <a href="#re._parser">re._parser</a>
  &#8226;   <a href="#red_light_test">red_light_test</a>
- &#8226;   <a href="#replacement_analysis">replacement_analysis</a>
  &#8226;   <a href="#reprlib">reprlib</a>
  &#8226;   <a href="#run_data">run_data</a>
- &#8226;   <a href="#run_persistence">run_persistence</a>
  &#8226;   <a href="#sre_compile">sre_compile</a>
  &#8226;   <a href="#sre_constants">sre_constants</a>
  &#8226;   <a href="#sre_parse">sre_parse</a>
  &#8226;   <a href="#stat">stat</a>
- &#8226;   <a href="#switch_timing">switch_timing</a>
  &#8226;   <a href="#sys">sys</a>
  &#8226;   <a href="#traceback">traceback</a>
  &#8226;   <a href="#types">types</a>
- &#8226;   <a href="#unit_persistence">unit_persistence</a>
  &#8226;   <a href="#warnings">warnings</a>
  &#8226;   <a href="#weakref">weakref</a>
 
@@ -375,6 +380,9 @@ imported by:
     <a href="#PyQt5">PyQt5</a>
  &#8226;   <a href="#PyQt5.QtGui">PyQt5.QtGui</a>
  &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#application.live_controller">application.live_controller</a>
+ &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
+ &#8226;   <a href="#application.run_controller">application.run_controller</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#live_il_reading">live_il_reading</a>
  &#8226;   <a href="#measurement_worker">measurement_worker</a>
@@ -1462,11 +1470,161 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="app_config"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/app_config.py" type="text/plain"><tt>app_config</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#coc_export">coc_export</a>
+ &#8226;   <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
+ &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
+ &#8226;   <a href="#run_persistence">run_persistence</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="app_info"></a>
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/app_info.py" type="text/plain"><tt>app_info</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imported by:
     <a href="#ilm_app.py">ilm_app.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="application"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/application/__init__.py" type="text/plain"><tt>application</tt></a>
+<span class="moduletype">Package</span>  <div class="import">
+imports:
+    <a href="#application.hardware_planning">application.hardware_planning</a>
+ &#8226;   <a href="#application.hardware_session">application.hardware_session</a>
+ &#8226;   <a href="#application.live_controller">application.live_controller</a>
+ &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
+ &#8226;   <a href="#application.run_controller">application.run_controller</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application.hardware_planning">application.hardware_planning</a>
+ &#8226;   <a href="#application.hardware_session">application.hardware_session</a>
+ &#8226;   <a href="#application.live_controller">application.live_controller</a>
+ &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
+ &#8226;   <a href="#application.run_controller">application.run_controller</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="application.hardware_planning"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/application/hardware_planning.py" type="text/plain"><tt>application.hardware_planning</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#application">application</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application">application</a>
+ &#8226;   <a href="#application.hardware_session">application.hardware_session</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="application.hardware_session"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/application/hardware_session.py" type="text/plain"><tt>application.hardware_session</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#application">application</a>
+ &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application">application</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="application.live_controller"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/application/live_controller.py" type="text/plain"><tt>application.live_controller</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
+ &#8226;   <a href="#application">application</a>
+ &#8226;   <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application">application</a>
+ &#8226;   <a href="#live_il_reading">live_il_reading</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="application.red_light_controller"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/application/red_light_controller.py" type="text/plain"><tt>application.red_light_controller</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
+ &#8226;   <a href="#application">application</a>
+ &#8226;   <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application">application</a>
+ &#8226;   <a href="#red_light_test">red_light_test</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="application.run_controller"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/application/run_controller.py" type="text/plain"><tt>application.run_controller</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
+ &#8226;   <a href="#application">application</a>
+ &#8226;   <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
+ &#8226;   <a href="#measurement_worker">measurement_worker</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application">application</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
 
   </div>
 
@@ -2634,7 +2792,8 @@ imported by:
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/coc_export.py" type="text/plain"><tt>coc_export</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#copy">copy</a>
+    <a href="#app_config">app_config</a>
+ &#8226;   <a href="#copy">copy</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#openpyxl">openpyxl</a>
  &#8226;   <a href="#os">os</a>
@@ -2651,7 +2810,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#dependency_check">dependency_check</a>
- &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
 
   </div>
 
@@ -2890,9 +3049,18 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#asyncio.base_events">asyncio.base_events</a>
+    <a href="#application.live_controller">application.live_controller</a>
+ &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
+ &#8226;   <a href="#application.run_controller">application.run_controller</a>
+ &#8226;   <a href="#asyncio.base_events">asyncio.base_events</a>
  &#8226;   <a href="#asyncio.coroutines">asyncio.coroutines</a>
  &#8226;   <a href="#configparser">configparser</a>
+ &#8226;   <a href="#domain.comparison">domain.comparison</a>
+ &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.reference">domain.reference</a>
+ &#8226;   <a href="#hardware.factory">hardware.factory</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#http.client">http.client</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#inspect">inspect</a>
@@ -3379,10 +3547,15 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#dependency_check">dependency_check</a>
+    <a href="#app_config">app_config</a>
+ &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
+ &#8226;   <a href="#application.hardware_session">application.hardware_session</a>
+ &#8226;   <a href="#application.run_controller">application.run_controller</a>
+ &#8226;   <a href="#dependency_check">dependency_check</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.replacements">domain.replacements</a>
  &#8226;   <a href="#pprint">pprint</a>
  &#8226;   <a href="#pyvisa.rname">pyvisa.rname</a>
- &#8226;   <a href="#replacement_analysis">replacement_analysis</a>
  &#8226;   <a href="#run_data">run_data</a>
 
   </div>
@@ -3411,6 +3584,7 @@ imported by:
  &#8226;   <a href="#calendar">calendar</a>
  &#8226;   <a href="#coc_export">coc_export</a>
  &#8226;   <a href="#dependency_check">dependency_check</a>
+ &#8226;   <a href="#domain.timing">domain.timing</a>
  &#8226;   <a href="#email.utils">email.utils</a>
  &#8226;   <a href="#http.cookiejar">http.cookiejar</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
@@ -3422,7 +3596,6 @@ imported by:
  &#8226;   <a href="#openpyxl.utils.datetime">openpyxl.utils.datetime</a>
  &#8226;   <a href="#openpyxl.writer.excel">openpyxl.writer.excel</a>
  &#8226;   <a href="#run_persistence">run_persistence</a>
- &#8226;   <a href="#switch_timing">switch_timing</a>
  &#8226;   <a href="#unit_persistence">unit_persistence</a>
  &#8226;   <a href="#xmlrpc.client">xmlrpc.client</a>
 
@@ -3505,6 +3678,151 @@ imports:
   <div class="import">
 imported by:
     <a href="#inspect">inspect</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="domain"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/__init__.py" type="text/plain"><tt>domain</tt></a>
+<span class="moduletype">Package</span>  <div class="import">
+imports:
+    <a href="#domain.comparison">domain.comparison</a>
+ &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.reference">domain.reference</a>
+ &#8226;   <a href="#domain.replacements">domain.replacements</a>
+ &#8226;   <a href="#domain.timing">domain.timing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#domain.comparison">domain.comparison</a>
+ &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.reference">domain.reference</a>
+ &#8226;   <a href="#domain.replacements">domain.replacements</a>
+ &#8226;   <a href="#domain.timing">domain.timing</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="domain.comparison"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/comparison.py" type="text/plain"><tt>domain.comparison</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#domain">domain</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="domain.measurement"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/measurement.py" type="text/plain"><tt>domain.measurement</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#domain">domain</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#domain">domain</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#live_il_reading">live_il_reading</a>
+ &#8226;   <a href="#measurement_worker">measurement_worker</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="domain.models"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/models.py" type="text/plain"><tt>domain.models</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#enum">enum</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application.hardware_planning">application.hardware_planning</a>
+ &#8226;   <a href="#application.live_controller">application.live_controller</a>
+ &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
+ &#8226;   <a href="#application.run_controller">application.run_controller</a>
+ &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#domain.comparison">domain.comparison</a>
+ &#8226;   <a href="#run_data">run_data</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="domain.reference"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/reference.py" type="text/plain"><tt>domain.reference</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#domain">domain</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#domain">domain</a>
+ &#8226;   <a href="#live_il_reading">live_il_reading</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="domain.replacements"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/replacements.py" type="text/plain"><tt>domain.replacements</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain">domain</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#domain">domain</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="domain.timing"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/timing.py" type="text/plain"><tt>domain.timing</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#datetime">datetime</a>
+ &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#time">time</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#domain">domain</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
 
   </div>
 
@@ -6505,6 +6823,7 @@ imported by:
  &#8226;   <a href="#asyncio.runners">asyncio.runners</a>
  &#8226;   <a href="#asyncio.sslproto">asyncio.sslproto</a>
  &#8226;   <a href="#asyncio.timeouts">asyncio.timeouts</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#http">http</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#inspect">inspect</a>
@@ -6898,6 +7217,69 @@ imports:
 imported by:
     <a href="#tarfile">tarfile</a>
  &#8226;   <a href="#xmlrpc.client">xmlrpc.client</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="hardware"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/hardware/__init__.py" type="text/plain"><tt>hardware</tt></a>
+<span class="moduletype">Package</span>  <div class="import">
+imports:
+    <a href="#hardware.factory">hardware.factory</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#hardware.factory">hardware.factory</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="hardware.factory"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/hardware/factory.py" type="text/plain"><tt>hardware.factory</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#hardware">hardware</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
+ &#8226;   <a href="#osx150_driver">osx150_driver</a>
+ &#8226;   <a href="#power_meter">power_meter</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#hardware">hardware</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="hardware.interfaces"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/hardware/interfaces.py" type="text/plain"><tt>hardware.interfaces</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#hardware">hardware</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application.live_controller">application.live_controller</a>
+ &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
+ &#8226;   <a href="#application.run_controller">application.run_controller</a>
+ &#8226;   <a href="#hardware">hardware</a>
+ &#8226;   <a href="#hardware.factory">hardware.factory</a>
+ &#8226;   <a href="#measurement_worker">measurement_worker</a>
+ &#8226;   <a href="#power_meter">power_meter</a>
 
   </div>
 
@@ -7566,6 +7948,89 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="infrastructure"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/infrastructure/__init__.py" type="text/plain"><tt>infrastructure</tt></a>
+<span class="moduletype">Package</span>  <div class="import">
+imports:
+    <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
+ &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
+ &#8226;   <a href="#infrastructure.unit_repository">infrastructure.unit_repository</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
+ &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
+ &#8226;   <a href="#infrastructure.unit_repository">infrastructure.unit_repository</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="infrastructure.coc_exporter"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/infrastructure/coc_exporter.py" type="text/plain"><tt>infrastructure.coc_exporter</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#app_config">app_config</a>
+ &#8226;   <a href="#coc_export">coc_export</a>
+ &#8226;   <a href="#infrastructure">infrastructure</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#infrastructure">infrastructure</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="infrastructure.run_repository"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/infrastructure/run_repository.py" type="text/plain"><tt>infrastructure.run_repository</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#app_config">app_config</a>
+ &#8226;   <a href="#infrastructure">infrastructure</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#run_data">run_data</a>
+ &#8226;   <a href="#run_persistence">run_persistence</a>
+ &#8226;   <a href="#typing">typing</a>
+ &#8226;   <a href="#unit_persistence">unit_persistence</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#infrastructure">infrastructure</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="infrastructure.unit_repository"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/infrastructure/unit_repository.py" type="text/plain"><tt>infrastructure.unit_repository</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#infrastructure">infrastructure</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#unit_persistence">unit_persistence</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#infrastructure">infrastructure</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="inspect"></a>
   <a target="code" href="///C:/Users/Austin/AppData/Local/Programs/Python/Python311-32/Lib/inspect.py" type="text/plain"><tt>inspect</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -7883,8 +8348,10 @@ imported by:
 imports:
     <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
  &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#application.live_controller">application.live_controller</a>
+ &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#power_meter">power_meter</a>
- &#8226;   <a href="#reference_calculation">reference_calculation</a>
 
   </div>
   <div class="import">
@@ -8034,12 +8501,14 @@ imported by:
 imports:
     <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
  &#8226;   <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#threading">threading</a>
 
   </div>
   <div class="import">
 imported by:
-    <a href="#ilm_app.py">ilm_app.py</a>
+    <a href="#application.run_controller">application.run_controller</a>
 
   </div>
 
@@ -13966,6 +14435,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#dependency_check">dependency_check</a>
+ &#8226;   <a href="#hardware.factory">hardware.factory</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#red_light_test">red_light_test</a>
 
@@ -13998,13 +14468,17 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#coc_export">coc_export</a>
+    <a href="#app_config">app_config</a>
+ &#8226;   <a href="#coc_export">coc_export</a>
  &#8226;   <a href="#dependency_check">dependency_check</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#importlib.metadata">importlib.metadata</a>
  &#8226;   <a href="#importlib.resources._common">importlib.resources._common</a>
  &#8226;   <a href="#importlib.resources._legacy">importlib.resources._legacy</a>
  &#8226;   <a href="#importlib.resources.readers">importlib.resources.readers</a>
+ &#8226;   <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
+ &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
+ &#8226;   <a href="#infrastructure.unit_repository">infrastructure.unit_repository</a>
  &#8226;   <a href="#op815_driver">op815_driver</a>
  &#8226;   <a href="#pyvisa.util">pyvisa.util</a>
  &#8226;   <a href="#run_data">run_data</a>
@@ -14164,13 +14638,14 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#op815_driver">op815_driver</a>
- &#8226;   <a href="#typing">typing</a>
 
   </div>
   <div class="import">
 imported by:
-    <a href="#ilm_app.py">ilm_app.py</a>
+    <a href="#hardware.factory">hardware.factory</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#live_il_reading">live_il_reading</a>
 
   </div>
@@ -15255,34 +15730,8 @@ imported by:
 imports:
     <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
  &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
  &#8226;   <a href="#osx150_driver">osx150_driver</a>
-
-  </div>
-  <div class="import">
-imported by:
-    <a href="#ilm_app.py">ilm_app.py</a>
-
-  </div>
-
-</div>
-
-<div class="node">
-  <a name="reference_calculation"></a>
-  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/reference_calculation.py" type="text/plain"><tt>reference_calculation</tt></a>
-<span class="moduletype">SourceModule</span>  <div class="import">
-imported by:
-    <a href="#live_il_reading">live_il_reading</a>
-
-  </div>
-
-</div>
-
-<div class="node">
-  <a name="replacement_analysis"></a>
-  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/replacement_analysis.py" type="text/plain"><tt>replacement_analysis</tt></a>
-<span class="moduletype">SourceModule</span>  <div class="import">
-imports:
-    <a href="#dataclasses">dataclasses</a>
 
   </div>
   <div class="import">
@@ -15334,12 +15783,14 @@ imported by:
 imports:
     <a href="#csv">csv</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#pathlib">pathlib</a>
 
   </div>
   <div class="import">
 imported by:
     <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
  &#8226;   <a href="#run_persistence">run_persistence</a>
 
   </div>
@@ -15351,7 +15802,8 @@ imported by:
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/run_persistence.py" type="text/plain"><tt>run_persistence</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#csv">csv</a>
+    <a href="#app_config">app_config</a>
+ &#8226;   <a href="#csv">csv</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#json">json</a>
  &#8226;   <a href="#os">os</a>
@@ -15362,7 +15814,7 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#ilm_app.py">ilm_app.py</a>
+    <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
 
   </div>
 
@@ -15834,23 +16286,6 @@ imported by:
 </div>
 
 <div class="node">
-  <a name="switch_timing"></a>
-  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/switch_timing.py" type="text/plain"><tt>switch_timing</tt></a>
-<span class="moduletype">SourceModule</span>  <div class="import">
-imports:
-    <a href="#datetime">datetime</a>
- &#8226;   <a href="#time">time</a>
-
-  </div>
-  <div class="import">
-imported by:
-    <a href="#ilm_app.py">ilm_app.py</a>
-
-  </div>
-
-</div>
-
-<div class="node">
   <a name="sys"></a>
   <tt>sys</tt> <span class="moduletype"><i>(builtin module)</i></span>  <div class="import">
 imported by:
@@ -16156,6 +16591,7 @@ imported by:
  &#8226;   <a href="#asyncio.windows_events">asyncio.windows_events</a>
  &#8226;   <a href="#concurrent.futures._base">concurrent.futures._base</a>
  &#8226;   <a href="#datetime">datetime</a>
+ &#8226;   <a href="#domain.timing">domain.timing</a>
  &#8226;   <a href="#email._parseaddr">email._parseaddr</a>
  &#8226;   <a href="#email.generator">email.generator</a>
  &#8226;   <a href="#email.utils">email.utils</a>
@@ -16178,7 +16614,6 @@ imported by:
  &#8226;   <a href="#random">random</a>
  &#8226;   <a href="#ssl">ssl</a>
  &#8226;   <a href="#subprocess">subprocess</a>
- &#8226;   <a href="#switch_timing">switch_timing</a>
  &#8226;   <a href="#tarfile">tarfile</a>
  &#8226;   <a href="#threading">threading</a>
  &#8226;   <a href="#urllib.request">urllib.request</a>
@@ -16370,16 +16805,20 @@ imported by:
  &#8226;   <a href="#PyQt5.QtGui">PyQt5.QtGui</a>
  &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
  &#8226;   <a href="#PyQt5.sip">PyQt5.sip</a>
+ &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
+ &#8226;   <a href="#application.run_controller">application.run_controller</a>
  &#8226;   <a href="#asyncio.staggered">asyncio.staggered</a>
  &#8226;   <a href="#asyncio.timeouts">asyncio.timeouts</a>
  &#8226;   <a href="#functools">functools</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#importlib.metadata">importlib.metadata</a>
  &#8226;   <a href="#importlib.metadata._meta">importlib.metadata._meta</a>
  &#8226;   <a href="#importlib.resources._common">importlib.resources._common</a>
  &#8226;   <a href="#importlib.resources._itertools">importlib.resources._itertools</a>
  &#8226;   <a href="#importlib.resources._legacy">importlib.resources._legacy</a>
  &#8226;   <a href="#importlib.resources.abc">importlib.resources.abc</a>
- &#8226;   <a href="#power_meter">power_meter</a>
+ &#8226;   <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
+ &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
  &#8226;   <a href="#pyvisa.attributes">pyvisa.attributes</a>
  &#8226;   <a href="#pyvisa.ctwrapper.functions">pyvisa.ctwrapper.functions</a>
  &#8226;   <a href="#pyvisa.ctwrapper.highlevel">pyvisa.ctwrapper.highlevel</a>
@@ -16466,7 +16905,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#ilm_app.py">ilm_app.py</a>
+    <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
+ &#8226;   <a href="#infrastructure.unit_repository">infrastructure.unit_repository</a>
 
   </div>
 

@@ -30,9 +30,37 @@
   ('_threading_local',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\_threading_local.py',
    'PYMODULE'),
+  ('app_config',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\app_config.py',
+   'PYMODULE'),
   ('app_info',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\app_info.py',
+   'PYMODULE'),
+  ('application',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\__init__.py',
+   'PYMODULE'),
+  ('application.hardware_planning',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\hardware_planning.py',
+   'PYMODULE'),
+  ('application.hardware_session',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\hardware_session.py',
+   'PYMODULE'),
+  ('application.live_controller',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\live_controller.py',
+   'PYMODULE'),
+  ('application.red_light_controller',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\red_light_controller.py',
+   'PYMODULE'),
+  ('application.run_controller',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\run_controller.py',
    'PYMODULE'),
   ('argparse',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\argparse.py',
@@ -222,6 +250,34 @@
   ('dis',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\dis.py',
    'PYMODULE'),
+  ('domain',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\__init__.py',
+   'PYMODULE'),
+  ('domain.comparison',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\comparison.py',
+   'PYMODULE'),
+  ('domain.measurement',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\measurement.py',
+   'PYMODULE'),
+  ('domain.models',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\models.py',
+   'PYMODULE'),
+  ('domain.reference',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\reference.py',
+   'PYMODULE'),
+  ('domain.replacements',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\replacements.py',
+   'PYMODULE'),
+  ('domain.timing',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\timing.py',
+   'PYMODULE'),
   ('email',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\email\\__init__.py',
    'PYMODULE'),
@@ -312,6 +368,18 @@
   ('gzip',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\gzip.py',
    'PYMODULE'),
+  ('hardware',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\hardware\\__init__.py',
+   'PYMODULE'),
+  ('hardware.factory',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\hardware\\factory.py',
+   'PYMODULE'),
+  ('hardware.interfaces',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\hardware\\interfaces.py',
+   'PYMODULE'),
   ('hashlib',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\hashlib.py',
    'PYMODULE'),
@@ -392,6 +460,22 @@
    'PYMODULE'),
   ('importlib.util',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\importlib\\util.py',
+   'PYMODULE'),
+  ('infrastructure',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\__init__.py',
+   'PYMODULE'),
+  ('infrastructure.coc_exporter',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\coc_exporter.py',
+   'PYMODULE'),
+  ('infrastructure.run_repository',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\run_repository.py',
+   'PYMODULE'),
+  ('infrastructure.unit_repository',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\unit_repository.py',
    'PYMODULE'),
   ('inspect',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\inspect.py',
@@ -1155,14 +1239,6 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\red_light_test.py',
    'PYMODULE'),
-  ('reference_calculation',
-   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
-   'Testing\\reference_calculation.py',
-   'PYMODULE'),
-  ('replacement_analysis',
-   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
-   'Testing\\replacement_analysis.py',
-   'PYMODULE'),
   ('run_data',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\run_data.py',
@@ -1206,10 +1282,6 @@
    'PYMODULE'),
   ('subprocess',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\subprocess.py',
-   'PYMODULE'),
-  ('switch_timing',
-   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
-   'Testing\\switch_timing.py',
    'PYMODULE'),
   ('tarfile',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\tarfile.py',

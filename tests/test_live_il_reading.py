@@ -7,6 +7,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication
 
+from hardware.session import OpticalTestSession
 from live_il_reading import LiveILReadingDialog
 
 
@@ -64,6 +65,7 @@ class LiveILReadingDialogTests(unittest.TestCase):
         QTest.mouseClick(dialog.start_button, Qt.LeftButton)
         QTest.qWait(100)
         meter = FakeMeter.instances[0]
+        self.assertIsInstance(dialog.worker.hardware_session, OpticalTestSession)
         self.assertTrue(meter.connected)
         self.assertTrue(dialog.read_button.isEnabled())
         self.assertTrue(dialog.calculate_reference_button.isEnabled())

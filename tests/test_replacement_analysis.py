@@ -8,10 +8,14 @@ from replacement_analysis import (
     parse_extra_readings,
     replacement_metadata,
 )
+from domain.replacements import ReplacementReading as DomainReplacementReading
 from run_data import MeasurementRecord
 
 
 class ReplacementAnalysisTests(unittest.TestCase):
+    def test_legacy_module_reexports_domain_service(self):
+        self.assertIs(ReplacementReading, DomainReplacementReading)
+
     def test_parse_extra_readings(self):
         readings = parse_extra_readings("49, 1.2, 1.1\n50; 0.9; 1.0")
         self.assertEqual([reading.port for reading in readings], [49, 50])

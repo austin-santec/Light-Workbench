@@ -50,44 +50,36 @@ from PyQt5.QtWidgets import (
     QScrollArea,
 )
 
-from measurement_worker import MeasurementWorker
+from application.run_controller import HardwareRunController, HardwareRunRequest
+from application.hardware_planning import (
+    build_hardware_run_plan,
+    parse_hardware_channels,
+)
+from application.hardware_session import HardwareRunSession
+from domain.measurement import calculate_insertion_loss
+from domain.comparison import comparison_values, index_measurements
+from domain.timing import SwitchTestTimer
+from hardware.factory import HardwareFactory
+from infrastructure.coc_exporter import (
+    COC_TEMPLATE_FILENAME,
+    DEFAULT_PART_LOOKUP_ROOT,
+    FileCocExporter,
+)
+from infrastructure.run_repository import DEFAULT_RUN_ROOT, FileRunRepository
+from infrastructure.unit_repository import FileUnitRepository
 from osx150_driver import OSX150
 from power_meter import SantecPowerMeter, SimulatedPowerMeter
-from run_persistence import (
-    DEFAULT_RUN_ROOT,
-    RunRecorder,
-    find_run_json_path,
-    load_run_json,
-)
-from run_data import MeasurementRecord, RunData, load_run_csv
-from replacement_analysis import (
+from run_data import MeasurementRecord, RunData
+from domain.replacements import (
     ReplacementReading,
     analyze_replacements,
     normalise_completed_replacements,
     recommendation_category,
 )
-from coc_export import (
-    COC_TEMPLATE_FILENAME,
-    DEFAULT_PART_LOOKUP_ROOT,
-    export_coc,
-    find_part_number,
-    normalise_serial,
-)
 from dependency_check import DependencyReport, collect_dependency_report
 from red_light_test import RedLightTestDialog
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION, about_text
 from live_il_reading import LiveILReadingDialog, LiveILReadingWorker
-from switch_timing import SwitchTestTimer
-from unit_persistence import (
-    available_run_numbers,
-    find_run_csv_for_number,
-    infer_unit_directory,
-    load_unit_record,
-    run_csv_for_number,
-    run_directory_for_number,
-    save_unit_record,
-    unit_directory_for_metadata,
-)
 
 
 ACCENT = "#e60013"
@@ -182,41 +174,6 @@ QToolTip { background: #373a40; color: #e8eaed; border: 1px solid #5a6069; }
 
 DARK_DANGER = QColor("#5b1f25")
 DARK_DANGER_TEXT = QColor("#ffd7d7")
-
-
-def parse_hardware_channels(value):
-    """Expand positive channel numbers and inclusive ranges in entered order."""
-    if not value.strip():
-        raise ValueError("Enter at least one channel or range.")
-    channels = []
-    seen = set()
-    for entry in value.split(","):
-        entry = entry.strip()
-        if not entry:
-            raise ValueError("Empty entries are not allowed between commas.")
-        if "-" in entry:
-            parts = entry.split("-")
-            if len(parts) != 2:
-                raise ValueError("Invalid range %r." % entry)
-            try:
-                first, last = (int(part.strip()) for part in parts)
-            except ValueError:
-                raise ValueError("Range ends must be numeric: %s" % entry)
-            if first < 1 or first > last:
-                raise ValueError("Invalid range %r." % entry)
-            candidates = range(first, last + 1)
-        else:
-            try:
-                candidates = (int(entry),)
-            except ValueError:
-                raise ValueError("Invalid channel %r." % entry)
-        for channel in candidates:
-            if channel < 1:
-                raise ValueError("Channels must be 1 or greater.")
-            if channel not in seen:
-                channels.append(channel)
-                seen.add(channel)
-    return channels
 
 
 def format_channel_summary(channels):
@@ -496,6 +453,16 @@ class MainWindow(QMainWindow):
     def __init__(self, initial_path: str | None = None):
         super().__init__()
         self.run_data: RunData | None = None
+        # Keep adapter selection in one composition point. Passing the module
+        # aliases preserves the existing test seam while allowing future
+        # workstation-specific hardware configurations.
+        self.hardware_factory = HardwareFactory(
+            power_meter_factory=SantecPowerMeter,
+            switch_factory=OSX150,
+        )
+        self.coc_exporter = FileCocExporter()
+        self.run_repository = FileRunRepository()
+        self.unit_repository = FileUnitRepository()
         self.demo_meter: SimulatedPowerMeter | None = None
         self.demo_channel = 0
         self.demo_measurement = None
@@ -504,6 +471,7 @@ class MainWindow(QMainWindow):
         self.current_reading_channel = None
         self.hardware_thread = None
         self.hardware_worker = None
+        self.hardware_controller = HardwareRunController(self)
         # Noah Mode is deliberately session-only and defaults off. Live Write
         # Mode is also session-only, but is the normal first-launch workflow.
         self.noah_mode_enabled = False
@@ -517,13 +485,7 @@ class MainWindow(QMainWindow):
         self.replacement_analysis = None
         self.completed_replacements = []
         self.designated_spares = []
-        self.hardware_retest = False
-        self.hardware_pending_reading = None
-        self.hardware_pending_channel = None
-        self.hardware_pending_physical_port = None
-        self.hardware_manual_channel_order = False
-        self.hardware_full_pass = False
-        self.hardware_configured_channel_count = None
+        self.hardware_session = HardwareRunSession()
         self.switch_test_timer = None
         self.displayed_records = []
         self.comparison_run_data = None
@@ -541,8 +503,97 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1120, 720)
         self._build_ui()
+        self._connect_hardware_controller()
         if initial_path:
             self.load_path(Path(initial_path))
+
+    # Compatibility properties keep existing UI/test call sites stable while
+    # the actual hardware workflow state lives in one application-layer model.
+    @property
+    def hardware_retest(self):
+        return self.hardware_session.retest
+
+    @hardware_retest.setter
+    def hardware_retest(self, value):
+        self.hardware_session.retest = bool(value)
+
+    @property
+    def hardware_pending_reading(self):
+        return self.hardware_session.pending_reading
+
+    @hardware_pending_reading.setter
+    def hardware_pending_reading(self, value):
+        self.hardware_session.pending_reading = value
+
+    @property
+    def hardware_pending_channel(self):
+        return self.hardware_session.pending_channel
+
+    @hardware_pending_channel.setter
+    def hardware_pending_channel(self, value):
+        self.hardware_session.pending_channel = value
+
+    @property
+    def hardware_pending_physical_port(self):
+        return self.hardware_session.pending_physical_port
+
+    @hardware_pending_physical_port.setter
+    def hardware_pending_physical_port(self, value):
+        self.hardware_session.pending_physical_port = value
+
+    @property
+    def hardware_manual_channel_order(self):
+        return self.hardware_session.manual_channel_order
+
+    @hardware_manual_channel_order.setter
+    def hardware_manual_channel_order(self, value):
+        self.hardware_session.manual_channel_order = bool(value)
+
+    @property
+    def hardware_full_pass(self):
+        return self.hardware_session.full_pass
+
+    @hardware_full_pass.setter
+    def hardware_full_pass(self, value):
+        self.hardware_session.full_pass = bool(value)
+
+    @property
+    def hardware_configured_channel_count(self):
+        return self.hardware_session.configured_channel_count
+
+    @hardware_configured_channel_count.setter
+    def hardware_configured_channel_count(self, value):
+        self.hardware_session.configured_channel_count = value
+
+    @property
+    def hardware_run_active(self):
+        """Compatibility view of the controller-owned hardware lifecycle."""
+        return self.hardware_controller.is_active or self.hardware_thread is not None
+
+    def _connect_hardware_controller(self):
+        """Connect controller events to the existing UI handlers."""
+        self.hardware_controller.channel_selection_required.connect(
+            self.hardware_channel_selection_required
+        )
+        self.hardware_controller.continuation_selection_required.connect(
+            self.hardware_continuation_selection_required
+        )
+        self.hardware_controller.channel_configuration_ready.connect(
+            self.hardware_channel_configuration_ready
+        )
+        self.hardware_controller.operator_required.connect(
+            self.hardware_operator_required
+        )
+        self.hardware_controller.reading_ready.connect(self.hardware_reading_ready)
+        self.hardware_controller.progress_changed.connect(
+            self.hardware_progress_changed
+        )
+        self.hardware_controller.completed.connect(self.hardware_completed)
+        self.hardware_controller.stopped.connect(self.hardware_stopped)
+        self.hardware_controller.failed.connect(self.hardware_failed)
+        self.hardware_controller.thread_finished.connect(
+            self.hardware_thread_finished
+        )
 
     def _build_ui(self):
         self.setStyleSheet(self._theme_stylesheet(self.dark_mode_enabled))
@@ -1067,7 +1118,7 @@ class MainWindow(QMainWindow):
     def toggle_noah_mode(self, enabled):
         """Enable one-step read-and-save behavior for hardware IL runs."""
         enabled = bool(enabled)
-        if self.hardware_thread is not None:
+        if self.hardware_run_active:
             self.noah_mode_action.setChecked(self.noah_mode_enabled)
             self.statusBar().showMessage(
                 "Noah Mode cannot be changed during an active hardware run."
@@ -1140,7 +1191,7 @@ class MainWindow(QMainWindow):
     def toggle_live_write_mode(self, enabled):
         """Enable continuous IL updates until the operator writes a reading."""
         enabled = bool(enabled)
-        if self.hardware_thread is not None:
+        if self.hardware_run_active:
             self.live_write_mode_action.setChecked(self.live_write_mode_enabled)
             self.statusBar().showMessage(
                 "Live Write Mode cannot be changed during an active hardware run."
@@ -1256,18 +1307,21 @@ class MainWindow(QMainWindow):
 
     def show_red_light_test(self):
         """Open the red-light test setup without connecting automatically."""
-        if self.hardware_thread is not None:
+        if self.hardware_run_active:
             QMessageBox.warning(
                 self,
                 "Hardware run active",
                 "Stop the current hardware run before opening a Red Light Test.",
             )
             return
-        RedLightTestDialog(self).exec_()
+        RedLightTestDialog(
+            self,
+            switch_factory=self.hardware_factory.create_switch,
+        ).exec_()
 
     def show_live_il_reading(self):
         """Open the meter-only live IL reader without touching run data."""
-        if self.hardware_thread is not None:
+        if self.hardware_run_active:
             QMessageBox.warning(
                 self,
                 "Hardware run active",
@@ -1278,6 +1332,7 @@ class MainWindow(QMainWindow):
             self,
             reference_1310=self.reference_1310_spin.value(),
             reference_1550=self.reference_1550_spin.value(),
+            meter_factory=self.hardware_factory.create_power_meter,
         )
         self.reference_values_changed.connect(dialog.set_reference_values)
         dialog.references_changed.connect(self.set_reference_values)
@@ -1304,7 +1359,7 @@ class MainWindow(QMainWindow):
 
     def calculate_reference(self):
         """Calculate references directly, without opening the Live IL window."""
-        if self.hardware_thread is not None:
+        if self.hardware_run_active:
             QMessageBox.warning(
                 self,
                 "Hardware run active",
@@ -1316,7 +1371,7 @@ class MainWindow(QMainWindow):
 
         meter = None
         try:
-            meter = SantecPowerMeter()
+            meter = self.hardware_factory.create_power_meter()
             if not meter.find_devices():
                 meter.close()
                 QMessageBox.warning(
@@ -1473,7 +1528,7 @@ class MainWindow(QMainWindow):
         serial = self.hardware_main_board_serial.text().strip()
         lookup_root = str(DEFAULT_PART_LOOKUP_ROOT)
         try:
-            part_number = find_part_number(serial, lookup_root)
+            part_number = self.coc_exporter.find_part_number(serial, lookup_root)
         except (OSError, LookupError, ValueError) as error:
             QMessageBox.warning(self, "Part number lookup", str(error))
             return
@@ -1483,7 +1538,8 @@ class MainWindow(QMainWindow):
         if self.run_data is not None:
             self.run_data.metadata["Part number"] = part_number
         self.statusBar().showMessage(
-            "Part number found for Main Board serial %s." % normalise_serial(serial)
+            "Part number found for Main Board serial %s."
+            % self.coc_exporter.normalise_serial(serial)
         )
 
     def coc_template_path(self):
@@ -1525,7 +1581,7 @@ class MainWindow(QMainWindow):
             self.refresh_comparison_runs()
             return
         try:
-            self.unit_record = load_unit_record(unit_directory)
+            self.unit_record = self.unit_repository.load_record(unit_directory)
         except (OSError, ValueError, TypeError, KeyError):
             self.unit_record = {}
         self.completed_replacements = list(
@@ -1612,7 +1668,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            comparison_data = load_run_csv(Path(selected_path))
+            comparison_data = self.run_repository.load_csv(Path(selected_path))
         except (OSError, ValueError) as error:
             self.comparison_run_combo.blockSignals(True)
             self.comparison_run_combo.setCurrentIndex(0)
@@ -1656,7 +1712,7 @@ class MainWindow(QMainWindow):
             run_number = int(self.run_data.metadata.get("Run number", 1))
         except (TypeError, ValueError):
             run_number = 1
-        save_unit_record(
+        self.unit_repository.save_record(
             self.unit_directory,
             self._unit_metadata(self.run_data.metadata),
             self.completed_replacements,
@@ -1665,13 +1721,13 @@ class MainWindow(QMainWindow):
             self.run_recorder.directory,
             switch_serial=self.run_data.metadata.get("Switch serial", ""),
         )
-        self.unit_record = load_unit_record(self.unit_directory)
+        self.unit_record = self.unit_repository.load_record(self.unit_directory)
 
     def ensure_unit_state_for_current_fields(self):
         """Create or load the shared unit context when upgrading a legacy run."""
         if self.unit_directory is not None:
             return
-        candidate = unit_directory_for_metadata(
+        candidate = self.unit_repository.unit_directory_for_metadata(
             DEFAULT_RUN_ROOT,
             self._current_hardware_identity(),
         )
@@ -1683,19 +1739,22 @@ class MainWindow(QMainWindow):
 
     def load_selected_unit_run(self):
         """Load a numbered run for the unit identified in setup fields."""
-        if self.hardware_thread is not None:
+        if self.hardware_run_active:
             self.statusBar().showMessage("Stop the active hardware run first.")
             return
         metadata = self._current_hardware_identity()
-        unit_directory = unit_directory_for_metadata(DEFAULT_RUN_ROOT, metadata)
+        unit_directory = self.unit_repository.unit_directory_for_metadata(
+            DEFAULT_RUN_ROOT,
+            metadata,
+        )
         run_number = self.hardware_run_number.value()
-        csv_path = find_run_csv_for_number(
+        csv_path = self.run_repository.find_run_csv_for_number(
             unit_directory,
             run_number,
             metadata.get("Switch serial", ""),
         )
         if csv_path is None:
-            available = available_run_numbers(unit_directory)
+            available = self.unit_repository.available_run_numbers(unit_directory)
             available_text = ", ".join(str(number) for number in available)
             QMessageBox.information(
                 self,
@@ -1708,14 +1767,14 @@ class MainWindow(QMainWindow):
 
     def load_path(self, path: Path):
         try:
-            run_data = load_run_csv(path)
+            run_data = self.run_repository.load_csv(path)
         except (OSError, ValueError) as error:
             QMessageBox.critical(self, "Could not open run", str(error))
             return
 
         self.run_data = run_data
         self.run_recorder = None
-        self._load_unit_state(infer_unit_directory(path))
+        self._load_unit_state(self.unit_repository.infer_unit_directory(path))
         self.replacement_analysis = None
         self.switch_test_timer = None
         self.clear_current_reading()
@@ -1755,10 +1814,10 @@ class MainWindow(QMainWindow):
         self.metadata_labels["Run number"].setText(
             str(self.hardware_run_number.value())
         )
-        json_path = find_run_json_path(path)
+        json_path = self.run_repository.find_json_path(path)
         if json_path.is_file():
             try:
-                payload = load_run_json(json_path)
+                payload = self.run_repository.load_json(json_path)
                 completed_replacements = payload.get("completed_replacements", [])
                 legacy_replacements = normalise_completed_replacements(
                     completed_replacements
@@ -1797,7 +1856,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(
                     "Loaded CSV; the companion run.json could not be read."
                 )
-        self.run_recorder = RunRecorder.from_existing(
+        self.run_recorder = self.run_repository.recorder_from_existing(
             path,
             metadata=run_data.metadata,
             limit=self.limit_spin.value(),
@@ -1849,7 +1908,7 @@ class MainWindow(QMainWindow):
                 "1550 reference dBm": "%.2f" % reference_1550,
             },
         )
-        self.run_recorder = RunRecorder(
+        self.run_recorder = self.run_repository.new_recorder(
             metadata={
                 "Operating band": "O band",
                 "Tested by": self.hardware_tested_by.text().strip(),
@@ -1894,10 +1953,13 @@ class MainWindow(QMainWindow):
         if self.demo_meter is None or self.demo_channel == 0:
             return
         measurements = self.demo_meter.measure_both_wavelengths()
-        self.demo_measurement = {
-            1310: self.reference_1310_spin.value() - measurements[1310],
-            1550: self.reference_1550_spin.value() - measurements[1550],
-        }
+        self.demo_measurement = calculate_insertion_loss(
+            {
+                1310: self.reference_1310_spin.value(),
+                1550: self.reference_1550_spin.value(),
+            },
+            measurements,
+        )
         self.set_current_reading_channel(self.demo_channel)
         self.current_loss_1310 = self.demo_measurement[1310]
         self.current_loss_1550 = self.demo_measurement[1550]
@@ -1938,7 +2000,7 @@ class MainWindow(QMainWindow):
         self.scroll_to_channel(record.channel)
 
     def retest_selected(self):
-        if self.hardware_thread is not None or self.run_data is None:
+        if self.hardware_run_active or self.run_data is None:
             return
         selected_rows = sorted(
             {index.row() for index in self.table.selectionModel().selectedRows()}
@@ -2131,7 +2193,7 @@ class MainWindow(QMainWindow):
         try:
             if rename_files == QMessageBox.Yes:
                 if self.run_recorder is None:
-                    self.run_recorder = RunRecorder.from_existing(
+                    self.run_recorder = self.run_repository.recorder_from_existing(
                         self.run_data.source_path,
                         metadata=self.run_data.metadata,
                         limit=self.limit_spin.value(),
@@ -2175,7 +2237,7 @@ class MainWindow(QMainWindow):
         return True
 
     def start_hardware(self, channels=None, retest=False):
-        if self.hardware_thread is not None:
+        if self.hardware_run_active:
             return
         if not retest and not self.confirm_hardware_setup_complete():
             return
@@ -2200,12 +2262,14 @@ class MainWindow(QMainWindow):
 
         selected_identity = self._current_hardware_identity()
         selected_run_number = self.hardware_run_number.value()
-        selected_unit_directory = unit_directory_for_metadata(
+        selected_unit_directory = self.unit_repository.unit_directory_for_metadata(
             DEFAULT_RUN_ROOT,
             selected_identity,
         )
         if not retest and run_mode == "new":
-            if selected_run_number in available_run_numbers(selected_unit_directory):
+            if selected_run_number in self.unit_repository.available_run_numbers(
+                selected_unit_directory
+            ):
                 QMessageBox.warning(
                     self,
                     "Run already exists",
@@ -2214,7 +2278,7 @@ class MainWindow(QMainWindow):
                     % selected_run_number,
                 )
                 return
-            target_csv = run_csv_for_number(
+            target_csv = self.run_repository.run_csv_for_number(
                 selected_unit_directory,
                 selected_run_number,
                 selected_identity.get("Switch serial", ""),
@@ -2232,38 +2296,38 @@ class MainWindow(QMainWindow):
         manual_channel_order = False
         full_pass = False
         continuing_existing = run_mode == "continue"
+        run_plan = None
         if not retest:
             try:
-                if self.hardware_channel_mode.currentIndex() == 0:
-                    channels = None
-                    full_pass = True
-                    manual_channel_order = (
-                        self.manual_channel_order_checkbox.isChecked()
-                    )
-                elif self.hardware_channel_mode.currentIndex() == 1:
-                    channels = [self.hardware_single_channel.value()]
-                else:
-                    channels = parse_hardware_channels(
-                        self.hardware_channel_ranges.text()
-                    )
+                run_plan = build_hardware_run_plan(
+                    self.hardware_channel_mode.currentText(),
+                    single_channel=self.hardware_single_channel.value(),
+                    channel_ranges=self.hardware_channel_ranges.text(),
+                    manual_channel_order=self.manual_channel_order_checkbox.isChecked(),
+                )
+                channels = run_plan.worker_channels()
+                full_pass = run_plan.full_pass
+                manual_channel_order = run_plan.manual_channel_order
             except ValueError as error:
                 QMessageBox.warning(self, "Invalid channel selection", str(error))
                 return
 
+        # Preserve the previous preflight behavior: driver construction must
+        # succeed before the in-memory run/timing state is initialized.
         try:
-            meter = SantecPowerMeter()
-            switch = OSX150()
+            meter = self.hardware_factory.create_power_meter()
+            switch = self.hardware_factory.create_switch()
         except (RuntimeError, OSError) as error:
             QMessageBox.critical(self, "Hardware unavailable", str(error))
             return
 
-        self.hardware_retest = retest
-        self.hardware_manual_channel_order = manual_channel_order
-        self.hardware_full_pass = full_pass
-        self.hardware_configured_channel_count = None
+        self.hardware_session.begin(
+            retest=retest,
+            plan=run_plan if not retest else None,
+        )
         if not retest and run_mode == "new":
             self.run_data = RunData(
-                run_directory_for_number(
+                self.unit_repository.run_directory_for_number(
                     selected_unit_directory,
                     selected_run_number,
                     selected_identity.get("Switch serial", ""),
@@ -2280,7 +2344,7 @@ class MainWindow(QMainWindow):
                 },
             )
             self._load_unit_state(selected_unit_directory)
-            self.run_recorder = RunRecorder(
+            self.run_recorder = self.run_repository.new_recorder(
                 metadata=self.run_data.metadata,
                 limit=self.limit_spin.value(),
                 directory=self.run_data.source_path,
@@ -2295,7 +2359,7 @@ class MainWindow(QMainWindow):
             self.run_data.source_path = self.run_recorder.csv_path
         elif not retest:
             if self.run_recorder is None:
-                self.run_recorder = RunRecorder.from_existing(
+                self.run_recorder = self.run_repository.recorder_from_existing(
                     self.run_data.source_path,
                     metadata=self.run_data.metadata,
                     limit=self.limit_spin.value(),
@@ -2338,12 +2402,13 @@ class MainWindow(QMainWindow):
         )
         self.refresh_analysis()
 
-        self.hardware_thread = QThread(self)
-        self.hardware_worker = MeasurementWorker(
-            meter,
-            switch,
-            channels,
-            {
+        request = HardwareRunRequest(
+            # These already-constructed adapters are transferred to the
+            # controller, which owns them for the duration of the run.
+            power_meter_factory=lambda meter=meter: meter,
+            switch_factory=lambda switch=switch: switch,
+            channels=channels,
+            reference_powers={
                 1310: self.reference_1310_spin.value(),
                 1550: self.reference_1550_spin.value(),
             },
@@ -2359,27 +2424,13 @@ class MainWindow(QMainWindow):
             ),
             live_write_mode=self.live_write_mode_enabled,
         )
-        self.hardware_worker.moveToThread(self.hardware_thread)
-        self.hardware_thread.started.connect(self.hardware_worker.run)
-        self.hardware_worker.channel_selection_required.connect(
-            self.hardware_channel_selection_required
-        )
-        self.hardware_worker.continuation_selection_required.connect(
-            self.hardware_continuation_selection_required
-        )
-        self.hardware_worker.channel_configuration_ready.connect(
-            self.hardware_channel_configuration_ready
-        )
-        self.hardware_worker.operator_required.connect(self.hardware_operator_required)
-        self.hardware_worker.reading_ready.connect(self.hardware_reading_ready)
-        self.hardware_worker.progress_changed.connect(self.hardware_progress_changed)
-        self.hardware_worker.completed.connect(self.hardware_completed)
-        self.hardware_worker.stopped.connect(self.hardware_stopped)
-        self.hardware_worker.failed.connect(self.hardware_failed)
-        self.hardware_worker.completed.connect(self.hardware_thread.quit)
-        self.hardware_worker.stopped.connect(self.hardware_thread.quit)
-        self.hardware_worker.failed.connect(self.hardware_thread.quit)
-        self.hardware_thread.finished.connect(self.hardware_thread_finished)
+        try:
+            self.hardware_controller.start(request)
+        except (RuntimeError, OSError) as error:
+            QMessageBox.critical(self, "Hardware unavailable", str(error))
+            return
+        self.hardware_thread = self.hardware_controller.thread
+        self.hardware_worker = self.hardware_controller.worker
         self.noah_mode_action.setEnabled(False)
         self.live_write_mode_action.setEnabled(False)
         self.start_hardware_button.setEnabled(False)
@@ -2391,7 +2442,6 @@ class MainWindow(QMainWindow):
         self.retest_button.setEnabled(False)
         self.statusBar().showMessage("Starting hardware run...")
         self.begin_switch_test_session()
-        self.hardware_thread.start()
 
     def confirm_hardware_setup_complete(self):
         """Validate setup metadata and references before connecting hardware."""
@@ -2492,7 +2542,7 @@ class MainWindow(QMainWindow):
             )
 
     def hardware_channel_configuration_ready(self, channel_count):
-        self.hardware_configured_channel_count = int(channel_count)
+        self.hardware_session.set_configured_channel_count(channel_count)
 
     def hardware_continuation_selection_required(
         self,
@@ -2517,9 +2567,9 @@ class MainWindow(QMainWindow):
             1,
         )
         if accepted:
-            self.hardware_worker.select_resume_channel(channel)
+            self._hardware_command("select_resume_channel", channel)
         else:
-            self.hardware_worker.stop()
+            self._hardware_command("stop")
 
     def hardware_channel_selection_required(self, channel_count, completed_channels):
         """Ask for the next channel during an optional manual-order pass."""
@@ -2550,11 +2600,11 @@ class MainWindow(QMainWindow):
             1,
         )
         if accepted:
-            self.hardware_worker.select_next_channel(channel)
+            self._hardware_command("select_next_channel", channel)
         elif completed_count >= channel_count:
-            self.hardware_worker.finish_manual_pass()
+            self._hardware_command("finish_manual_pass")
         else:
-            self.hardware_worker.stop()
+            self._hardware_command("stop")
 
     def change_hardware_channel(self):
         """Replace the current uncommitted hardware step with another channel."""
@@ -2603,9 +2653,7 @@ class MainWindow(QMainWindow):
                 return
             resume_interrupted = clicked_button == resume_button
 
-        self.hardware_pending_reading = None
-        self.hardware_pending_channel = None
-        self.hardware_pending_physical_port = None
+        self.hardware_session.clear_pending()
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
         self.change_hardware_channel_button.setEnabled(False)
@@ -2614,12 +2662,10 @@ class MainWindow(QMainWindow):
         self.demo_channel_label.setText(
             "Changing to channel %d without stopping the run" % channel
         )
-        self.hardware_worker.change_channel(channel, resume_interrupted)
+        self._hardware_command("change_channel", channel, resume_interrupted)
 
     def hardware_operator_required(self, channel, physical_port):
-        self.hardware_pending_channel = channel
-        self.hardware_pending_physical_port = physical_port
-        self.hardware_pending_reading = None
+        self.hardware_session.set_pending_channel(channel, physical_port)
         self.hardware_live_indicator.setVisible(self.live_write_mode_enabled)
         self.clear_current_reading(
             channel,
@@ -2652,9 +2698,9 @@ class MainWindow(QMainWindow):
             self.continue_hardware_button.setEnabled(False)
             self.change_hardware_channel_button.setEnabled(False)
             if self.hardware_pending_reading is None:
-                self.hardware_worker.continue_current()
+                self._hardware_command("continue_current")
             else:
-                self.hardware_worker.read_current()
+                self._hardware_command("read_current")
 
     def write_hardware(self):
         if self.noah_mode_enabled:
@@ -2684,8 +2730,20 @@ class MainWindow(QMainWindow):
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
         self.change_hardware_channel_button.setEnabled(False)
-        self.hardware_worker.write_current()
+        self._hardware_command("write_current")
         return True
+
+    def _hardware_command(self, command, *args):
+        """Send a worker command through the controller when it owns the run.
+
+        The fallback preserves lightweight UI tests and compatibility with
+        older callers that inject a fake worker directly.
+        """
+        if self.hardware_controller.is_active:
+            return getattr(self.hardware_controller, command)(*args)
+        if self.hardware_worker is not None:
+            return getattr(self.hardware_worker, command)(*args)
+        return None
 
     def commit_hardware_reading(self):
         channel, physical_port, loss_1310, loss_1550 = self.hardware_pending_reading
@@ -2707,9 +2765,7 @@ class MainWindow(QMainWindow):
         if self.run_recorder is not None:
             self.run_recorder.save(updated_measurements)
         self.run_data.measurements = updated_measurements
-        self.hardware_pending_reading = None
-        self.hardware_pending_channel = None
-        self.hardware_pending_physical_port = None
+        self.hardware_session.clear_pending()
         self.refresh_analysis()
         self.scroll_to_channel(channel)
         return True
@@ -2802,7 +2858,7 @@ class MainWindow(QMainWindow):
         self._apply_noah_mode_controls()
 
     def hardware_reading_ready(self, channel, _physical_port, loss_1310, loss_1550):
-        self.hardware_pending_reading = (
+        self.hardware_session.set_pending_reading(
             channel,
             _physical_port,
             loss_1310,
@@ -2882,7 +2938,9 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.offer_coc_export)
 
     def stop_hardware(self):
-        if self.hardware_worker is not None:
+        if self.hardware_controller.is_active:
+            self.hardware_controller.stop()
+        elif self.hardware_worker is not None:
             self.hardware_worker.stop()
 
     def hardware_thread_finished(self):
@@ -2915,10 +2973,13 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.reference_worker is not None and self.reference_thread is not None:
             self._finish_reference_calculation()
-        if self.hardware_worker is not None and self.hardware_thread is not None:
-            self.hardware_worker.stop()
-            self.hardware_thread.quit()
-            self.hardware_thread.wait(5000)
+        if self.hardware_run_active:
+            if self.hardware_controller.is_active:
+                self.hardware_controller.stop_and_wait()
+            elif self.hardware_worker is not None and self.hardware_thread is not None:
+                self.hardware_worker.stop()
+                self.hardware_thread.quit()
+                self.hardware_thread.wait(5000)
             self.finish_switch_test_session()
         event.accept()
 
@@ -3208,7 +3269,7 @@ class MainWindow(QMainWindow):
         if self.run_data is None:
             return
         if self.run_recorder is None:
-            self.run_recorder = RunRecorder.from_existing(
+            self.run_recorder = self.run_repository.recorder_from_existing(
                 self.run_data.source_path,
                 metadata=self.run_data.metadata,
                 limit=self.limit_spin.value(),
@@ -3247,7 +3308,7 @@ class MainWindow(QMainWindow):
         if not part_number and serial:
             lookup_root = str(DEFAULT_PART_LOOKUP_ROOT)
             try:
-                part_number = find_part_number(serial, lookup_root)
+                part_number = self.coc_exporter.find_part_number(serial, lookup_root)
                 self.hardware_part_number.setCurrentText(part_number)
             except (OSError, LookupError, ValueError):
                 pass
@@ -3266,7 +3327,7 @@ class MainWindow(QMainWindow):
             self.settings.setValue("coc_template_path", str(template))
 
         try:
-            output_path = export_coc(
+            output_path = self.coc_exporter.export(
                 template,
                 self.run_data.source_path.parent,
                 self.run_data.measurements,
@@ -3277,7 +3338,7 @@ class MainWindow(QMainWindow):
             self.run_data.metadata.update(
                 {
                     "Part number": part_number,
-                    "Main board serial": normalise_serial(serial),
+                    "Main board serial": self.coc_exporter.normalise_serial(serial),
                     "Tested by": tested_by,
                     "COC output file": output_path.name,
                     "COC output path": str(output_path),
@@ -3286,9 +3347,13 @@ class MainWindow(QMainWindow):
                 }
             )
             self.hardware_part_number.setCurrentText(part_number)
-            self.hardware_main_board_serial.setText(normalise_serial(serial))
+            self.hardware_main_board_serial.setText(
+                self.coc_exporter.normalise_serial(serial)
+            )
             self.metadata_labels["Part number"].setText(part_number)
-            self.metadata_labels["Main board serial"].setText(normalise_serial(serial))
+            self.metadata_labels["Main board serial"].setText(
+                self.coc_exporter.normalise_serial(serial)
+            )
             self.metadata_labels["Tested by"].setText(tested_by or "Not recorded")
             self.persist_run_metadata()
         except (OSError, RuntimeError, ValueError, KeyError) as error:
@@ -3388,10 +3453,9 @@ class MainWindow(QMainWindow):
         limit = self.limit_spin.value()
         comparison_records = {}
         if self.comparison_run_data is not None:
-            comparison_records = {
-                record.channel: record
-                for record in self.comparison_run_data.measurements
-            }
+            comparison_records = index_measurements(
+                self.comparison_run_data.measurements
+            )
         headers = [
             "Channel",
             "1310 nm IL (dB)",
@@ -3431,18 +3495,13 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(len(records))
         for row_index, record in enumerate(records):
             is_pending = record.channel == self.hardware_pending_channel
-            comparison_record = comparison_records.get(record.channel)
-            comparison_values = (
-                [
-                    "%.4f" % comparison_record.loss_1310,
-                    "%.4f" % comparison_record.loss_1550,
-                ]
-                if comparison_record is not None
-                else ["-", "-"]
+            comparison_display_values = comparison_values(
+                comparison_records,
+                record.channel,
             )
             if is_pending:
                 values = [str(record.channel), "-", "-", "Taking measurement"]
-                values.extend(comparison_values)
+                values.extend(comparison_display_values)
                 for column, value in enumerate(values):
                     item = QTableWidgetItem(value)
                     if column == 0:
@@ -3466,7 +3525,7 @@ class MainWindow(QMainWindow):
                 "%.4f" % record.loss_1550,
                 status,
             ]
-            values.extend(comparison_values)
+            values.extend(comparison_display_values)
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 if column == 0:

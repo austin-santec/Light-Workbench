@@ -7,10 +7,9 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from app_config import DEFAULT_RUN_ROOT
+from infrastructure.schema import CURRENT_RUN_SCHEMA_VERSION, migrate_run_payload
 from run_data import MeasurementRecord, RunData
-
-
-DEFAULT_RUN_ROOT = Path.home() / "Documents" / "ILM-Reads"
 
 
 def _run_metadata(metadata):
@@ -192,6 +191,7 @@ class RunRecorder:
         self._write_csv(measurements)
         stored_metadata = _run_metadata(self.metadata)
         payload = {
+            "schema_version": CURRENT_RUN_SCHEMA_VERSION,
             "created_at": self.metadata.get("Created at", datetime.now().isoformat(timespec="seconds")),
             "run_number": stored_metadata.get("Run number"),
             "warning_limit_db": self.limit,
@@ -390,4 +390,4 @@ class RunRecorder:
 def load_run_json(path: str | Path) -> dict:
     """Load a structured run record for future detailed viewer support."""
     with Path(path).open("r", encoding="utf-8") as json_file:
-        return json.load(json_file)
+        return migrate_run_payload(json.load(json_file))

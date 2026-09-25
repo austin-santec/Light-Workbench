@@ -64,6 +64,11 @@ Updates` automatically refreshes both values without saving data and changes to
 | `ILMReadLoss.py` | Main application: prompts, calculations, retesting, and CSV output |
 | `ilm_app.py` | Light Workbench PyQt5 desktop application for saved CSV runs, loss-limit analysis, and hardware control |
 | `run_data.py` | CSV loader and configurable over-limit analysis model |
+| `domain/models.py` | Typed vendor-neutral measurement, unit, run, reference, and workflow models |
+| `app_config.py` | Centralized default paths and injectable application path configuration |
+| `application/run_controller.py` | Hardware-run lifecycle controller and queued worker command boundary |
+| `application/live_controller.py` | Live IL meter worker lifecycle controller |
+| `application/red_light_controller.py` | Red Light Test switch worker lifecycle controller |
 | `run_persistence.py` | Atomic CSV/JSON persistence for accepted measurements and timing metadata |
 | `unit_persistence.py` | Shared unit records, numbered runs, replacements, and designated spares |
 | `coc_export.py` | XLSX COC template copying, cell mapping, serial lookup, and export |
@@ -83,6 +88,7 @@ Updates` automatically refreshes both values without saving data and changes to
 | `README_INSTALL.txt` | Light Workbench ZIP deployment, prerequisite, and quick-start instructions |
 | `Check Dependencies.cmd` | Optional launcher for the bundled dependency and connection report |
 | `ILM_READING_GUIDE.html` | Browser-based operator guide for the hardware IL-reading workflow |
+| `docs/` | Architecture, coding standards, hardware boundaries, data rules, testing, and refactor guidance |
 | `ILM-Reads/` | Automatically generated unit folders containing numbered `Run-N-[switch serial]` folders; legacy timestamped and unsuffixed numbered run folders remain supported |
 | `tests/` | Hardware-free automated tests for the application and data models |
 
@@ -91,6 +97,12 @@ keeps the measurement workflow dependent on a small Python interface: the
 real `SantecPowerMeter` delegates to the existing `OP815` wrapper, while
 `SimulatedPowerMeter` supplies deterministic readings for tests and future UI
 development without connected equipment.
+
+Before making code changes, review the relevant documents in `docs/`. Start
+with `docs/README.md`, then read `PROGRAM_DESIGN.md` and the specialist guide
+for the area being changed. The documentation describes the target architecture
+and the incremental refactor rules for keeping future ILM, OPM, and separate
+laser support maintainable.
 
 The vendor-neutral contracts in `hardware/interfaces.py` are the first step
 toward supporting more equipment. The current integrated ILM implements the
@@ -108,7 +120,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the current release version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.7.1**.
+current Light Workbench release is version **1.7.2**.
 
 Use `Help > IL Instructions` to open the bundled browser-based operator guide
 for the hardware IL-reading workflow.

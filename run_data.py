@@ -4,13 +4,7 @@ import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
-@dataclass(frozen=True)
-class MeasurementRecord:
-    channel: int
-    loss_1310: float
-    loss_1550: float
-    physical_port: int | None = None
+from domain.models import MeasurementRecord
 
 
 @dataclass

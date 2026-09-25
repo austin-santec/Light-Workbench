@@ -11,11 +11,7 @@ from copy import deepcopy
 from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
 
-
-DEFAULT_PART_LOOKUP_ROOT = Path(
-    r"U:\Product Log\Units-COCs-Param Files\OSX-150"
-)
-COC_TEMPLATE_FILENAME = "OSX-100 Single Mode COC Template 1.xlsx"
+from app_config import COC_TEMPLATE_FILENAME, DEFAULT_PART_LOOKUP_ROOT
 _INVALID_FILENAME_CHARACTERS = re.compile(r'[<>:"/\\|?*]')
 
 
