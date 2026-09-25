@@ -1,0 +1,6 @@
+# Optional contributor tooling. These packages are not needed by the packaged
+# application; runtime and build dependencies remain in requirements-win32.txt.
+black
+ruff
+mypy
+pre-commit

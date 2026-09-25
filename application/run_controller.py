@@ -13,7 +13,7 @@ from PyQt5.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 
 from domain.models import RunState
 from hardware.interfaces import OpticalSwitch, PowerMeter
-from measurement_worker import MeasurementWorker
+from application.measurement_worker import MeasurementWorker
 
 
 @dataclass(frozen=True)

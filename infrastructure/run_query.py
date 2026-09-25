@@ -1,8 +1,10 @@
 """Read-only queries over the current file-backed run repository."""
 
+from collections.abc import Iterator
 from pathlib import Path
 
 from domain.reporting import RunSummary, summarize_run
+from domain.run_data import RunData
 
 from .run_repository import FileRunRepository
 from .unit_repository import FileUnitRepository
@@ -25,9 +27,25 @@ class FileRunQueryService:
         warning_limit: float,
     ) -> list[RunSummary]:
         """Return summaries for all readable CSV runs indexed for a unit."""
+        summaries = [
+            summarize_run(run_data.measurements, run_data.metadata, warning_limit)
+            for _, run_data in self.iter_unit_runs(unit_directory)
+        ]
+        return sorted(
+            summaries,
+            key=lambda summary: (
+                summary.run_number is None,
+                summary.run_number or 0,
+            ),
+        )
+
+    def iter_unit_runs(
+        self,
+        unit_directory: str | Path,
+    ) -> Iterator[tuple[Path, RunData]]:
+        """Yield readable indexed CSV runs without changing source files."""
         unit_directory = Path(unit_directory)
         record = self.unit_repository.load_record(unit_directory)
-        summaries = []
         for run_entry in record.get("runs", []):
             if not isinstance(run_entry, dict):
                 continue
@@ -42,18 +60,28 @@ class FileRunQueryService:
                 run_data = self.run_repository.load_csv(csv_path)
             except (OSError, ValueError):
                 continue
-            summaries.append(
-                summarize_run(
-                    run_data.measurements,
-                    run_data.metadata,
-                    warning_limit,
-                )
+            yield csv_path, run_data
+
+    def summarize_root_runs(
+        self,
+        run_root: str | Path,
+        warning_limit: float,
+    ) -> list[RunSummary]:
+        """Return summaries from every indexed unit below a run root."""
+        run_root = Path(run_root)
+        summaries = []
+        for unit_directory in sorted(run_root.glob("Unit-*")):
+            if not unit_directory.is_dir():
+                continue
+            summaries.extend(
+                self.summarize_unit_runs(unit_directory, warning_limit)
             )
         return sorted(
             summaries,
             key=lambda summary: (
                 summary.run_number is None,
                 summary.run_number or 0,
+                summary.switch_serial.casefold(),
             ),
         )
 

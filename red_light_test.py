@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
 )
 
 from application.red_light_controller import RedLightTestController
-from osx150_driver import OSX150
+from hardware.factory import HardwareFactory
 
 
 class RedLightTestDialog(QDialog):
@@ -25,9 +25,14 @@ class RedLightTestDialog(QDialog):
     selected; no readings or run data are created.
     """
 
-    def __init__(self, parent=None, switch_factory=OSX150):
+    def __init__(self, parent=None, switch_factory=None):
         super().__init__(parent)
-        self.switch_factory = switch_factory
+        self.hardware_factory = HardwareFactory()
+        self.switch_factory = (
+            switch_factory
+            if switch_factory is not None
+            else self.hardware_factory.create_switch
+        )
         self.switch = None
         self.red_controller = RedLightTestController(self)
         self.red_controller.connected.connect(self._switch_connected)

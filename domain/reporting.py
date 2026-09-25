@@ -22,6 +22,30 @@ class RunSummary:
     stop_time: str
 
 
+@dataclass(frozen=True)
+class OperatorRunSummary:
+    """Timing and limit results grouped by tester initials."""
+
+    tested_by: str
+    run_count: int
+    timed_run_count: int
+    average_duration_seconds: float | None
+    fastest_duration_seconds: float | None
+    slowest_duration_seconds: float | None
+    average_over_limit_channel_count: float
+
+
+@dataclass(frozen=True)
+class MultiRunSummary:
+    """In-memory aggregate for a selected collection of saved runs."""
+
+    run_count: int
+    timed_run_count: int
+    average_duration_seconds: float | None
+    average_over_limit_channel_count: float
+    operator_summaries: tuple[OperatorRunSummary, ...]
+
+
 def summarize_run(
     measurements: Iterable[MeasurementRecord],
     metadata: Mapping[str, object],
@@ -58,4 +82,82 @@ def summarize_run(
     )
 
 
-__all__ = ["RunSummary", "summarize_run"]
+def aggregate_run_summaries(
+    summaries: Iterable[RunSummary],
+) -> MultiRunSummary:
+    """Aggregate saved-run summaries without reading or modifying files.
+
+    A zero duration means timing metadata was unavailable, so it is excluded
+    from timing averages. Limit counts are still included because they are
+    valid for runs that have no timing metadata.
+    """
+    selected_summaries = list(summaries)
+    timed_durations = [
+        summary.total_duration_seconds
+        for summary in selected_summaries
+        if summary.total_duration_seconds > 0
+    ]
+    grouped: dict[str, list[RunSummary]] = {}
+    for summary in selected_summaries:
+        operator = summary.tested_by or "Unknown"
+        grouped.setdefault(operator, []).append(summary)
+
+    operator_summaries = []
+    for operator in sorted(grouped, key=str.casefold):
+        operator_runs = grouped[operator]
+        operator_durations = [
+            summary.total_duration_seconds
+            for summary in operator_runs
+            if summary.total_duration_seconds > 0
+        ]
+        operator_summaries.append(
+            OperatorRunSummary(
+                tested_by=operator,
+                run_count=len(operator_runs),
+                timed_run_count=len(operator_durations),
+                average_duration_seconds=(
+                    sum(operator_durations) / len(operator_durations)
+                    if operator_durations
+                    else None
+                ),
+                fastest_duration_seconds=(
+                    min(operator_durations) if operator_durations else None
+                ),
+                slowest_duration_seconds=(
+                    max(operator_durations) if operator_durations else None
+                ),
+                average_over_limit_channel_count=(
+                    sum(
+                        summary.over_limit_channel_count
+                        for summary in operator_runs
+                    )
+                    / len(operator_runs)
+                ),
+            )
+        )
+
+    return MultiRunSummary(
+        run_count=len(selected_summaries),
+        timed_run_count=len(timed_durations),
+        average_duration_seconds=(
+            sum(timed_durations) / len(timed_durations)
+            if timed_durations
+            else None
+        ),
+        average_over_limit_channel_count=(
+            sum(summary.over_limit_channel_count for summary in selected_summaries)
+            / len(selected_summaries)
+            if selected_summaries
+            else 0.0
+        ),
+        operator_summaries=tuple(operator_summaries),
+    )
+
+
+__all__ = [
+    "MultiRunSummary",
+    "OperatorRunSummary",
+    "RunSummary",
+    "aggregate_run_summaries",
+    "summarize_run",
+]

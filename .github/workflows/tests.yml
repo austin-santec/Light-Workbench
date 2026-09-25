@@ -1,0 +1,35 @@
+name: Light Workbench checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests-and-static-validation:
+    name: Tests and static validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-win32.txt
+
+      - name: Parse project configuration
+        run: python -c "import tomllib; tomllib.load(open('pyproject.toml', 'rb'))"
+
+      - name: Compile source modules
+        run: python -m compileall -q application domain hardware infrastructure
+
+      - name: Run hardware-free tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests

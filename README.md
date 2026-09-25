@@ -65,22 +65,42 @@ Updates` automatically refreshes both values without saving data and changes to
 | `ilm_app.py` | Light Workbench PyQt5 desktop application for saved CSV runs, loss-limit analysis, and hardware control |
 | `run_data.py` | CSV loader and configurable over-limit analysis model |
 | `domain/models.py` | Typed vendor-neutral measurement, unit, run, reference, and workflow models |
+| `domain/run_data.py` | Domain run model and over-limit analysis rules |
 | `app_config.py` | Centralized default paths and injectable application path configuration |
 | `application/run_controller.py` | Hardware-run lifecycle controller and queued worker command boundary |
 | `application/live_controller.py` | Live IL meter worker lifecycle controller |
 | `application/red_light_controller.py` | Red Light Test switch worker lifecycle controller |
-| `run_persistence.py` | Atomic CSV/JSON persistence for accepted measurements and timing metadata |
-| `unit_persistence.py` | Shared unit records, numbered runs, replacements, and designated spares |
-| `coc_export.py` | XLSX COC template copying, cell mapping, serial lookup, and export |
+| `infrastructure/run_repository.py` | File-backed CSV/JSON repository adapter |
+| `infrastructure/csv_run_loader.py` | CSV parsing adapter for current and legacy run files |
+| `infrastructure/run_persistence.py` | Atomic CSV/JSON run recorder and filename rules |
+| `infrastructure/unit_persistence.py` | Atomic unit JSON records and numbered-run paths |
+| `infrastructure/coc_export.py` | COC template lookup, workbook export, and drawing preservation |
+| `infrastructure/run_repository.py` | File-backed CSV/JSON repository adapter |
+| `infrastructure/run_query.py` | Read-only queries over indexed unit runs |
+| `infrastructure/run_reports.py` | File-backed multi-run reporting service |
+| `infrastructure/schema.py` | Run and unit schema versions and migrations |
+| `run_persistence.py` | Compatibility facade for infrastructure run persistence |
+| `unit_persistence.py` | Compatibility facade for infrastructure unit persistence |
+| `coc_export.py` | Compatibility facade for infrastructure COC export |
 | `ilm_app.spec` | PyInstaller one-folder build definition for the desktop application |
 | `build_windows.ps1` | Repeatable 32-bit Windows build command |
+| `verify_release.ps1` | Verifies the executable distribution layout and support files |
+| `package_release.ps1` | Creates a versioned deployment ZIP after verification |
+| `smoke_test_release.ps1` | Optionally starts and closes the packaged executable to verify startup |
 | `requirements-win32.txt` | Pinned 32-bit application and packaging dependencies |
+| `requirements-dev.txt` | Optional contributor tooling for formatting, linting, typing, and hooks |
+| `.pre-commit-config.yaml` | Optional local quality checks for contributors |
 | `op815_driver.py` | Documented 32-bit DLL wrapper for the ILM/OP815 |
-| `power_meter.py` | Application adapter for the OP815 driver plus a simulated meter for testing |
+| `application/measurement_worker.py` | Background hardware-run orchestration worker |
+| `application/run_start.py` | Hardware-run planning and controller-request preparation |
 | `hardware/interfaces.py` | Vendor-neutral power-meter, laser-source, and optical-switch contracts |
-| `osx150_driver.py` | Documented PyVISA/SCPI driver for the OSX-150 |
-| `red_light_test.py` | Separate VFL pre-test dialog for manually routing switch channels |
-| `live_il_reading.py` | Meter-only live IL reading dialog with no switch control or run persistence |
+| `hardware/power_meter.py` | Integrated OP815 adapter and simulated meter implementations |
+| `hardware/optical_switch.py` | OSX-150 PyVISA/SCPI adapter implementation |
+| `hardware/factory.py` | Lazy composition of real and future hardware adapters |
+| `power_meter.py` | Compatibility facade for the hardware power-meter adapters |
+| `osx150_driver.py` | Compatibility facade for the OSX-150 hardware adapter |
+| `red_light_test.py` | Separate VFL pre-test dialog using an injected switch factory |
+| `live_il_reading.py` | Meter-only live IL dialog using an injected meter factory |
 | `app_info.py` | Single source for the Light Workbench name, version, tagline, and About text |
 | `OP815M.dll` | Vendor library used to communicate with the ILM |
 | `Templates/OSX-100 Single Mode COC Template 1.xlsx` | XLSX COC template bundled with the desktop application |
@@ -92,11 +112,12 @@ Updates` automatically refreshes both values without saving data and changes to
 | `ILM-Reads/` | Automatically generated unit folders containing numbered `Run-N-[switch serial]` folders; legacy timestamped and unsuffixed numbered run folders remain supported |
 | `tests/` | Hardware-free automated tests for the application and data models |
 
-The vendor `OP815M.dll` is not modified by this project. `power_meter.py`
-keeps the measurement workflow dependent on a small Python interface: the
-real `SantecPowerMeter` delegates to the existing `OP815` wrapper, while
-`SimulatedPowerMeter` supplies deterministic readings for tests and future UI
-development without connected equipment.
+The vendor `OP815M.dll` is not modified by this project. The hardware adapter
+in `hardware/power_meter.py` keeps the measurement workflow dependent on a
+small Python interface: the real `SantecPowerMeter` delegates to the existing
+`OP815` wrapper, while `SimulatedPowerMeter` supplies deterministic readings
+for tests and future UI development without connected equipment. The root
+`power_meter.py` module remains a compatibility facade for existing imports.
 
 Before making code changes, review the relevant documents in `docs/`. Start
 with `docs/README.md`, then read `PROGRAM_DESIGN.md` and the specialist guide
@@ -111,6 +132,8 @@ A future OPM plus separate laser can implement `PowerMeter` and `LaserSource`
 independently without requiring the application workflow to know the vendor
 or connection protocol. Existing top-level driver modules remain in place for
 backward compatibility while the architecture is being migrated incrementally.
+The hardware factory loads the real vendor adapters lazily, so contract-only
+code and hardware-free tests do not need to open or initialize equipment.
 
 The Light Workbench desktop application can be started with:
 
@@ -395,6 +418,22 @@ The result is written to `dist\LightWorkbench\`. Launch
 `LightWorkbench.exe` from that folder. If PowerShell blocks `.ps1` scripts due
 to the local execution policy, run the PyInstaller command above directly.
 
+After testing the distribution, create a deployment ZIP with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\package_release.ps1
+```
+
+The archive is written to `releases\LightWorkbench-v<version>.zip`. Add
+`-Force` only when intentionally replacing an archive with the same version.
+
+Before distributing a newly built executable, optionally run the packaged
+startup smoke test:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\smoke_test_release.ps1
+```
+
 Keep these files together in the same folder:
 
 ```text
@@ -627,9 +666,10 @@ the interruption remain in that CSV.
 
 New user workflows should normally be added to `ILMReadLoss.py`. Raw ILM DLL
 calls belong in `op815_driver.py`, and raw OSX-150 VISA/SCPI commands belong in
-`osx150_driver.py`. Keeping those responsibilities separate makes it easier to
-add standardized switch metadata and other output files later without mixing
-device protocol details into the application workflow.
+`hardware/optical_switch.py`. Keeping those responsibilities separate makes it
+easier to add standardized switch metadata and other output files later without
+mixing device protocol details into the application workflow. The root
+`osx150_driver.py` module remains a compatibility facade for existing imports.
 
 Metadata collection, automatic swap tracking, and `metadata_table_rows()` are
 separate from `write_combined_csv()`. If metadata is moved to a dedicated CSV

@@ -15,6 +15,8 @@ Before modifying code, review:
    - `DATA_ARCHITECTURE.md` for runs, units, CSV, JSON, or COC work.
    - `TESTING_AND_RELEASE.md` for tests, packaging, or executable changes.
 4. `REFACTOR_ROADMAP.md` before moving or reorganizing modules.
+5. `PROJECT_LAYOUT.md` when adding files or deciding where a responsibility
+   belongs.
 
 The current source files and automated tests remain the final authority when
 these documents do not yet describe an existing behavior. Update the relevant
@@ -47,4 +49,3 @@ Before submitting a change:
   changes.
 - Rebuild the executable only after source tests pass and the user requests a
   distributable build.
-

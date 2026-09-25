@@ -7,10 +7,14 @@ from zipfile import ZipFile
 from openpyxl import Workbook, load_workbook
 
 from coc_export import export_coc, find_part_number
+from infrastructure.coc_export import export_coc as infrastructure_export_coc
 from run_data import MeasurementRecord
 
 
 class CocExportTests(unittest.TestCase):
+    def test_legacy_module_reexports_infrastructure_exporter(self):
+        self.assertIs(export_coc, infrastructure_export_coc)
+
     def make_template(self, directory):
         workbook = Workbook()
         sheet = workbook.active

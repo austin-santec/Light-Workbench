@@ -274,6 +274,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\replacements.py',
    'PYMODULE'),
+  ('domain.reporting',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\reporting.py',
+   'PYMODULE'),
   ('domain.timing',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\timing.py',
@@ -380,6 +384,14 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\hardware\\interfaces.py',
    'PYMODULE'),
+  ('hardware.session',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\hardware\\session.py',
+   'PYMODULE'),
+  ('hardware.simulated',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\hardware\\simulated.py',
+   'PYMODULE'),
   ('hashlib',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\hashlib.py',
    'PYMODULE'),
@@ -472,6 +484,10 @@
   ('infrastructure.run_repository',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\run_repository.py',
+   'PYMODULE'),
+  ('infrastructure.schema',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\schema.py',
    'PYMODULE'),
   ('infrastructure.unit_repository',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '

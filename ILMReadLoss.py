@@ -4,8 +4,9 @@ Run this script with 32-bit Python:
 
     py -3.11-32 ILMReadLoss.py
 
-The hardware-specific code lives in op815_driver.py and osx150_driver.py. This
-file handles prompts, insertion-loss calculations, retesting, and CSV output.
+The hardware-specific adapters live in hardware/power_meter.py and
+hardware/optical_switch.py. This file handles prompts, insertion-loss
+calculations, retesting, and CSV output.
 """
 
 import csv
@@ -20,8 +21,8 @@ from pyvisa.errors import VisaIOError
 # Hardware-specific communication is kept in driver and adapter modules. This
 # file can therefore focus on prompts, calculations, retesting, and CSV output.
 from op815_driver import WAVELENGTHS_NM
-from osx150_driver import MIN_SWITCH_CHANNEL, OSX150
-from power_meter import SantecPowerMeter
+from hardware.optical_switch import MIN_SWITCH_CHANNEL, OSX150
+from hardware.power_meter import SantecPowerMeter
 
 
 # Pressing Enter at a reference prompt uses these convenient defaults.  The

@@ -36,6 +36,12 @@ class FakeSwitch:
 
 
 class HardwareFactoryTests(unittest.TestCase):
+    def test_default_factories_are_lazy_callables(self):
+        factory = HardwareFactory()
+
+        self.assertTrue(callable(factory.power_meter_factory))
+        self.assertTrue(callable(factory.switch_factory))
+
     def test_factory_creates_configured_capabilities(self):
         factory = HardwareFactory(FakeMeter, FakeSwitch)
 

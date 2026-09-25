@@ -1,9 +1,8 @@
 # Light Workbench — AI Handoff
 
 This document is a working orientation guide for another AI or developer
-continuing this project. It describes the code as found on 2026-09-16. The
-files on disk are the source of truth; this folder did not contain a usable Git
-worktree when inspected (git status reported that it was not a repository).
+continuing this project. It was last reviewed on 2026-09-25. The files on disk
+and the Git worktree are the source of truth.
 
 ## Mission
 
@@ -22,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current user-facing release is **Light Workbench 1.7.1**. The single
+The current user-facing release is **Light Workbench 1.7.2**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -31,20 +30,35 @@ The main window exposes this through `Help > About`.
 | File | Responsibility |
 | --- | --- |
 | ilm_app.py | Current PyQt5 desktop viewer and real-hardware UI. Loads CSV runs, analyzes limits, starts hardware runs, displays readings, and commits accepted results. The header includes the bundled Lulu - CandC logo; the UI uses a light-grey shell and `#e60013` primary accent. |
-| measurement_worker.py | Qt worker/orchestrator. Connects instruments, routes channels, waits for operator cable placement, supports repeated reads, emits readings/progress, and always closes instruments. |
-| power_meter.py | Application-facing meter adapter. SantecPowerMeter wraps the OP815 driver; SimulatedPowerMeter is deterministic and hardware-free. The PowerMeter contract is re-exported here for backward compatibility. |
+| application/measurement_worker.py | Qt worker/orchestrator. Connects instruments, routes channels, waits for operator cable placement, supports repeated reads, emits readings/progress, and always closes instruments. |
+| measurement_worker.py | Compatibility facade for the application measurement worker. |
+| application/live_controller.py | Shared meter worker lifecycle used by Live IL and the main-window reference calculation. |
+| application/hardware_planning.py | Normalizes channel-mode selections before a hardware run starts. |
+| application/run_start.py | Prepares normalized hardware-run plans and controller requests without UI or hardware access. |
+| application/run_controller.py | Owns hardware-run worker lifecycle, requests, commands, and terminal cleanup. |
+| hardware/power_meter.py | Application-facing meter adapter. SantecPowerMeter wraps the OP815 driver; SimulatedPowerMeter is deterministic and hardware-free. |
+| power_meter.py | Compatibility facade for the hardware power-meter adapters and PowerMeter contract. |
 | hardware/interfaces.py | Vendor-neutral PowerMeter, LaserSource, and OpticalSwitch protocols. This is the starting boundary for future OPM plus separate laser support. |
+| application/ | Workflow controllers, measurement worker, planning, and transient hardware-run state. |
+| domain/ | Vendor-neutral models, calculations, replacement rules, timing, and reporting. |
+| hardware/ | Hardware contracts, factories, simulated adapters, and composed sessions. |
+| infrastructure/ | File repositories, schema migration, run queries, reports, and COC adapters. |
+| infrastructure/run_persistence.py | Atomic CSV/JSON recorder and run filename rules; root `run_persistence.py` is a compatibility facade. |
+| infrastructure/unit_persistence.py | Atomic unit JSON records and numbered-run paths; root `unit_persistence.py` is a compatibility facade. |
+| infrastructure/coc_export.py | COC template lookup, XLSX writing, and drawing preservation; root `coc_export.py` is a compatibility facade. |
 | op815_driver.py | ctypes wrapper around the 32-bit OP815M.dll. Owns DLL discovery, function signatures, device selection, source control, wavelength selection, measurements, and cleanup. |
-| osx150_driver.py | PyVISA/SCPI driver for USB OSX-150 discovery, logical channel routing, configured-channel count, and physical-port reporting. |
+| hardware/optical_switch.py | PyVISA/SCPI adapter for USB OSX-150 discovery, logical channel routing, configured-channel count, and physical-port reporting. |
+| osx150_driver.py | Compatibility facade for the OSX-150 hardware adapter. |
 | red_light_test.py | Separate VFL pre-test dialog. Tools > Red Light Test opens it without connecting; its Start button connects and routes channels without creating readings or run/COC data. |
 | live_il_reading.py | Meter-only Live IL Reading dialog. It connects only to the OP815, calculates both wavelength losses from editable references, supports non-persistent reconnect repeatability testing and timed live updates, and never controls the switch or persists data. |
 | app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
-| run_data.py | MeasurementRecord, RunData, CSV loading, over-limit filtering, and analysis counts. |
-| run_persistence.py | Modern atomic CSV/JSON persistence for accepted measurements and switch timing metadata. |
-| unit_persistence.py | Device-level unit records, numbered run folders, shared replacements, and designated spares. |
+| domain/run_data.py | RunData and over-limit analysis rules; the root `run_data.py` remains a compatibility facade. |
+| infrastructure/csv_run_loader.py | Current and legacy CSV parsing for RunData. |
+| run_persistence.py | Compatibility facade for the infrastructure CSV/JSON persistence implementation. |
+| unit_persistence.py | Compatibility facade for infrastructure unit records, numbered runs, replacements, and spares. |
 | switch_timing.py | Real switch-test session timing; accumulates across continuation sessions and excludes Live IL/Red Light Test. |
 | replacement_analysis.py | Hardware-independent selection of worthwhile replacements and best remaining designated spares, including displaced production ports, plus completed-replacement record validation and metadata formatting. |
-| coc_export.py | XLSX COC template export, merged-cell mapping, collision-safe filenames, Main Board serial lookup, and preservation of embedded template graphics. |
+| coc_export.py | Compatibility facade for the infrastructure COC exporter. |
 | ILMReadLoss.py | Older, still functional console workflow. Owns prompts, validation, calculations, legacy CSV naming/output, retests, and legacy replacement-port metadata. |
 | ilm_app.spec | PyInstaller one-folder build for ilm_app.py, including OP815M.dll. |
 | assets/Lulu - CandC.png | Bundled header logo displayed at a capped size so it does not increase the window layout height. |
@@ -55,22 +69,29 @@ The main window exposes this through `Help > About`.
 | tests/ | Hardware-free unit tests for the viewer, worker, meter adapters, CSV model, and persistence. |
 
 The normal direction for new desktop behavior is ilm_app.py; keep raw
-instrument protocol code in the two driver modules. Treat ILMReadLoss.py as a
-legacy/console path unless a change explicitly needs to preserve or improve it.
+instrument protocol code in the hardware adapter modules. Treat ILMReadLoss.py
+as a legacy/console path unless a change explicitly needs to preserve or
+improve it.
 
 ## Architecture refactor status
 
-The first incremental refactor has been started without changing the current
-workflow. `hardware/interfaces.py` now defines the application-facing
+The incremental refactor has progressed without changing the current
+operator workflow. `hardware/interfaces.py` now defines the application-facing
 contracts for a power meter, separate laser source, and optical switch. The
-existing OP815 meter and OSX-150 switch continue to be used exactly as before;
-`power_meter.py` re-exports `PowerMeter` so existing imports remain compatible.
+existing OP815 meter and OSX-150 switch continue to be used exactly as before.
+Their application-facing adapters now live in `hardware/power_meter.py` and
+`hardware/optical_switch.py`; the root modules remain compatibility facades so
+existing imports remain compatible.
+`HardwareFactory` imports those concrete adapters lazily, keeping contract-only
+imports and hardware-free tests independent of active VISA or DLL sessions.
 The contracts are covered by hardware-free tests in
 `tests/test_hardware_interfaces.py`.
 
-The next planned phase is to extract run lifecycle/state management from
-`ilm_app.py`. Do not move or rename the current driver modules until that
-phase has its regression tests in place.
+The lifecycle, domain, repository, hardware-composition, reporting, and
+release-tooling refactors are now in progress through incremental phases.
+Review `docs/REFACTOR_ROADMAP.md` and `docs/PROJECT_LAYOUT.md` before starting
+the next extraction. Do not move or rename compatibility modules without
+regression tests and a documented migration path.
 
 ## Runtime and hardware requirements
 
@@ -102,6 +123,9 @@ Useful commands from the project directory:
     python ILMReadLoss.py
     python ilm_app.py
     python -m PyInstaller --noconfirm --clean ilm_app.spec
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\verify_release.ps1
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\smoke_test_release.ps1
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\package_release.ps1
 
 The last two application commands can connect to or move real hardware. Use
 the GUI's explicit hardware confirmation and begin with one channel or a
@@ -174,7 +198,7 @@ records with a logical-channel field are migrated when loaded.
 pairs in a plain-text format for the Unit Editor notes.
 12. COC export is available after a hardware completion, stop, or failure with
 a run, and from the controls/File menu. It accepts partial and over-limit data;
-missing logical channels stay blank. `coc_export.py` copies the bundled XLSX
+missing logical channels stay blank. `infrastructure/coc_export.py` copies the bundled XLSX
 template and writes the `OSX Template` sheet's split rows, Part Number, Main
 Board serial, and date while preserving other workbook content. It uses
 `openpyxl`, so Excel is not required. The default part lookup is
@@ -239,7 +263,7 @@ IDs, DLL signatures, or timing assumptions without a hardware validation plan.
 
 ### OSX-150
 
-osx150_driver.py filters VISA resources by Santec USB vendor/product IDs
+hardware/optical_switch.py filters VISA resources by Santec USB vendor/product IDs
 0x2428 / 0xD00D, verifies identity using *IDN?, and uses:
 
 - CFG:SWT:END? for the configured logical-channel count;
@@ -267,7 +291,7 @@ metadata in E-F:
     ,,,,Swapped ports,2->49
     ,,,,Operating band,O band
 
-### Modern desktop CSV/JSON (run_persistence.py)
+### Modern desktop CSV/JSON (`infrastructure/run_persistence.py`)
 
 RunRecorder defaults to `Documents\ILM-Reads`. New hardware runs are grouped
 under `Unit-[main board serial]\Run-N-[switch serial]\`, with a same-named CSV

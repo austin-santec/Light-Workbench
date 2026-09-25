@@ -4,8 +4,20 @@ from collections.abc import Callable
 
 from hardware.interfaces import LaserSource, OpticalSwitch, PowerMeter
 from hardware.session import OpticalTestSession
-from osx150_driver import OSX150
-from power_meter import SantecPowerMeter
+
+
+def _create_default_power_meter() -> PowerMeter:
+    """Create the integrated OP815 adapter only when hardware is requested."""
+    from hardware.power_meter import SantecPowerMeter
+
+    return SantecPowerMeter()
+
+
+def _create_default_switch() -> OpticalSwitch:
+    """Create the OSX-150 adapter only when hardware is requested."""
+    from hardware.optical_switch import OSX150
+
+    return OSX150()
 
 
 class HardwareFactory:
@@ -18,12 +30,20 @@ class HardwareFactory:
 
     def __init__(
         self,
-        power_meter_factory: Callable[[], PowerMeter] = SantecPowerMeter,
-        switch_factory: Callable[[], OpticalSwitch] = OSX150,
+        power_meter_factory: Callable[[], PowerMeter] | None = None,
+        switch_factory: Callable[[], OpticalSwitch] | None = None,
         laser_source_factory: Callable[[], LaserSource] | None = None,
     ):
-        self.power_meter_factory = power_meter_factory
-        self.switch_factory = switch_factory
+        self.power_meter_factory = (
+            power_meter_factory
+            if power_meter_factory is not None
+            else _create_default_power_meter
+        )
+        self.switch_factory = (
+            switch_factory
+            if switch_factory is not None
+            else _create_default_switch
+        )
         self.laser_source_factory = laser_source_factory
 
     def create_power_meter(self) -> PowerMeter:

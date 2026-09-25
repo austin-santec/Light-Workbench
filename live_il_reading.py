@@ -25,8 +25,8 @@ from PyQt5.QtWidgets import (
 from application.live_controller import LiveILReadingController
 from domain.measurement import calculate_insertion_loss
 from domain.reference import calculate_reference_offsets
+from hardware.factory import HardwareFactory
 from hardware.session import OpticalTestSession
-from power_meter import SantecPowerMeter
 
 
 LIVE_UPDATE_PAUSE_MS = 1000
@@ -115,11 +115,16 @@ class LiveILReadingDialog(QDialog):
         parent=None,
         reference_1310=0.00,
         reference_1550=0.00,
-        meter_factory=SantecPowerMeter,
+        meter_factory=None,
         auto_calculate_reference=False,
     ):
         super().__init__(parent)
-        self.meter_factory = meter_factory
+        self.hardware_factory = HardwareFactory()
+        self.meter_factory = (
+            meter_factory
+            if meter_factory is not None
+            else self.hardware_factory.create_power_meter
+        )
         self.thread = None
         self.worker = None
         self.live_controller = LiveILReadingController(

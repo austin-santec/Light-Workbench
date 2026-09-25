@@ -120,7 +120,7 @@ def check_osx150(switch_factory=None):
     switch = None
     try:
         if switch_factory is None:
-            from osx150_driver import OSX150
+            from hardware.optical_switch import OSX150
 
             switch_factory = OSX150
         switch = switch_factory()

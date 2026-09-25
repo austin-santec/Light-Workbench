@@ -12,9 +12,18 @@ from unit_persistence import (
     save_unit_record,
     unit_directory_for_metadata,
 )
+from infrastructure.unit_persistence import (
+    build_unit_directory_name as infrastructure_build_unit_directory_name,
+)
 
 
 class UnitPersistenceTests(unittest.TestCase):
+    def test_legacy_module_reexports_infrastructure_directory_rules(self):
+        self.assertIs(
+            build_unit_directory_name,
+            infrastructure_build_unit_directory_name,
+        )
+
     def test_unit_directory_uses_main_board_serial_first(self):
         self.assertEqual(
             build_unit_directory_name(

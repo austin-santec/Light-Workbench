@@ -1,0 +1,27 @@
+[tool.light-workbench]
+# The vendor OP815M.dll is 32-bit, so the supported runtime is Python 3.11
+# 32-bit on Windows. This project is packaged as an executable rather than a
+# pip-installable library; runtime dependencies remain in requirements-win32.txt.
+python-version = "3.11"
+python-architecture = "32-bit"
+application-entrypoint = "ilm_app.py"
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+extend-exclude = "^/(build|dist|IL-Reads|__pycache__)/"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+extend-exclude = ["build", "dist", "IL-Reads", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["app_config.py", "application", "domain", "hardware", "infrastructure"]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true

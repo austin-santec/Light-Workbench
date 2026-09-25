@@ -29,6 +29,15 @@ An AI assistant working on this project should:
 - Do not rebuild or replace the executable unless requested or required by the
   task.
 
+## Tool configuration
+
+`pyproject.toml` is the shared configuration source for Black, Ruff, and
+Mypy. These tools are intentionally not required to run the application or
+the existing unittest suite. When installed in a development environment,
+they should use the project configuration rather than per-developer settings.
+The optional package list is in `requirements-dev.txt`, and
+`.pre-commit-config.yaml` runs the same checks locally before commits.
+
 ## Review questions
 
 - Does this belong in UI, application, domain, or infrastructure code?
@@ -37,4 +46,3 @@ An AI assistant working on this project should:
 - Is cleanup safe if the user closes the window or stops a run?
 - Is the behavior covered without requiring connected hardware?
 - Does the change need a version, README, or release-package update?
-

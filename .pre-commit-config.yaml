@@ -1,0 +1,22 @@
+default_language_version:
+  python: python3
+
+repos:
+  - repo: local
+    hooks:
+      - id: black-check
+        name: Black formatting check
+        entry: python -m black --check --config pyproject.toml
+        language: system
+        types: [python]
+      - id: ruff-check
+        name: Ruff lint check
+        entry: python -m ruff check --config pyproject.toml
+        language: system
+        types: [python]
+      - id: mypy-check
+        name: Mypy architecture check
+        entry: python -m mypy --config-file pyproject.toml
+        language: system
+        files: '^(app_config\.py|application/|domain/|hardware/|infrastructure/)'
+        types: [python]

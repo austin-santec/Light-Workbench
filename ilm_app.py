@@ -6,9 +6,7 @@ from pathlib import Path
 
 from PyQt5.QtCore import (
     QItemSelectionModel,
-    QMetaObject,
     QSettings,
-    QThread,
     QTimer,
     Qt,
     QUrl,
@@ -50,12 +48,14 @@ from PyQt5.QtWidgets import (
     QScrollArea,
 )
 
-from application.run_controller import HardwareRunController, HardwareRunRequest
-from application.hardware_planning import (
-    build_hardware_run_plan,
-    parse_hardware_channels,
-)
+from application.run_controller import HardwareRunController
+from application.live_controller import LiveILReadingController
+from application.hardware_planning import parse_hardware_channels
 from application.hardware_session import HardwareRunSession
+from application.run_start import (
+    build_hardware_run_request,
+    prepare_hardware_run,
+)
 from domain.measurement import calculate_insertion_loss
 from domain.comparison import comparison_values, index_measurements
 from domain.timing import SwitchTestTimer
@@ -67,8 +67,8 @@ from infrastructure.coc_exporter import (
 )
 from infrastructure.run_repository import DEFAULT_RUN_ROOT, FileRunRepository
 from infrastructure.unit_repository import FileUnitRepository
-from osx150_driver import OSX150
-from power_meter import SantecPowerMeter, SimulatedPowerMeter
+from hardware.optical_switch import OSX150
+from hardware.power_meter import SantecPowerMeter, SimulatedPowerMeter
 from run_data import MeasurementRecord, RunData
 from domain.replacements import (
     ReplacementReading,
@@ -472,12 +472,19 @@ class MainWindow(QMainWindow):
         self.hardware_thread = None
         self.hardware_worker = None
         self.hardware_controller = HardwareRunController(self)
+        self.reference_controller = LiveILReadingController(
+            self,
+            worker_factory=LiveILReadingWorker,
+        )
+        self.reference_controller.connected.connect(self._reference_meter_connected)
+        self.reference_controller.reference_ready.connect(
+            self._reference_calculation_ready
+        )
+        self.reference_controller.failed.connect(self._reference_calculation_failed)
         # Noah Mode is deliberately session-only and defaults off. Live Write
         # Mode is also session-only, but is the normal first-launch workflow.
         self.noah_mode_enabled = False
         self.live_write_mode_enabled = True
-        self.reference_thread = None
-        self.reference_worker = None
         self.reference_progress = None
         self.run_recorder = None
         self.unit_directory = None
@@ -569,6 +576,16 @@ class MainWindow(QMainWindow):
     def hardware_run_active(self):
         """Compatibility view of the controller-owned hardware lifecycle."""
         return self.hardware_controller.is_active or self.hardware_thread is not None
+
+    @property
+    def reference_thread(self):
+        """Compatibility view of the shared reference controller thread."""
+        return self.reference_controller.thread
+
+    @property
+    def reference_worker(self):
+        """Compatibility view of the shared reference controller worker."""
+        return self.reference_controller.worker
 
     def _connect_hardware_controller(self):
         """Connect controller events to the existing UI handlers."""
@@ -1411,33 +1428,15 @@ class MainWindow(QMainWindow):
         self.calculate_reference_button.setEnabled(False)
 
         try:
-            thread = QThread(self)
-            worker = LiveILReadingWorker(meter)
-            worker.moveToThread(thread)
-            thread.started.connect(worker.start)
-            worker.connected.connect(self._reference_meter_connected)
-            worker.reference_ready.connect(self._reference_calculation_ready)
-            worker.failed.connect(self._reference_calculation_failed)
-            worker.finished.connect(thread.quit)
-            worker.finished.connect(worker.deleteLater)
-            self.reference_thread = thread
-            self.reference_worker = worker
-            thread.start()
+            self.reference_controller.start(lambda meter=meter: meter)
         except Exception as error:
-            self.reference_thread = None
-            self.reference_worker = None
             self._close_reference_progress()
             self.calculate_reference_button.setEnabled(True)
             QMessageBox.critical(self, "Reference calculation", str(error))
 
     def _reference_meter_connected(self, _description):
         """Start the offset measurement after the meter connection succeeds."""
-        if self.reference_worker is not None:
-            QMetaObject.invokeMethod(
-                self.reference_worker,
-                "calculate_reference",
-                Qt.QueuedConnection,
-            )
+        self.reference_controller.calculate_reference()
 
     def _reference_calculation_ready(self, reference_1310, reference_1550):
         self.set_reference_values(reference_1310, reference_1550)
@@ -1455,20 +1454,7 @@ class MainWindow(QMainWindow):
 
     def _finish_reference_calculation(self):
         """Stop the temporary meter worker and close its progress popup."""
-        worker = self.reference_worker
-        thread = self.reference_thread
-        if worker is not None and thread is not None:
-            if thread.isRunning():
-                QMetaObject.invokeMethod(worker, "stop", Qt.BlockingQueuedConnection)
-                thread.quit()
-                thread.wait(5000)
-            else:
-                # A connection failure can finish the worker thread before its
-                # queued error signal reaches the UI. The worker may already be
-                # deleted, so do not call back into its stale Qt wrapper.
-                thread.wait(5000)
-        self.reference_worker = None
-        self.reference_thread = None
+        self.reference_controller.stop_and_wait()
         self._close_reference_progress()
         self.calculate_reference_button.setEnabled(True)
 
@@ -2293,24 +2279,21 @@ class MainWindow(QMainWindow):
                 )
                 return
 
-        manual_channel_order = False
-        full_pass = False
         continuing_existing = run_mode == "continue"
-        run_plan = None
-        if not retest:
-            try:
-                run_plan = build_hardware_run_plan(
-                    self.hardware_channel_mode.currentText(),
-                    single_channel=self.hardware_single_channel.value(),
-                    channel_ranges=self.hardware_channel_ranges.text(),
-                    manual_channel_order=self.manual_channel_order_checkbox.isChecked(),
-                )
-                channels = run_plan.worker_channels()
-                full_pass = run_plan.full_pass
-                manual_channel_order = run_plan.manual_channel_order
-            except ValueError as error:
-                QMessageBox.warning(self, "Invalid channel selection", str(error))
-                return
+        try:
+            preparation = prepare_hardware_run(
+                retest=retest,
+                requested_channels=channels,
+                channel_mode=self.hardware_channel_mode.currentText(),
+                single_channel=self.hardware_single_channel.value(),
+                channel_ranges=self.hardware_channel_ranges.text(),
+                manual_channel_order=self.manual_channel_order_checkbox.isChecked(),
+            )
+        except ValueError as error:
+            QMessageBox.warning(self, "Invalid channel selection", str(error))
+            return
+
+        channels = preparation.channels
 
         # Preserve the previous preflight behavior: driver construction must
         # succeed before the in-memory run/timing state is initialized.
@@ -2323,7 +2306,7 @@ class MainWindow(QMainWindow):
 
         self.hardware_session.begin(
             retest=retest,
-            plan=run_plan if not retest else None,
+            plan=preparation.plan,
         )
         if not retest and run_mode == "new":
             self.run_data = RunData(
@@ -2402,26 +2385,20 @@ class MainWindow(QMainWindow):
         )
         self.refresh_analysis()
 
-        request = HardwareRunRequest(
-            # These already-constructed adapters are transferred to the
-            # controller, which owns them for the duration of the run.
-            power_meter_factory=lambda meter=meter: meter,
-            switch_factory=lambda switch=switch: switch,
-            channels=channels,
+        request = build_hardware_run_request(
+            preparation,
+            meter=meter,
+            switch=switch,
             reference_powers={
                 1310: self.reference_1310_spin.value(),
                 1550: self.reference_1550_spin.value(),
             },
-            manual_channel_order=manual_channel_order,
             existing_channels=(
                 [record.channel for record in self.run_data.measurements]
                 if continuing_existing
                 else None
             ),
             resume_existing=continuing_existing,
-            resume_full_pass=(
-                continuing_existing and full_pass and not manual_channel_order
-            ),
             live_write_mode=self.live_write_mode_enabled,
         )
         try:

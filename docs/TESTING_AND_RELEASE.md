@@ -34,11 +34,37 @@ git diff --check
 
 The full test suite should pass before building an executable.
 
+The repository workflow at `.github/workflows/tests.yml` repeats the
+hardware-free test suite and static validation on push and pull request. It
+uses Linux CI intentionally because these checks use simulated/fake hardware;
+the real OP815 DLL and Windows packaging remain local Windows release steps.
+
+## Optional contributor checks
+
+Install the optional tools with `python -m pip install -r
+requirements-dev.txt`. Then run the checks directly or install the local
+pre-commit hooks:
+
+```powershell
+python -m black --check --config pyproject.toml .
+python -m ruff check --config pyproject.toml .
+python -m mypy --config-file pyproject.toml
+python -m pre_commit install
+python -m pre_commit run --all-files
+```
+
+These checks are development conveniences only. They are not required on a
+machine that only runs the packaged executable.
+
 ## Build rules
 
 - Build using the documented 32-bit Python environment.
 - Use `build_windows.ps1` and `ilm_app.spec` rather than ad-hoc PyInstaller
   commands.
+- Run `verify_release.ps1` against `dist\LightWorkbench` before creating a
+  deployment ZIP.
+- Use `package_release.ps1` to create the versioned ZIP after the distribution
+  has been manually smoke-tested.
 - Build from a clean or controlled environment when preparing a release.
 - Verify that support files, templates, assets, documentation, and
   `OP815M.dll` are present beside/in the packaged application as intended.
@@ -61,3 +87,15 @@ used as the location for architecture decisions.
 - No production measurements or machine-specific paths are packaged.
 - Release notes describe behavior changes and migration concerns.
 
+`build_windows.ps1` calls `verify_release.ps1` automatically after copying the
+support files. The verifier checks the executable, installation guide,
+dependency checker, operator guide, and PyInstaller `_internal` directory.
+
+`package_release.ps1` repeats that verification, reads the version from
+`app_info.py`, and creates `releases\LightWorkbench-v<version>.zip`. It does
+not build the executable; run the build script first.
+
+`smoke_test_release.ps1` is an optional Windows GUI startup check. It verifies
+the distribution, starts the packaged executable without connecting to
+hardware, confirms that it remains alive through startup, and then closes it.
+Run it before packaging when a clean-machine or release smoke test is needed.

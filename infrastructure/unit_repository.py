@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from unit_persistence import (
+from infrastructure.unit_persistence import (
     available_run_numbers as _available_run_numbers,
     find_run_csv_for_number as _find_run_csv_for_number,
     infer_unit_directory as _infer_unit_directory,

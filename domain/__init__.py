@@ -1,8 +1,15 @@
 """Vendor-neutral domain models and calculations used by Light Workbench."""
 
 from .measurement import calculate_insertion_loss
+from .run_data import RunData
 from .reference import calculate_reference_offsets
-from .reporting import RunSummary, summarize_run
+from .reporting import (
+    MultiRunSummary,
+    OperatorRunSummary,
+    RunSummary,
+    aggregate_run_summaries,
+    summarize_run,
+)
 from .comparison import comparison_values, index_measurements
 from .timing import SwitchTestTimer, format_duration, format_timestamp, parse_duration
 from .replacements import (
@@ -28,8 +35,12 @@ from .models import (
 __all__ = [
     "ChannelMode",
     "calculate_insertion_loss",
+    "RunData",
     "calculate_reference_offsets",
     "RunSummary",
+    "OperatorRunSummary",
+    "MultiRunSummary",
+    "aggregate_run_summaries",
     "summarize_run",
     "comparison_values",
     "index_measurements",

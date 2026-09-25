@@ -1,5 +1,6 @@
 import unittest
 
+from hardware.power_meter import SantecPowerMeter as HardwareSantecPowerMeter
 from power_meter import SantecPowerMeter, SimulatedPowerMeter
 
 
@@ -25,6 +26,9 @@ class FakeOP815:
 
 
 class PowerMeterTests(unittest.TestCase):
+    def test_legacy_module_reexports_hardware_adapter(self):
+        self.assertIs(SantecPowerMeter, HardwareSantecPowerMeter)
+
     def test_santec_adapter_delegates_without_changing_driver(self):
         driver = FakeOP815()
         meter = SantecPowerMeter(driver=driver)

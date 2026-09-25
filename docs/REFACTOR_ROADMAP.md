@@ -28,7 +28,7 @@ imports and field names while callers migrate incrementally.
 
 ## Phase 2 — Workflow controllers and state machine
 
-Status: in progress.
+Status: complete for the current desktop workflows.
 
 The first increment extracts the real hardware-run thread and worker
 ownership into `application/run_controller.py`. The controller provides typed
@@ -94,7 +94,7 @@ the historical `switch_timing.py` import remains a compatibility facade.
 
 ## Phase 3 — Domain and infrastructure separation
 
-Status: in progress.
+Status: complete for the current file-backed architecture.
 
 - Move insertion-loss, reference, replacement, comparison, and timing logic
   into domain services.
@@ -102,6 +102,8 @@ Status: in progress.
 - Keep file-format conversion at the infrastructure boundary.
 
 ## Phase 4 — Hardware composition
+
+- Status: complete for the current integrated ILM and simulated hardware paths.
 
 - Add adapter factories/configuration.
 - Support integrated ILM and OPM-plus-laser combinations.
@@ -130,12 +132,16 @@ paths now share partial-startup cleanup behavior.
 
 ## Phase 5 — Storage and reporting
 
+- Status: complete for file-backed storage and reporting; SQLite remains intentionally deferred.
+
 - Add schema versions and migration functions.
 - Evaluate SQLite for multi-run analysis while preserving CSV export.
 - Add query/report services for operator, timing, limit, and repeatability
   analysis.
 
 ## Phase 6 — Tooling and release quality
+
+- Status: complete for source validation, CI, release layout verification, ZIP packaging, and opt-in packaged smoke testing.
 
 - Add `pyproject.toml`, formatter, linter, type checker, and pre-commit hooks.
 - Add continuous integration for tests and static checks.
@@ -155,3 +161,104 @@ helpers, and unsupported future versions are rejected safely.
 Current Phase 5 reporting increment: `domain/reporting.py` and
 `infrastructure/run_query.py` provide typed summaries and read-only indexed-run
 queries without adding UI behavior.
+
+SQLite indexing is deferred. Current Phase 5 reporting remains file-backed and
+performs aggregation in memory, preserving CSV/JSON compatibility without
+adding a database dependency.
+
+The current aggregation increment adds overall and per-tester timing and
+warning-limit summaries over selected saved runs. It remains a domain service
+with no UI or persistence changes.
+
+The file-backed report increment adds `infrastructure/run_reports.py`, which
+collects one unit or all indexed unit folders before calling the domain
+aggregator. This preserves the same separation if a different storage option
+is evaluated later.
+
+Phase 6 tooling increment: `pyproject.toml` now provides shared Black, Ruff,
+and Mypy configuration plus the supported 32-bit Python runtime declaration.
+The project remains a PyInstaller application rather than a pip-installable
+package, and the existing Windows dependency file remains authoritative for
+runtime/build installation.
+
+The next tooling increment adds optional `requirements-dev.txt` and
+`.pre-commit-config.yaml` files. Contributor checks remain opt-in and do not
+become runtime or packaging dependencies.
+
+The CI increment adds `.github/workflows/tests.yml` for configuration parsing,
+source compilation, and the hardware-free unittest suite. It intentionally
+does not package the Windows executable or require vendor hardware.
+
+The release-layout increment adds `verify_release.ps1` and calls it from the
+Windows build script. This catches incomplete one-folder distributions before
+they are copied or zipped for deployment.
+
+The ZIP packaging increment adds `package_release.ps1`, which verifies the
+distribution, reads the application version, and creates a versioned archive
+without mixing release output into the source or documentation folders.
+
+The smoke-test increment adds `smoke_test_release.ps1` for an opt-in packaged
+GUI startup check. It does not connect to hardware and is not run by the
+hardware-free CI job.
+
+The run-model increment moves `RunData` and its over-limit rules into
+`domain/run_data.py` and moves CSV parsing into
+`infrastructure/csv_run_loader.py`. The root `run_data.py` path remains a
+compatibility facade, so existing callers continue to work while the domain
+and file-format responsibilities are separated.
+
+The run-persistence increment moves CSV/JSON recording and run filename rules
+into `infrastructure/run_persistence.py`. The root `run_persistence.py` path
+remains a compatibility facade, and `FileRunRepository` now imports the
+infrastructure implementation directly.
+
+The unit-persistence increment moves unit JSON records, numbered-run paths,
+and shared replacement/spare normalization into
+`infrastructure/unit_persistence.py`. The root `unit_persistence.py` path
+remains a compatibility facade, and repository adapters import the new
+infrastructure implementation directly.
+
+The COC-export increment moves template lookup, workbook writing, and drawing
+preservation into `infrastructure/coc_export.py`. The root `coc_export.py`
+path remains a compatibility facade and the existing application-facing
+exporter continues to preserve its public API.
+
+The meter-adapter increment moves the integrated OP815 and simulated power
+meters into `hardware/power_meter.py`. The root `power_meter.py` path remains
+a compatibility facade, while the vendor-specific DLL wrapper remains isolated
+in `op815_driver.py`.
+
+The switch-adapter increment moves the OSX-150 PyVISA/SCPI implementation into
+`hardware/optical_switch.py`. The root `osx150_driver.py` path remains a
+compatibility facade, preserving existing imports while keeping vendor switch
+communication inside the hardware package.
+
+The lazy-factory increment removes eager vendor imports from
+`hardware/factory.py`. Default OP815 and OSX-150 adapters are now imported only
+when the factory creates a hardware object, improving hardware-free startup and
+keeping dependency failures close to the operation that needs the dependency.
+
+The dialog-composition increment applies the same boundary to Live IL and Red
+Light. Their default hardware factories now come from `HardwareFactory`, while
+tests and workstation-specific configurations can continue to inject a
+factory callable directly.
+
+The worker-placement increment moves `MeasurementWorker` into
+`application/measurement_worker.py`. The root `measurement_worker.py` remains
+a compatibility facade, while `HardwareRunController` and new application code
+use the package-owned implementation directly.
+
+The reference-controller increment reuses `LiveILReadingController` for the
+main-window Calculate Reference workflow. The setup screen retains its
+progress dialog and preflight device check, while thread creation, worker
+signals, reference commands, and meter cleanup now use the same controller
+lifecycle as Live IL.
+
+The run-start increment keeps operator prompts and widget updates in
+`ilm_app.py`, while `application/run_start.py` owns channel-plan normalization
+and `HardwareRunRequest` preparation. Hardware adapter preflight remains
+separate from worker execution, so future run-start changes can be tested
+without opening a Qt window.
+
+For the remainder of this refactor phase, one scoped step remains: perform a
+final architecture audit and clean release validation.

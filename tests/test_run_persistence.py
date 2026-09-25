@@ -12,9 +12,13 @@ from run_persistence import (
     find_run_json_path,
     load_run_json,
 )
+from infrastructure.run_persistence import RunRecorder as InfrastructureRunRecorder
 
 
 class RunPersistenceTests(unittest.TestCase):
+    def test_legacy_module_reexports_infrastructure_recorder(self):
+        self.assertIs(RunRecorder, InfrastructureRunRecorder)
+
     def test_run_directory_name_uses_optional_serials_in_requested_order(self):
         now = datetime(2026, 9, 16, 11, 26, 53)
         self.assertEqual(

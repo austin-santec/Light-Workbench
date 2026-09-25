@@ -18,7 +18,16 @@ or vendor-specific SCPI details in its domain or UI code.
 
 `hardware/factory.py` is the composition boundary for selecting concrete
 adapters. UI workflows request capabilities from the factory instead of
-constructing vendor adapters independently.
+constructing vendor adapters independently. Its default factories import the
+OP815 and OSX-150 implementations only when a real hardware object is created,
+so importing the contracts and running hardware-free tests does not require an
+active vendor session.
+
+`hardware/power_meter.py` contains the integrated Santec OP815 adapter and the
+hardware-free simulated meter. The vendor DLL wrapper remains in
+`op815_driver.py`. `hardware/optical_switch.py` contains the OSX-150
+PyVISA/SCPI adapter. The root `power_meter.py` and `osx150_driver.py` modules
+are compatibility facades.
 
 `hardware/simulated.py` provides contract-compatible laser and switch
 implementations for hardware-free workflow tests. They are not used by the
@@ -33,9 +42,11 @@ switch. Live IL and Red Light retain their separate controller-owned sessions
 because those tools intentionally operate independently.
 
 Live IL and Red Light now use the same session boundary for their individual
-meter-only and switch-only lifecycles. A failed connection is registered for
-cleanup before the connect call completes, covering vendor sessions that open
-partially before reporting an error.
+meter-only and switch-only lifecycles. Their dialogs receive injected factory
+callables, defaulting to `HardwareFactory` without binding vendor classes in
+the UI constructor. A failed connection is registered for cleanup before the
+connect call completes, covering vendor sessions that open partially before
+reporting an error.
 
 ## Integrated ILM versus separate OPM and laser
 

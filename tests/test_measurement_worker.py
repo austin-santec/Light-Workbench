@@ -2,8 +2,14 @@ import unittest
 
 from PyQt5.QtWidgets import QApplication
 
+from application.measurement_worker import MeasurementWorker as ApplicationMeasurementWorker
 from hardware.session import OpticalTestSession
 from measurement_worker import MeasurementWorker
+
+
+class MeasurementWorkerImportTests(unittest.TestCase):
+    def test_legacy_module_reexports_application_worker(self):
+        self.assertIs(MeasurementWorker, ApplicationMeasurementWorker)
 
 
 class FakePowerMeter:

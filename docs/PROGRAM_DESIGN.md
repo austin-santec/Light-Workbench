@@ -63,9 +63,9 @@ independent of Qt, hardware adapters, and CSV/JSON file formats.
 
 `infrastructure/run_repository.py` is the application-facing boundary for
 file-backed CSV/JSON run storage and numbered-run lookup. The established
-`run_data.py` and `run_persistence.py` implementations remain behind that
-boundary while they are migrated, so the UI no longer needs to know which
-file-backed repository implementation is selected.
+`run_data.py` and `run_persistence.py` import paths remain compatibility
+facades, so the UI no longer needs to know which file-backed repository
+implementation is selected.
 
 `infrastructure/unit_repository.py` provides the corresponding boundary for
 unit JSON records, unit-level replacement/spare data, and numbered run-folder
@@ -78,6 +78,24 @@ graphics restoration remain infrastructure concerns rather than UI logic.
 `domain/comparison.py` owns read-only measurement indexing and comparison-value
 formatting. `domain/timing.py` owns switch-test session duration and metadata
 rules; Live IL and Red Light tools do not instantiate that timer.
+
+`domain/run_data.py` owns the loaded-run model and over-limit rules. CSV
+formatting and compatibility parsing live in
+`infrastructure/csv_run_loader.py`; the root `run_data.py` module remains a
+compatibility facade for existing imports.
+
+`infrastructure/run_persistence.py` owns run folder naming, atomic CSV/JSON
+recording, continuation renaming, and legacy JSON loading. The root
+`run_persistence.py` module remains a compatibility facade for older callers.
+
+`infrastructure/unit_persistence.py` owns unit JSON records, numbered-run
+paths, and normalization of shared replacements and designated spares. The
+root `unit_persistence.py` module remains a compatibility facade.
+
+`infrastructure/coc_export.py` owns template lookup, COC workbook creation,
+merged-cell mapping, and preservation of the template's drawing package. The
+root `coc_export.py` module remains a compatibility facade, while
+`infrastructure/coc_exporter.py` remains the application-facing adapter.
 
 `hardware/factory.py` is the composition point for selecting concrete meter
 and switch adapters. The current default remains the integrated Santec ILM and
@@ -123,8 +141,9 @@ run identity, and unit identity.
 
 ### Infrastructure layer
 
-Responsible for concrete hardware drivers, VISA/DLL communication, CSV/JSON/
-SQLite storage, XLSX export, configuration paths, and packaging.
+Responsible for concrete hardware drivers, VISA/DLL communication, CSV/JSON
+storage, XLSX export, configuration paths, and packaging. A future indexed
+storage option may be evaluated here without changing domain reporting.
 
 ## Important workflow rules
 

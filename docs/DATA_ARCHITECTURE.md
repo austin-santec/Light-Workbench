@@ -68,3 +68,19 @@ defines typed, read-only summaries from accepted measurements, while
 repository adapters. It is intentionally not connected to the UI yet; future
 operator reports can consume these summaries without knowing whether the
 underlying storage remains file-based or moves to SQLite.
+
+SQLite remains a possible future optimization if file scanning becomes a
+measurable bottleneck. It is deliberately not part of the current application;
+current reporting operates in memory over summaries loaded through the file
+repository.
+
+`domain/reporting.py` provides this aggregation through
+`aggregate_run_summaries`. Timing averages exclude runs without recorded
+switch-test timing, while over-limit counts remain included. Repeatability
+measurements are intentionally not included because they are not persisted as
+accepted switch-test readings.
+
+`infrastructure/run_reports.py` combines the file query and domain reporting
+boundaries. It can aggregate one unit or all indexed `Unit-*` folders under a
+run root, which gives a future analysis screen one stable entry point without
+requiring it to know the CSV layout.

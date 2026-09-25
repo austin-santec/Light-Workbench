@@ -9,12 +9,17 @@ from domain.models import (
     RunState,
     UnitIdentity,
 )
+from domain.run_data import RunData
 from run_data import MeasurementRecord as CompatibilityMeasurementRecord
+from run_data import RunData as CompatibilityRunData
 
 
 class DomainModelTests(unittest.TestCase):
     def test_measurement_record_remains_available_from_legacy_module(self):
         self.assertIs(MeasurementRecord, CompatibilityMeasurementRecord)
+
+    def test_run_data_remains_available_from_legacy_module(self):
+        self.assertIs(RunData, CompatibilityRunData)
 
     def test_reference_values_round_trip_worker_mapping(self):
         values = ReferenceValues.from_mapping({1310: 0.72, 1550: 0.28})

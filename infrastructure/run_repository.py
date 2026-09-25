@@ -1,23 +1,17 @@
-"""File-backed repository boundary for run CSV and JSON data.
-
-The legacy persistence modules still contain the established file-format
-implementation. This adapter gives application code one injectable boundary
-for loading runs and creating recorders while that implementation is migrated
-incrementally. Keeping the delegation here preserves existing file behavior
-and makes a future SQLite repository a replacement at this boundary.
-"""
+"""File-backed repository boundary for run CSV and JSON data."""
 
 from pathlib import Path
 from typing import Any
 
 from app_config import DEFAULT_RUN_ROOT
-from run_data import RunData, load_run_csv as _load_run_csv
-from run_persistence import (
+from domain.run_data import RunData
+from infrastructure.csv_run_loader import load_run_csv as _load_run_csv
+from infrastructure.run_persistence import (
     RunRecorder,
     find_run_json_path as _find_run_json_path,
     load_run_json as _load_run_json,
 )
-from unit_persistence import (
+from infrastructure.unit_persistence import (
     available_run_numbers as _available_run_numbers,
     find_run_csv_for_number as _find_run_csv_for_number,
     run_csv_for_number as _run_csv_for_number,
