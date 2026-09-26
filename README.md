@@ -66,7 +66,9 @@ Updates` automatically refreshes both values without saving data and changes to
 | `run_data.py` | CSV loader and configurable over-limit analysis model |
 | `domain/models.py` | Typed vendor-neutral measurement, unit, run, reference, and workflow models |
 | `domain/run_data.py` | Domain run model and over-limit analysis rules |
-| `app_config.py` | Centralized default paths and injectable application path configuration |
+| `domain/raw_export.py` | Pure tab-separated formatting for copying accepted readings to Excel |
+| `config/app_config.py` | Centralized default paths and injectable application path configuration |
+| `config/app_info.py` | Single source for application name, version, tagline, and About text |
 | `application/run_controller.py` | Hardware-run lifecycle controller and queued worker command boundary |
 | `application/live_controller.py` | Live IL meter worker lifecycle controller |
 | `application/red_light_controller.py` | Red Light Test switch worker lifecycle controller |
@@ -93,15 +95,19 @@ Updates` automatically refreshes both values without saving data and changes to
 | `op815_driver.py` | Documented 32-bit DLL wrapper for the ILM/OP815 |
 | `application/measurement_worker.py` | Background hardware-run orchestration worker |
 | `application/run_start.py` | Hardware-run planning and controller-request preparation |
+| `ui/live_il_reading.py` | Meter-only Live IL dialog and worker presentation module |
+| `ui/red_light_test.py` | Separate VFL pre-test dialog presentation module |
+| `tools/dependency_check.py` | Non-destructive prerequisite and connection diagnostics |
 | `hardware/interfaces.py` | Vendor-neutral power-meter, laser-source, and optical-switch contracts |
 | `hardware/power_meter.py` | Integrated OP815 adapter and simulated meter implementations |
 | `hardware/optical_switch.py` | OSX-150 PyVISA/SCPI adapter implementation |
 | `hardware/factory.py` | Lazy composition of real and future hardware adapters |
 | `power_meter.py` | Compatibility facade for the hardware power-meter adapters |
 | `osx150_driver.py` | Compatibility facade for the OSX-150 hardware adapter |
-| `red_light_test.py` | Separate VFL pre-test dialog using an injected switch factory |
-| `live_il_reading.py` | Meter-only live IL dialog using an injected meter factory |
-| `app_info.py` | Single source for the Light Workbench name, version, tagline, and About text |
+| `red_light_test.py` | Compatibility facade for the Red Light presentation module |
+| `live_il_reading.py` | Compatibility facade for the Live IL presentation module |
+| `app_info.py` | Compatibility facade for application release metadata |
+| `dependency_check.py` | Compatibility facade for dependency diagnostics |
 | `OP815M.dll` | Vendor library used to communicate with the ILM |
 | `Templates/OSX-100 Single Mode COC Template 1.xlsx` | XLSX COC template bundled with the desktop application |
 | `assets/Lulu - CandC.png` | Compact header logo bundled with the desktop application |
@@ -143,7 +149,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the current release version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.7.2**.
+current Light Workbench release is version **1.8.0**.
 
 Use `Help > IL Instructions` to open the bundled browser-based operator guide
 for the hardware IL-reading workflow.
@@ -341,6 +347,25 @@ in the run folder. Existing files receive a numeric suffix instead of being
 overwritten. The original template is never modified. The COC export uses
 `openpyxl`, so Microsoft Excel is not required on the target computer.
 The template's embedded graphics are preserved in each exported workbook.
+
+## Copy raw readings for Excel
+
+The `Copy Raw Data...` button in Hardware Controls copies the accepted readings
+from the active run to the Windows clipboard as tab-separated text. Paste it
+directly into Excel or another spreadsheet. The output contains only the
+logical channel, 1310 nm IL, and 1550 nm IL values, in channel order, with four
+decimal places. It intentionally has no header row so it can be pasted into an
+existing spreadsheet table:
+
+```text
+1	0.7421	0.5138
+2	0.8014	0.6042
+```
+
+Only readings that were written to the run are included. Current/live readings,
+unfinished channels, metadata, analysis, replacements, and designated spares
+are excluded. The table's display filter does not affect the copied rows, and
+copying does not create or modify CSV, JSON, COC, or other output files.
 
 The Hardware test setup includes a Part number field and a lookup button. The
 default lookup folder is

@@ -78,7 +78,7 @@ used as the location for architecture decisions.
 
 ## Release checklist
 
-- Version updated in `app_info.py` when appropriate.
+- Version updated in `config/app_info.py` when appropriate.
 - Tests pass.
 - Build succeeds.
 - Packaged executable starts on a clean target machine.
@@ -92,7 +92,7 @@ support files. The verifier checks the executable, installation guide,
 dependency checker, operator guide, and PyInstaller `_internal` directory.
 
 `package_release.ps1` repeats that verification, reads the version from
-`app_info.py`, and creates `releases\LightWorkbench-v<version>.zip`. It does
+`config\app_info.py`, and creates `releases\LightWorkbench-v<version>.zip`. It does
 not build the executable; run the build script first.
 
 `smoke_test_release.ps1` is an optional Windows GUI startup check. It verifies

@@ -23,7 +23,7 @@ Status: complete.
 - Keep serialization compatibility through explicit conversion functions.
 
 The initial models are in `domain/models.py` and centralized defaults are in
-`app_config.py`. Existing persistence modules continue to expose their old
+`config/app_config.py`. Existing persistence modules continue to expose their old
 imports and field names while callers migrate incrementally.
 
 ## Phase 2 — Workflow controllers and state machine
@@ -260,5 +260,11 @@ and `HardwareRunRequest` preparation. Hardware adapter preflight remains
 separate from worker execution, so future run-start changes can be tested
 without opening a Qt window.
 
-For the remainder of this refactor phase, one scoped step remains: perform a
-final architecture audit and clean release validation.
+The source-organization increment moves configuration metadata into `config/`,
+standalone Qt modules into `ui/`, and dependency diagnostics into `tools/`.
+Root modules remain compatibility facades so existing imports and integrations
+continue to work.
+
+The architecture refactor and current source-organization pass are complete.
+Future work is feature expansion (such as separate OPM/laser support, richer
+multi-run analysis, or optional SQLite persistence), not required cleanup.

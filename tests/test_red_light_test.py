@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtTest import QTest
 
 from hardware.session import OpticalTestSession
-from red_light_test import RedLightTestDialog
+from ui.red_light_test import RedLightTestDialog
 
 
 class FakeSwitch:
@@ -74,8 +74,10 @@ class RedLightTestDialogTests(unittest.TestCase):
         QTest.qWait(100)
         self.application.processEvents()
         self.assertEqual(switch.selected, [1, 2, 4])
-        dialog.close()
+        QTest.mouseClick(dialog.close_button, 1)
+        self.application.processEvents()
         self.assertTrue(switch.closed)
+        self.assertIsNone(dialog.red_controller.thread)
 
     def test_stop_disconnects_and_allows_restart(self):
         dialog = RedLightTestDialog(switch_factory=FakeSwitch)

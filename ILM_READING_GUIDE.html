@@ -180,6 +180,7 @@
           <li>Start and stop the run.</li>
           <li>Read, review, and write IL values.</li>
           <li>Change channel or retest.</li>
+          <li>Copy completed readings for pasting into Excel.</li>
         </ul>
       </section>
       <section class="map-card">
@@ -279,6 +280,7 @@
       <li><strong>Use the output files.</strong> Each saved run is stored under the configured IL-Reads output folder. The folder name includes the run date/time and available serial numbers. The CSV contains the table data and metadata; the same-named JSON contains run details and attempt history.</li>
       <li><strong>Continue later if needed.</strong> Load the existing CSV with <strong>File &gt; Open CSV Run...</strong> or the top-right button, then click Start Run. Choose to continue the loaded run when prompted.</li>
       <li><strong>Optional COC.</strong> After a completed or stopped run, the program may offer to write a COC. This is separate from saving the IL measurements and can be skipped if not needed.</li>
+      <li><strong>Copy raw readings when needed.</strong> Click <span class="button">Copy Raw Data...</span> in Hardware Controls to copy all written channel readings as tab-separated values for Excel. This includes only the logical channel, 1310 nm IL, and 1550 nm IL in channel order, without column headers so it can be pasted into an existing table. It ignores the table filter, excludes readings that were not written, and does not create another output file.</li>
     </ol>
 
     <h2>Quick operator checklist</h2>

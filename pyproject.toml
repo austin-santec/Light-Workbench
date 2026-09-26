@@ -21,7 +21,7 @@ select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.mypy]
 python_version = "3.11"
-files = ["app_config.py", "application", "domain", "hardware", "infrastructure"]
+files = ["config", "application", "domain", "hardware", "infrastructure", "tools", "ui"]
 ignore_missing_imports = true
 check_untyped_defs = true
 warn_unused_ignores = true

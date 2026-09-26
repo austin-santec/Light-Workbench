@@ -1,6 +1,7 @@
 """Vendor-neutral domain models and calculations used by Light Workbench."""
 
 from .measurement import calculate_insertion_loss
+from .raw_export import format_raw_measurements
 from .run_data import RunData
 from .reference import calculate_reference_offsets
 from .reporting import (
@@ -35,6 +36,7 @@ from .models import (
 __all__ = [
     "ChannelMode",
     "calculate_insertion_loss",
+    "format_raw_measurements",
     "RunData",
     "calculate_reference_offsets",
     "RunSummary",

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from app_config import COC_TEMPLATE_FILENAME, DEFAULT_PART_LOOKUP_ROOT
+from config.app_config import COC_TEMPLATE_FILENAME, DEFAULT_PART_LOOKUP_ROOT
 from infrastructure.coc_export import (
     export_coc as _export_coc,
     find_part_number as _find_part_number,

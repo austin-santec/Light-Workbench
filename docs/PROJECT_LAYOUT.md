@@ -10,6 +10,9 @@ packages.
 ```text
 ilm_app.py, ILMReadLoss.py       Application entry points
 application/                     Workflow controllers, measurement worker, reference lifecycle, and run-start boundaries
+config/                          Application paths and user-facing release metadata
+ui/                              Qt dialogs and presentation workers
+tools/                           Optional dependency and environment diagnostics
 domain/                          Vendor-neutral models and business rules
 hardware/                        Hardware contracts, adapters, factories, and sessions
 infrastructure/                  File repositories, CSV/unit persistence, loaders, COC export, queries, and reports
@@ -40,8 +43,7 @@ be used as source locations. The release scripts keep deployment output in
 
 ## Change placement guide
 
-- UI display, dialogs, and Qt signal wiring: `ilm_app.py` or a dedicated UI
-  module during a future extraction.
+- UI display, dialogs, and Qt signal wiring: `ilm_app.py` or `ui/`.
 - Workflow state and worker ownership: `application/`.
 - Calculations, validation, and rules that do not need Qt or hardware:
   `domain/`.

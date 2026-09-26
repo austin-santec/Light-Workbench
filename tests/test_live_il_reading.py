@@ -8,7 +8,7 @@ from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication
 
 from hardware.session import OpticalTestSession
-from live_il_reading import LiveILReadingDialog
+from ui.live_il_reading import LiveILReadingDialog
 
 
 class FakeMeter:

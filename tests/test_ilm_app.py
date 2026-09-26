@@ -430,6 +430,24 @@ class MainWindowTests(unittest.TestCase):
         self.assertFalse(window.manual_channel_order_checkbox.isHidden())
         window.close()
 
+    def test_hardware_setup_fields_use_requested_positions(self):
+        window = MainWindow()
+        layout = window.hardware_setup_box.layout()
+
+        def position(widget):
+            row, column, _row_span, _column_span = layout.getItemPosition(
+                layout.indexOf(widget)
+            )
+            return row, column
+
+        self.assertEqual(position(window.channel_mode_context), (0, 2))
+        self.assertEqual(position(window.hardware_main_board_serial), (2, 1))
+        self.assertEqual(position(window.hardware_switch_serial), (3, 1))
+        self.assertEqual(position(window.hardware_part_number), (3, 3))
+        self.assertEqual(position(window.reference_1310_spin), (4, 1))
+        self.assertEqual(position(window.hardware_operating_band), (4, 3))
+        window.close()
+
     def test_only_hardware_setup_fonts_are_doubled(self):
         window = MainWindow()
         try:
@@ -622,6 +640,11 @@ class MainWindowTests(unittest.TestCase):
             self.assertEqual(button.minimumWidth(), 125)
             self.assertEqual(button.minimumHeight(), 48)
             self.assertEqual(button.objectName(), "hardware_primary_control")
+        for button in (window.write_coc_button, window.copy_raw_data_button):
+            self.assertEqual(button.minimumWidth(), 125)
+            self.assertEqual(button.maximumWidth(), 125)
+            self.assertEqual(button.minimumHeight(), 48)
+            self.assertEqual(button.maximumHeight(), 48)
         self.assertIn(
             "QPushButton#hardware_primary_control { padding: 11px 20px; font-size: 16px",
             window.styleSheet(),
@@ -691,13 +714,51 @@ class MainWindowTests(unittest.TestCase):
         window = MainWindow()
         window.run_data = RunData(Path("test-run"), [], {})
         window.refresh_coc_controls()
+        self.assertEqual(window.copy_raw_data_button.text(), "Copy Raw Data...")
         self.assertFalse(window.write_coc_button.isEnabled())
+        self.assertFalse(window.copy_raw_data_button.isEnabled())
         self.assertFalse(window.write_coc_action.isEnabled())
 
         window.run_data.measurements.append(MeasurementRecord(1, 1.0, 1.1))
         window.refresh_coc_controls()
         self.assertTrue(window.write_coc_button.isEnabled())
+        self.assertTrue(window.copy_raw_data_button.isEnabled())
         self.assertTrue(window.write_coc_action.isEnabled())
+        window.close()
+
+    def test_copy_raw_data_uses_all_written_rows_not_visible_filter(self):
+        window = MainWindow()
+        window.run_data = RunData(
+            Path("test-run"),
+            [
+                MeasurementRecord(1, 1.23456, 0.5),
+                MeasurementRecord(2, 2.5, 2.6),
+            ],
+            {},
+        )
+        window.refresh_table()
+        window.reading_filter.setCurrentIndex(1)
+        self.assertEqual(window.table.rowCount(), 1)
+
+        window.copy_raw_data()
+
+        self.assertEqual(
+            QApplication.clipboard().text(),
+            "1\t1.2346\t0.5000\n"
+            "2\t2.5000\t2.6000",
+        )
+        window.close()
+
+    def test_copy_raw_data_does_not_replace_clipboard_without_written_rows(self):
+        window = MainWindow()
+        window.run_data = RunData(Path("test-run"), [], {})
+        QApplication.clipboard().setText("keep this")
+
+        with patch("ilm_app.QMessageBox.information") as information:
+            window.copy_raw_data()
+
+        self.assertEqual(QApplication.clipboard().text(), "keep this")
+        information.assert_called_once()
         window.close()
 
     def test_measurement_button_shortcuts_update_after_keybind_change(self):

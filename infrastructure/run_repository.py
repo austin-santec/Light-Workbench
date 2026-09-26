@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from app_config import DEFAULT_RUN_ROOT
+from config.app_config import DEFAULT_RUN_ROOT
 from domain.run_data import RunData
 from infrastructure.csv_run_loader import load_run_csv as _load_run_csv
 from infrastructure.run_persistence import (

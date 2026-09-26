@@ -77,6 +77,7 @@ class RedLightTestController(QObject):
         self.worker: QObject | None = None
         self.switch: OpticalSwitch | None = None
         self.state = RunState.IDLE
+        self._command_connections = []
 
     def _set_state(self, state: RunState) -> None:
         if self.state == state:
@@ -105,11 +106,8 @@ class RedLightTestController(QObject):
             worker.failed.connect(self._relay_failed)
             worker.finished.connect(self._worker_finished)
             worker.finished.connect(thread.quit)
-            worker.finished.connect(worker.deleteLater)
-            self.channel_requested.connect(
-                worker.select_channel,
-                type=Qt.QueuedConnection,
-            )
+            self.channel_requested.connect(worker.select_channel, type=Qt.QueuedConnection)
+            self._command_connections = [(self.channel_requested, worker.select_channel)]
             thread.started.connect(worker.start)
             thread.finished.connect(self._thread_finished)
             thread.start()
@@ -143,11 +141,21 @@ class RedLightTestController(QObject):
         self._set_state(RunState.STOPPED)
         self.finished.emit()
 
+    def _disconnect_commands(self) -> None:
+        """Disconnect queued UI commands before releasing the worker."""
+        for signal, slot in self._command_connections:
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
+        self._command_connections = []
+
     @pyqtSlot()
     def _thread_finished(self):
         if self.thread is None:
             return
         thread = self.thread
+        self._disconnect_commands()
         self.worker = None
         self.thread = None
         self.switch = None
@@ -171,9 +179,13 @@ class RedLightTestController(QObject):
             thread.quit()
             stopped = thread.wait(timeout_ms)
         else:
+            # The worker has already finished its thread event loop. Calling
+            # stop directly here is only a fallback for a startup/shutdown
+            # race; normal active-thread cleanup uses the blocking queued call
+            # above so hardware close runs in the worker's owning thread.
             worker.stop()
             stopped = True
 
-        if not thread.isRunning() and self.thread is thread:
+        if stopped and not thread.isRunning() and self.thread is thread:
             self._thread_finished()
         return stopped

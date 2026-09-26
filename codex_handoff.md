@@ -21,9 +21,9 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current user-facing release is **Light Workbench 1.7.2**. The single
+The current user-facing release is **Light Workbench 1.8.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
-`app_info.py`; bump the patch version for small fixes, the minor version for
+`config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
 The main window exposes this through `Help > About`.
 
@@ -41,6 +41,7 @@ The main window exposes this through `Help > About`.
 | hardware/interfaces.py | Vendor-neutral PowerMeter, LaserSource, and OpticalSwitch protocols. This is the starting boundary for future OPM plus separate laser support. |
 | application/ | Workflow controllers, measurement worker, planning, and transient hardware-run state. |
 | domain/ | Vendor-neutral models, calculations, replacement rules, timing, and reporting. |
+| domain/raw_export.py | Pure Excel-compatible TSV formatting for accepted run measurements; it does not persist data. |
 | hardware/ | Hardware contracts, factories, simulated adapters, and composed sessions. |
 | infrastructure/ | File repositories, schema migration, run queries, reports, and COC adapters. |
 | infrastructure/run_persistence.py | Atomic CSV/JSON recorder and run filename rules; root `run_persistence.py` is a compatibility facade. |
@@ -49,9 +50,14 @@ The main window exposes this through `Help > About`.
 | op815_driver.py | ctypes wrapper around the 32-bit OP815M.dll. Owns DLL discovery, function signatures, device selection, source control, wavelength selection, measurements, and cleanup. |
 | hardware/optical_switch.py | PyVISA/SCPI adapter for USB OSX-150 discovery, logical channel routing, configured-channel count, and physical-port reporting. |
 | osx150_driver.py | Compatibility facade for the OSX-150 hardware adapter. |
-| red_light_test.py | Separate VFL pre-test dialog. Tools > Red Light Test opens it without connecting; its Start button connects and routes channels without creating readings or run/COC data. |
-| live_il_reading.py | Meter-only Live IL Reading dialog. It connects only to the OP815, calculates both wavelength losses from editable references, supports non-persistent reconnect repeatability testing and timed live updates, and never controls the switch or persists data. |
-| app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
+| ui/red_light_test.py | Separate VFL pre-test dialog. Tools > Red Light Test opens it without connecting; its Start button connects and routes channels without creating readings or run/COC data. |
+| red_light_test.py | Compatibility facade for the Red Light presentation module. |
+| ui/live_il_reading.py | Meter-only Live IL Reading dialog. It connects only to the OP815, calculates both wavelength losses from editable references, supports non-persistent reconnect repeatability testing and timed live updates, and never controls the switch or persists data. |
+| live_il_reading.py | Compatibility facade for the Live IL presentation module. |
+| config/app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
+| app_info.py | Compatibility facade for application release metadata. |
+| tools/dependency_check.py | Non-destructive prerequisite and connection diagnostics. |
+| dependency_check.py | Compatibility facade for dependency diagnostics. |
 | domain/run_data.py | RunData and over-limit analysis rules; the root `run_data.py` remains a compatibility facade. |
 | infrastructure/csv_run_loader.py | Current and legacy CSV parsing for RunData. |
 | run_persistence.py | Compatibility facade for the infrastructure CSV/JSON persistence implementation. |
@@ -196,6 +202,11 @@ all numbered runs for that unit. Older replacement
 records with a logical-channel field are migrated when loaded.
 `Copy Replacement Notes` copies the completed Current Port -> Replacement Port
 pairs in a plain-text format for the Unit Editor notes.
+`Copy Raw Data...` copies accepted measurements from the active run as
+headerless tab-separated logical-channel, 1310 nm IL, and 1550 nm IL values
+for direct pasting into an existing Excel table. It ignores the table filter,
+excludes pending/live readings and metadata, and does not create or modify run
+files.
 12. COC export is available after a hardware completion, stop, or failure with
 a run, and from the controls/File menu. It accepts partial and over-limit data;
 missing logical channels stay blank. `infrastructure/coc_export.py` copies the bundled XLSX

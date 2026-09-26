@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from app_config import DEFAULT_RUN_ROOT
+from config.app_config import DEFAULT_RUN_ROOT
 from domain.models import MeasurementRecord
 from infrastructure.schema import CURRENT_RUN_SCHEMA_VERSION, migrate_run_payload
 

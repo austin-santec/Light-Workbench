@@ -41,6 +41,8 @@ Migration helpers reject newer versions instead of silently dropping fields.
 
 - JSON or a future repository/database: canonical structured application data.
 - CSV: human-readable measurement export and compatibility with existing tools.
+- Clipboard raw-data copy: transient tab-separated text from accepted readings;
+  it is not persisted and excludes metadata and pending readings.
 - XLSX: COC/report output only; it is not the primary application database.
 - Replacement analysis: calculated presentation data.
 - Manually recorded replacements and spares: persistent device data.
@@ -54,6 +56,7 @@ Migration helpers reject newer versions instead of silently dropping fields.
 - Preserve older run layouts while loading them.
 - Avoid modifying the original COC template; create a copy for each export.
 - Preserve template graphics and unrelated cell content during COC export.
+- Keep clipboard exports read-only with respect to run and unit persistence.
 
 ## Future multi-run analysis
 

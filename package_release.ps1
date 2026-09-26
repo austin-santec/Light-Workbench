@@ -13,11 +13,11 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $versionMatch = Select-String `
-    -LiteralPath (Join-Path $PSScriptRoot "app_info.py") `
+    -LiteralPath (Join-Path $PSScriptRoot "config\app_info.py") `
     -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' `
     | Select-Object -First 1
 if ($null -eq $versionMatch) {
-    throw "APP_VERSION could not be read from app_info.py."
+    throw "APP_VERSION could not be read from config\app_info.py."
 }
 
 $version = $versionMatch.Matches[0].Groups[1].Value

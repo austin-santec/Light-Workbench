@@ -25,7 +25,7 @@ maintaining it.
 
 Typed, vendor-neutral domain models are being introduced in `domain/models.py`.
 Shared default paths and injectable path bundles are defined in
-`app_config.py`. Existing persistence modules retain compatibility facades
+`config/app_config.py`. Existing persistence modules retain compatibility facades
 while the application migrates to those models.
 
 The hardware-run lifecycle is being extracted into
@@ -79,6 +79,10 @@ graphics restoration remain infrastructure concerns rather than UI logic.
 formatting. `domain/timing.py` owns switch-test session duration and metadata
 rules; Live IL and Red Light tools do not instantiate that timer.
 
+`domain/raw_export.py` owns pure formatting of accepted measurements for
+clipboard transfer. It produces Excel-compatible tab-separated text and has no
+Qt, filesystem, or hardware dependencies.
+
 `domain/run_data.py` owns the loaded-run model and over-limit rules. CSV
 formatting and compatibility parsing live in
 `infrastructure/csv_run_loader.py`; the root `run_data.py` module remains a
@@ -126,6 +130,10 @@ Vendor adapters, files, and external instruments
 Responsible for displaying state, collecting operator input, and sending user
 commands to controllers. UI code should not calculate insertion loss, write
 CSV files, or call vendor drivers directly.
+
+The main window remains in `ilm_app.py` as the application entry point. The
+standalone Live IL and Red Light dialogs live in `ui/`; their root-level module
+names remain compatibility facades for existing callers.
 
 ### Application layer
 

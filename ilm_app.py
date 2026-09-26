@@ -58,6 +58,7 @@ from application.run_start import (
 )
 from domain.measurement import calculate_insertion_loss
 from domain.comparison import comparison_values, index_measurements
+from domain.raw_export import format_raw_measurements
 from domain.timing import SwitchTestTimer
 from hardware.factory import HardwareFactory
 from infrastructure.coc_exporter import (
@@ -76,10 +77,10 @@ from domain.replacements import (
     normalise_completed_replacements,
     recommendation_category,
 )
-from dependency_check import DependencyReport, collect_dependency_report
-from red_light_test import RedLightTestDialog
-from app_info import APP_NAME, APP_TAGLINE, APP_VERSION, about_text
-from live_il_reading import LiveILReadingDialog, LiveILReadingWorker
+from tools.dependency_check import DependencyReport, collect_dependency_report
+from ui.red_light_test import RedLightTestDialog
+from config.app_info import APP_NAME, APP_TAGLINE, APP_VERSION, about_text
+from ui.live_il_reading import LiveILReadingDialog, LiveILReadingWorker
 
 
 ACCENT = "#e60013"
@@ -730,18 +731,49 @@ class MainWindow(QMainWindow):
             self.update_channel_mode_controls
         )
         hardware_setup_layout.addWidget(self.hardware_channel_mode, 0, 1)
+        self.channel_mode_context = QWidget()
+        channel_mode_context_layout = QHBoxLayout(self.channel_mode_context)
+        channel_mode_context_layout.setContentsMargins(0, 0, 0, 0)
+        channel_mode_context_layout.setSpacing(8)
         self.hardware_channel_label = QLabel("Channel:")
-        hardware_setup_layout.addWidget(self.hardware_channel_label, 0, 2)
+        channel_mode_context_layout.addWidget(self.hardware_channel_label)
         self.hardware_single_channel = QSpinBox()
         self.hardware_single_channel.setRange(1, 256)
         self.hardware_single_channel.setValue(1)
-        hardware_setup_layout.addWidget(self.hardware_single_channel, 0, 3)
+        channel_mode_context_layout.addWidget(self.hardware_single_channel)
+        self.manual_channel_order_checkbox = QCheckBox(
+            "Choose channel order manually"
+        )
+        self.manual_channel_order_checkbox.setToolTip(
+            "Optional full-pass mode for scattered channels; repeated channels "
+            "replace their previous saved result."
+        )
+        channel_mode_context_layout.addWidget(self.manual_channel_order_checkbox)
+        channel_mode_context_layout.addStretch()
+        hardware_setup_layout.addWidget(
+            self.channel_mode_context,
+            0,
+            2,
+            1,
+            2,
+        )
         self.hardware_channel_ranges_label = QLabel("Channels/ranges:")
         hardware_setup_layout.addWidget(self.hardware_channel_ranges_label, 1, 0)
         self.hardware_channel_ranges = QLineEdit()
         self.hardware_channel_ranges.setPlaceholderText("Example: 1, 9, 10-15, 27")
         hardware_setup_layout.addWidget(self.hardware_channel_ranges, 1, 1, 1, 3)
-        hardware_setup_layout.addWidget(QLabel("Part number:"), 2, 0)
+
+        hardware_setup_layout.addWidget(QLabel("Main board serial:"), 2, 0)
+        self.hardware_main_board_serial = QLineEdit()
+        hardware_setup_layout.addWidget(self.hardware_main_board_serial, 2, 1)
+        self.lookup_part_number_button = QPushButton("Lookup Part Number")
+        self.lookup_part_number_button.clicked.connect(self.lookup_part_number)
+        hardware_setup_layout.addWidget(self.lookup_part_number_button, 2, 2, 1, 2)
+
+        hardware_setup_layout.addWidget(QLabel("Switch serial:"), 3, 0)
+        self.hardware_switch_serial = QLineEdit()
+        hardware_setup_layout.addWidget(self.hardware_switch_serial, 3, 1)
+        hardware_setup_layout.addWidget(QLabel("Part number:"), 3, 2)
         self.hardware_part_number = QComboBox()
         self.hardware_part_number.setEditable(True)
         self.hardware_part_number.addItems(STANDARD_PART_NUMBERS)
@@ -752,29 +784,22 @@ class MainWindow(QMainWindow):
         self.hardware_part_number.setToolTip(
             "Type a part number, choose a standard part number, or use lookup."
         )
-        hardware_setup_layout.addWidget(self.hardware_part_number, 2, 1)
-        self.lookup_part_number_button = QPushButton("Lookup Part Number")
-        self.lookup_part_number_button.clicked.connect(self.lookup_part_number)
-        hardware_setup_layout.addWidget(self.lookup_part_number_button, 2, 2, 1, 2)
-        hardware_setup_layout.addWidget(QLabel("Main board serial:"), 3, 0)
-        self.hardware_main_board_serial = QLineEdit()
-        hardware_setup_layout.addWidget(self.hardware_main_board_serial, 3, 1)
-        hardware_setup_layout.addWidget(QLabel("Switch serial:"), 3, 2)
-        self.hardware_switch_serial = QLineEdit()
-        hardware_setup_layout.addWidget(self.hardware_switch_serial, 3, 3)
-        hardware_setup_layout.addWidget(QLabel("Operating band:"), 4, 0)
-        self.hardware_operating_band = QComboBox()
-        self.hardware_operating_band.addItems(["O band", "C band"])
-        self.hardware_operating_band.setCurrentText("O band")
-        hardware_setup_layout.addWidget(self.hardware_operating_band, 4, 1)
-        hardware_setup_layout.addWidget(QLabel("1310 ref:"), 4, 2)
+        hardware_setup_layout.addWidget(self.hardware_part_number, 3, 3)
+
+        hardware_setup_layout.addWidget(QLabel("1310 ref:"), 4, 0)
         self.reference_1310_spin = QDoubleSpinBox()
         self.reference_1310_spin.setRange(-100.0, 100.0)
         self.reference_1310_spin.setDecimals(2)
         self.reference_1310_spin.setSingleStep(0.01)
         self.reference_1310_spin.setValue(0.00)
         self.reference_1310_spin.setSuffix(" dBm")
-        hardware_setup_layout.addWidget(self.reference_1310_spin, 4, 3)
+        hardware_setup_layout.addWidget(self.reference_1310_spin, 4, 1)
+
+        hardware_setup_layout.addWidget(QLabel("Operating band:"), 4, 2)
+        self.hardware_operating_band = QComboBox()
+        self.hardware_operating_band.addItems(["O band", "C band"])
+        self.hardware_operating_band.setCurrentText("O band")
+        hardware_setup_layout.addWidget(self.hardware_operating_band, 4, 3)
         hardware_setup_layout.addWidget(QLabel("1550 ref:"), 5, 0)
         self.reference_1550_spin = QDoubleSpinBox()
         self.reference_1550_spin.setRange(-100.0, 100.0)
@@ -805,20 +830,6 @@ class MainWindow(QMainWindow):
             "Enter the operator's initials. They are saved with the run and COC."
         )
         hardware_setup_layout.addWidget(self.hardware_tested_by, 6, 1)
-        self.manual_channel_order_checkbox = QCheckBox(
-            "Choose channel order manually"
-        )
-        self.manual_channel_order_checkbox.setToolTip(
-            "Optional full-pass mode for scattered channels; repeated channels "
-            "replace their previous saved result."
-        )
-        hardware_setup_layout.addWidget(
-            self.manual_channel_order_checkbox,
-            6,
-            2,
-            1,
-            2,
-        )
         hardware_setup_layout.addWidget(QLabel("Run number:"), 7, 0)
         self.hardware_run_number = QSpinBox()
         self.hardware_run_number.setRange(1, 9999)
@@ -903,7 +914,18 @@ class MainWindow(QMainWindow):
         self.write_coc_button.setToolTip("Write the current run to a copied XLSX COC template.")
         self.write_coc_button.clicked.connect(self.write_coc)
         self.write_coc_button.setEnabled(False)
-        controls_layout.addWidget(self.write_coc_button)
+        self.copy_raw_data_button = QPushButton("Copy Raw Data...")
+        self.copy_raw_data_button.setToolTip(
+            "Copy completed channel readings as tab-separated text for Excel."
+        )
+        self.copy_raw_data_button.clicked.connect(self.copy_raw_data)
+        self.copy_raw_data_button.setEnabled(False)
+        for button in (self.write_coc_button, self.copy_raw_data_button):
+            button.setFixedSize(125, 48)
+        output_controls_layout = QHBoxLayout()
+        output_controls_layout.addWidget(self.write_coc_button)
+        output_controls_layout.addWidget(self.copy_raw_data_button)
+        controls_layout.addLayout(output_controls_layout)
         for button in (
             self.start_hardware_button,
             self.continue_hardware_button,
@@ -912,6 +934,7 @@ class MainWindow(QMainWindow):
             self.stop_hardware_button,
             self.retest_button,
             self.write_coc_button,
+            self.copy_raw_data_button,
         ):
             button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         for button in (
@@ -1474,6 +1497,7 @@ class MainWindow(QMainWindow):
         self.hardware_channel_ranges_label.setVisible(channel_ranges_mode)
         self.hardware_channel_ranges.setVisible(channel_ranges_mode)
         self.manual_channel_order_checkbox.setVisible(full_pass_mode)
+        self.channel_mode_context.setVisible(full_pass_mode or single_channel_mode)
 
     def open_part_lookup_folder(self):
         """Open the fixed network folder used for part-number lookup."""
@@ -3106,6 +3130,28 @@ class MainWindow(QMainWindow):
             "Replacement notes copied. Paste them into the Unit Editor notes."
         )
 
+    def copy_raw_data(self):
+        """Copy accepted readings from the active run as Excel-compatible TSV."""
+        if self.run_data is None or not self.run_data.measurements:
+            QMessageBox.information(
+                self,
+                "No raw data",
+                "There are no completed readings to copy from this run.",
+            )
+            return
+
+        try:
+            raw_data = format_raw_measurements(self.run_data.measurements)
+        except ValueError as error:
+            QMessageBox.information(self, "No raw data", str(error))
+            return
+
+        QApplication.clipboard().setText(raw_data)
+        self.statusBar().showMessage(
+            "%d completed channel reading(s) copied to clipboard."
+            % len(self.run_data.measurements)
+        )
+
     def show_replacement_analysis(self):
         """Collect measured extra ports, calculate recommendations, and save them."""
         if self.run_data is None or not self.run_data.measurements:
@@ -3221,9 +3267,10 @@ class MainWindow(QMainWindow):
         )
 
     def refresh_coc_controls(self):
-        """Enable COC export whenever a run, including a partial run, is loaded."""
+        """Enable run-data outputs whenever completed readings are available."""
         enabled = bool(self.run_data and self.run_data.measurements)
         self.write_coc_button.setEnabled(enabled)
+        self.copy_raw_data_button.setEnabled(enabled)
         self.write_coc_action.setEnabled(enabled)
 
     def offer_coc_export(self):
