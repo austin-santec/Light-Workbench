@@ -81,6 +81,17 @@ model.
   through application controllers; dialogs should not call vendor hardware
   methods directly.
 
+## Shutdown and close behavior
+
+Hardware-owning dialogs and the main window must complete instrument cleanup
+before releasing worker references or accepting a close event. Controllers
+disconnect queued UI commands after the worker thread has stopped and do not
+schedule worker deletion from the main thread after the worker event loop has
+closed. If a hardware shutdown times out, the owning window remains open and
+reports that cleanup is still in progress so an active vendor session cannot
+be abandoned silently. Informational dialogs without hardware resources may
+continue to use normal Qt `accept()`/`reject()` behavior.
+
 ## Measurement pipeline
 
 The intended future pipeline is:

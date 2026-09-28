@@ -646,37 +646,25 @@ class LiveILReadingDialog(QDialog):
 
     def thread_finished(self):
         self._close_reference_progress()
-        self.connected = False
-        self.repeatability_active = False
-        self.repeatability_read_pending = False
-        self.read_pending = False
-        self.stop_live_updates(update_status=False)
-        self.worker = None
-        self.thread = None
-        self.start_button.setEnabled(True)
-        self.read_button.setEnabled(False)
-        self.calculate_reference_button.setEnabled(False)
-        self.live_update_button.setEnabled(False)
-        self.repeatability_button.setEnabled(False)
-        self.repeatability_read_button.setEnabled(False)
-        self.repeatability_finish_button.setEnabled(False)
-        self.stop_button.setEnabled(False)
+        self._reset_after_shutdown()
         if self.isVisible():
             self.status_label.setText("Meter disconnected.")
 
     def closeEvent(self, event):
-        self._shutdown_worker()
+        if not self._shutdown_worker():
+            QMessageBox.warning(
+                self,
+                "Live IL Reading",
+                "The meter is still disconnecting. The dialog will remain open; "
+                "please try closing it again after the hardware responds.",
+            )
+            event.ignore()
+            return
         event.accept()
 
-    def _shutdown_worker(self):
-        """Stop the meter thread and wait for remote-mode cleanup to finish."""
-        if self.worker is None or self.thread is None:
-            return
-
-        self.live_controller.stop_and_wait()
-
+    def _reset_after_shutdown(self):
+        """Reset dialog state after the meter thread has fully stopped."""
         self.connected = False
-        self._close_reference_progress()
         self.repeatability_active = False
         self.repeatability_read_pending = False
         self.read_pending = False
@@ -691,6 +679,20 @@ class LiveILReadingDialog(QDialog):
         self.repeatability_read_button.setEnabled(False)
         self.repeatability_finish_button.setEnabled(False)
         self.stop_button.setEnabled(False)
+
+    def _shutdown_worker(self) -> bool:
+        """Stop the meter thread and wait for remote-mode cleanup to finish."""
+        if self.live_controller.worker is None and self.live_controller.thread is None:
+            self._reset_after_shutdown()
+            return True
+
+        if not self.live_controller.stop_and_wait():
+            return False
+
+        self.connected = False
+        self._close_reference_progress()
+        self._reset_after_shutdown()
+        return True
 
     def _close_reference_progress(self):
         if self.reference_progress is not None:

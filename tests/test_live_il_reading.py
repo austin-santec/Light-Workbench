@@ -1,9 +1,11 @@
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QCloseEvent
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication
 
@@ -218,6 +220,31 @@ class LiveILReadingDialogTests(unittest.TestCase):
         self.assertTrue(FakeMeter.instances[0].closed)
         self.assertIsNone(dialog.worker)
         self.assertIsNone(dialog.thread)
+        self.assertEqual(dialog.live_controller._command_connections, [])
+
+    def test_close_is_rejected_when_meter_shutdown_times_out(self):
+        dialog = LiveILReadingDialog(meter_factory=FakeMeter)
+        QTest.mouseClick(dialog.start_button, Qt.LeftButton)
+        QTest.qWait(100)
+        meter = FakeMeter.instances[0]
+
+        original_stop_and_wait = dialog.live_controller.stop_and_wait
+        dialog.live_controller.stop_and_wait = lambda: False
+        close_event = QCloseEvent()
+        with patch("ui.live_il_reading.QMessageBox.warning"):
+            dialog.closeEvent(close_event)
+
+        self.assertFalse(close_event.isAccepted())
+        self.assertFalse(meter.closed)
+        self.assertIsNotNone(dialog.live_controller.worker)
+        self.assertIsNotNone(dialog.live_controller.thread)
+
+        dialog.live_controller.stop_and_wait = original_stop_and_wait
+        self.assertTrue(dialog._shutdown_worker())
+        QTest.qWait(100)
+        self.assertTrue(meter.closed)
+        self.assertIsNone(dialog.live_controller.worker)
+        self.assertIsNone(dialog.live_controller.thread)
 
 
 if __name__ == "__main__":

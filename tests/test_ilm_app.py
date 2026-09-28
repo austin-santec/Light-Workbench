@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt5.QtGui import QCloseEvent
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtCore import QEventLoop, QTimer, Qt
 from PyQt5.QtTest import QTest
@@ -94,6 +95,21 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertEqual(file_dialog.call_args.args[2], str(DEFAULT_RUN_ROOT))
         window.close()
+
+    def test_main_window_close_is_rejected_when_hardware_shutdown_times_out(self):
+        window = MainWindow()
+        hardware_controller = MagicMock()
+        hardware_controller.is_active = True
+        hardware_controller.stop_and_wait.return_value = False
+        window.hardware_controller = hardware_controller
+
+        close_event = QCloseEvent()
+        with patch("ilm_app.QMessageBox.warning"):
+            window.closeEvent(close_event)
+
+        self.assertFalse(close_event.isAccepted())
+        hardware_controller.stop_and_wait.assert_called_once_with()
+        window.deleteLater()
 
     def test_about_dialog_displays_branding_version_and_tagline(self):
         dialog = AboutDialog()

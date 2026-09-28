@@ -2973,14 +2973,40 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self.reference_worker is not None and self.reference_thread is not None:
-            self._finish_reference_calculation()
+            if not self.reference_controller.stop_and_wait():
+                QMessageBox.warning(
+                    self,
+                    "Reference calculation",
+                    "The reference meter is still disconnecting. "
+                    "Please try closing the application again shortly.",
+                )
+                event.ignore()
+                return
+            self._close_reference_progress()
+            self.calculate_reference_button.setEnabled(True)
         if self.hardware_run_active:
             if self.hardware_controller.is_active:
-                self.hardware_controller.stop_and_wait()
+                if not self.hardware_controller.stop_and_wait():
+                    QMessageBox.warning(
+                        self,
+                        "Hardware run",
+                        "The hardware run is still stopping. "
+                        "Please try closing the application again shortly.",
+                    )
+                    event.ignore()
+                    return
             elif self.hardware_worker is not None and self.hardware_thread is not None:
                 self.hardware_worker.stop()
                 self.hardware_thread.quit()
-                self.hardware_thread.wait(5000)
+                if not self.hardware_thread.wait(5000):
+                    QMessageBox.warning(
+                        self,
+                        "Hardware run",
+                        "The hardware run is still stopping. "
+                        "Please try closing the application again shortly.",
+                    )
+                    event.ignore()
+                    return
             self.finish_switch_test_session()
         event.accept()
 

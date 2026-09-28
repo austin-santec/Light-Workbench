@@ -28,6 +28,7 @@ class LiveILReadingController(QObject):
         self.thread: QThread | None = None
         self.worker: QObject | None = None
         self.state = RunState.IDLE
+        self._command_connections = []
 
     def _set_state(self, state: RunState) -> None:
         if self.state == state:
@@ -59,7 +60,6 @@ class LiveILReadingController(QObject):
             worker.failed.connect(self._relay_failed)
             worker.finished.connect(self._worker_finished)
             worker.finished.connect(thread.quit)
-            worker.finished.connect(worker.deleteLater)
             self.read_requested.connect(
                 worker.read,
                 type=Qt.QueuedConnection,
@@ -68,10 +68,15 @@ class LiveILReadingController(QObject):
                 worker.calculate_reference,
                 type=Qt.QueuedConnection,
             )
+            self._command_connections = [
+                (self.read_requested, worker.read),
+                (self.reference_requested, worker.calculate_reference),
+            ]
             thread.started.connect(worker.start)
             thread.finished.connect(self._thread_finished)
             thread.start()
         except Exception:
+            self._disconnect_commands()
             if worker is None and meter is not None:
                 try:
                     meter.close()
@@ -104,11 +109,24 @@ class LiveILReadingController(QObject):
         self._set_state(RunState.STOPPED)
         self.finished.emit()
 
+    def _disconnect_commands(self) -> None:
+        """Disconnect queued UI commands before releasing the worker."""
+        for signal, slot in self._command_connections:
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
+        self._command_connections = []
+
     @pyqtSlot()
     def _thread_finished(self):
         if self.thread is None:
             return
         thread = self.thread
+        # Do not call worker.deleteLater() after the worker thread's event
+        # loop has stopped. Deferred deletion at that point can race with
+        # vendor-session cleanup and trigger a native Qt abort.
+        self._disconnect_commands()
         self.worker = None
         self.thread = None
         self._set_state(RunState.IDLE)
@@ -139,6 +157,6 @@ class LiveILReadingController(QObject):
             worker.stop()
             stopped = True
 
-        if not thread.isRunning() and self.thread is thread:
+        if stopped and not thread.isRunning() and self.thread is thread:
             self._thread_finished()
         return stopped
