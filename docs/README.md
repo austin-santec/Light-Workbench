@@ -3,6 +3,33 @@
 This folder is the design and contribution guide for Light Workbench. It is
 intended for developers and AI assistants making changes to the project.
 
+The root [`README.md`](../README.md) is the user-facing project overview. It
+covers the current application workflow, deployment requirements, and operator
+features. This file focuses on architecture, coding practices, testing, and
+how to choose the other documents in this folder.
+
+## Documentation map
+
+- [`PROGRAM_DESIGN.md`](PROGRAM_DESIGN.md) — application purpose, boundaries,
+  layers, and workflow ownership.
+- [`CODING_STANDARDS.md`](CODING_STANDARDS.md) — Python, Qt, threading,
+  compatibility, and error-handling conventions.
+- [`PROJECT_LAYOUT.md`](PROJECT_LAYOUT.md) — source-package responsibilities
+  and generated-content locations.
+- [`HARDWARE_ARCHITECTURE.md`](HARDWARE_ARCHITECTURE.md) — ILM, OPM, laser,
+  switch, session, and shutdown boundaries.
+- [`DATA_ARCHITECTURE.md`](DATA_ARCHITECTURE.md) — units, runs, persistence,
+  exports, and compatibility rules.
+- [`TESTING_AND_RELEASE.md`](TESTING_AND_RELEASE.md) — test commands, build,
+  packaging, and release checks.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — change workflow and review questions.
+- [`REFACTOR_ROADMAP.md`](REFACTOR_ROADMAP.md) — incremental refactor history
+  and remaining architecture work.
+
+The current release version is maintained in `config/app_info.py`; do not
+duplicate it in this index. The current desktop entry point is `ilm_app.py`,
+while `ILMReadLoss.py` remains a supported legacy console workflow.
+
 ## Required reading before code changes
 
 Before modifying code, review:

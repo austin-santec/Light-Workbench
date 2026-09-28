@@ -61,8 +61,8 @@ Updates` automatically refreshes both values without saving data and changes to
 
 | File or folder | Purpose |
 | --- | --- |
-| `ILMReadLoss.py` | Main application: prompts, calculations, retesting, and CSV output |
-| `ilm_app.py` | Light Workbench PyQt5 desktop application for saved CSV runs, loss-limit analysis, and hardware control |
+| `ilm_app.py` | Current Light Workbench PyQt5 desktop application and hardware-test UI |
+| `ILMReadLoss.py` | Legacy console workflow retained for compatibility |
 | `run_data.py` | CSV loader and configurable over-limit analysis model |
 | `domain/models.py` | Typed vendor-neutral measurement, unit, run, reference, and workflow models |
 | `domain/run_data.py` | Domain run model and over-limit analysis rules |
@@ -72,12 +72,11 @@ Updates` automatically refreshes both values without saving data and changes to
 | `application/run_controller.py` | Hardware-run lifecycle controller and queued worker command boundary |
 | `application/live_controller.py` | Live IL meter worker lifecycle controller |
 | `application/red_light_controller.py` | Red Light Test switch worker lifecycle controller |
-| `infrastructure/run_repository.py` | File-backed CSV/JSON repository adapter |
+| `application/timing.py` | Shared pacing defaults for automatic live readings |
 | `infrastructure/csv_run_loader.py` | CSV parsing adapter for current and legacy run files |
 | `infrastructure/run_persistence.py` | Atomic CSV/JSON run recorder and filename rules |
 | `infrastructure/unit_persistence.py` | Atomic unit JSON records and numbered-run paths |
 | `infrastructure/coc_export.py` | COC template lookup, workbook export, and drawing preservation |
-| `infrastructure/run_repository.py` | File-backed CSV/JSON repository adapter |
 | `infrastructure/run_query.py` | Read-only queries over indexed unit runs |
 | `infrastructure/run_reports.py` | File-backed multi-run reporting service |
 | `infrastructure/schema.py` | Run and unit schema versions and migrations |
@@ -149,7 +148,10 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the current release version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.8.0**.
+current Light Workbench release is version **1.8.2**.
+
+For architecture, coding standards, testing, and contribution guidance, see
+the [`docs/README.md`](docs/README.md) documentation index.
 
 Use `Help > IL Instructions` to open the bundled browser-based operator guide
 for the hardware IL-reading workflow.
@@ -214,8 +216,8 @@ separate Write IL button and shortcut while active. Turn it off to restore the
 standard read-review-write workflow.
 
 `Tools > Live Write Mode` provides a second optional workflow. After the run
-routs each channel, the ILM automatically refreshes both wavelengths about
-once per second. The displayed value is not saved until `Write IL` is pressed;
+routs each channel, the ILM automatically refreshes both wavelengths after a
+250 ms software pacing delay. The displayed value is not saved until `Write IL` is pressed;
 then the latest complete reading is committed and the run advances. The red
 `LIVE` indicator appears while updates are active.
 Live Write Mode is enabled by default on startup, lasts only for the current
@@ -459,7 +461,7 @@ startup smoke test:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\smoke_test_release.ps1
 ```
 
-Keep these files together in the same folder:
+For the legacy console workflow, keep these source files together:
 
 ```text
 ILM Python Testing/
@@ -474,7 +476,13 @@ If Santec Terminal is open, disconnect it from the OSX-150 or close it before
 running this program. Two applications attempting to control the same VISA
 resource can cause a resource-busy or device-not-found error.
 
-## Running a test
+## Legacy console workflow
+
+The following instructions apply to `ILMReadLoss.py`, the older console
+workflow. The current desktop workflow is `ilm_app.py` or the packaged
+`LightWorkbench.exe` described above.
+
+### Running a test
 
 From this folder, run:
 
@@ -689,12 +697,16 @@ the interruption remain in that CSV.
 
 ## Code structure for future development
 
-New user workflows should normally be added to `ILMReadLoss.py`. Raw ILM DLL
-calls belong in `op815_driver.py`, and raw OSX-150 VISA/SCPI commands belong in
-`hardware/optical_switch.py`. Keeping those responsibilities separate makes it
-easier to add standardized switch metadata and other output files later without
-mixing device protocol details into the application workflow. The root
-`osx150_driver.py` module remains a compatibility facade for existing imports.
+New user workflows should normally be added to `ilm_app.py` and the appropriate
+`application/`, `ui/`, `domain/`, `hardware/`, or `infrastructure/` module.
+Raw ILM DLL calls belong in `op815_driver.py`, and raw OSX-150 VISA/SCPI
+commands belong in `hardware/optical_switch.py`. Keeping those responsibilities
+separate makes it easier to support an OPM and separate laser source later.
+`ILMReadLoss.py` remains the legacy console entry point, and root-level driver
+modules remain compatibility facades where documented.
+
+Before making code changes, read [`docs/README.md`](docs/README.md) and the
+specialist architecture document for the area being changed.
 
 Metadata collection, automatic swap tracking, and `metadata_table_rows()` are
 separate from `write_combined_csv()`. If metadata is moved to a dedicated CSV
