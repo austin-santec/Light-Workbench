@@ -87,3 +87,9 @@ accepted switch-test readings.
 boundaries. It can aggregate one unit or all indexed `Unit-*` folders under a
 run root, which gives a future analysis screen one stable entry point without
 requiring it to know the CSV layout.
+
+The planned database extension is documented separately in
+`docs/DATABASE_ARCHITECTURE.md`. Its implementation milestones are in
+`docs/DATABASE_ROADMAP.md`. The database design preserves this file-backed
+model: CSV and JSON remain available, accepted/written measurements are the
+analytical inputs, and replacement recommendations remain derived data.

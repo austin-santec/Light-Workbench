@@ -20,6 +20,10 @@ how to choose the other documents in this folder.
   switch, session, and shutdown boundaries.
 - [`DATA_ARCHITECTURE.md`](DATA_ARCHITECTURE.md) — units, runs, persistence,
   exports, and compatibility rules.
+- [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md) — planned local and
+  central database design, synchronization, run eligibility, and reporting.
+- [`DATABASE_ROADMAP.md`](DATABASE_ROADMAP.md) — staged database milestones,
+  tests, rollout steps, and exit criteria.
 - [`TESTING_AND_RELEASE.md`](TESTING_AND_RELEASE.md) — test commands, build,
   packaging, and release checks.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — change workflow and review questions.
