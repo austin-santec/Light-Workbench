@@ -92,6 +92,11 @@ reports that cleanup is still in progress so an active vendor session cannot
 be abandoned silently. Informational dialogs without hardware resources may
 continue to use normal Qt `accept()`/`reject()` behavior.
 
+Automatic Live IL and Live Write Mode use a shared 250 ms software pacing
+delay after each complete two-wavelength measurement. This delay is separate
+from wavelength, source, and source-off settling times; it controls when the
+next measurement request begins and does not change instrument timing.
+
 ## Measurement pipeline
 
 The intended future pipeline is:

@@ -125,6 +125,17 @@ class MeasurementWorkerTests(unittest.TestCase):
         self.assertTrue(meter.closed)
         self.assertTrue(switch.closed)
 
+    def test_live_write_mode_defaults_to_quarter_second_interval(self):
+        worker = MeasurementWorker(
+            FakePowerMeter(),
+            FakeSwitch(),
+            [1],
+            {1310: 0.72, 1550: 0.28},
+            live_write_mode=True,
+        )
+
+        self.assertEqual(worker.live_write_interval, 0.25)
+
     def test_none_channels_uses_switch_configured_count(self):
         meter = FakePowerMeter()
         switch = FakeSwitch()

@@ -58,6 +58,7 @@ class RunStartPreparationTests(unittest.TestCase):
         self.assertTrue(request.resume_full_pass)
         self.assertTrue(request.live_write_mode)
         self.assertEqual(request.existing_channels, [1, 2])
+        self.assertEqual(request.live_write_interval, 0.25)
 
 
 if __name__ == "__main__":

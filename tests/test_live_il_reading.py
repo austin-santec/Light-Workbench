@@ -10,7 +10,7 @@ from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication
 
 from hardware.session import OpticalTestSession
-from ui.live_il_reading import LiveILReadingDialog
+from ui.live_il_reading import LIVE_UPDATE_PAUSE_MS, LiveILReadingDialog
 
 
 class FakeMeter:
@@ -53,6 +53,9 @@ class LiveILReadingDialogTests(unittest.TestCase):
     def setUp(self):
         FakeMeter.instances.clear()
         FakeMeter.reference_measurements = 0
+
+    def test_live_updates_use_quarter_second_software_pause(self):
+        self.assertEqual(LIVE_UPDATE_PAUSE_MS, 250)
 
     def test_meter_connects_only_after_start_and_reads_without_switch_or_files(self):
         dialog = LiveILReadingDialog(

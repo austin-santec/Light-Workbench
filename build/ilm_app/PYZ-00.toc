@@ -62,6 +62,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\run_start.py',
    'PYMODULE'),
+  ('application.timing',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\timing.py',
+   'PYMODULE'),
   ('argparse',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\argparse.py',
    'PYMODULE'),

@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
+from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from domain.measurement import calculate_insertion_loss
 from hardware.interfaces import OpticalSwitch, PowerMeter
 from hardware.session import OpticalTestSession
@@ -39,7 +40,7 @@ class MeasurementWorker(QObject):
         resume_existing=False,
         resume_full_pass=False,
         live_write_mode=False,
-        live_write_interval=1.0,
+        live_write_interval=LIVE_WRITE_INTERVAL_SECONDS,
     ):
         super().__init__()
         self.power_meter = power_meter

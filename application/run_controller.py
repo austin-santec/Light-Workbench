@@ -11,6 +11,7 @@ from typing import Any
 
 from PyQt5.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 
+from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from domain.models import RunState
 from hardware.interfaces import OpticalSwitch, PowerMeter
 from application.measurement_worker import MeasurementWorker
@@ -29,7 +30,7 @@ class HardwareRunRequest:
     resume_existing: bool = False
     resume_full_pass: bool = False
     live_write_mode: bool = False
-    live_write_interval: float = 1.0
+    live_write_interval: float = LIVE_WRITE_INTERVAL_SECONDS
 
 
 class HardwareRunController(QObject):

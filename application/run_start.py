@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from application.hardware_planning import HardwareRunPlan, build_hardware_run_plan
 from application.run_controller import HardwareRunRequest
+from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from hardware.interfaces import OpticalSwitch, PowerMeter
 
 
@@ -64,7 +65,7 @@ def build_hardware_run_request(
     existing_channels: Sequence[int] | None,
     resume_existing: bool,
     live_write_mode: bool,
-    live_write_interval: float = 1.0,
+    live_write_interval: float = LIVE_WRITE_INTERVAL_SECONDS,
 ) -> HardwareRunRequest:
     """Create a controller request for already-created hardware adapters."""
     return HardwareRunRequest(

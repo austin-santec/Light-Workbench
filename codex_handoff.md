@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current user-facing release is **Light Workbench 1.8.1**. The single
+The current user-facing release is **Light Workbench 1.8.2**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -173,9 +173,9 @@ short range.
     is not persisted between application sessions.
 8. `Tools > Live Write Mode` is an optional hardware-run workflow. After the
     worker routes each channel, it automatically emits complete IL readings
-    about once per second; the operator moves the cable to the shown channel
-    while the values update. The UI keeps the newest value pending until
-    `Write IL` is pressed; only then is it committed and the worker advances.
+    after a 250 ms software pacing delay; the operator moves the cable to the
+    shown channel while the values update. The UI keeps the newest value pending
+    until `Write IL` is pressed; only then is it committed and the worker advances.
     The mode has a red `LIVE` indicator, is mutually exclusive with Noah Mode,
     is disabled while a run is active, and defaults on each application
     session.
@@ -229,7 +229,7 @@ repeatedly, and `Calculate Reference` derives both shared reference offsets
 from a zero-reference meter reading. Manual reference edits stay synchronized
 with the main setup. It never creates run files, changes the table, or writes
 COC data. `Start Live Updates` automatically refreshes both values sequentially
-with a short pause between completed readings; `Stop Live Updates` ends the
+with a 250 ms pause between completed readings; `Stop Live Updates` ends the
 refresh cycle and hides its red indicator. `Repeatability Test` opens a
 right-side in-memory table for an
 initial reading followed by any number of manually triggered readings after

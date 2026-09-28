@@ -23,13 +23,11 @@ from PyQt5.QtWidgets import (
 )
 
 from application.live_controller import LiveILReadingController
+from application.timing import LIVE_UPDATE_PAUSE_MS
 from domain.measurement import calculate_insertion_loss
 from domain.reference import calculate_reference_offsets
 from hardware.factory import HardwareFactory
 from hardware.session import OpticalTestSession
-
-
-LIVE_UPDATE_PAUSE_MS = 1000
 
 
 class LiveILReadingWorker(QObject):
