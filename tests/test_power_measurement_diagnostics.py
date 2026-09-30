@@ -22,6 +22,7 @@ class FakeMeter:
         self.usb_serial = "fake-meter"
         self.connected = False
         self.closed = False
+        self.diagnostic_verification = False
         self.__class__.instances.append(self)
 
     def connect(self):
@@ -36,6 +37,9 @@ class FakeMeter:
         if not self.connected:
             raise RuntimeError("Fake meter is not connected.")
         return {1310: -0.0400, 1550: 0.1400}
+
+    def set_diagnostic_verification(self, enabled):
+        self.diagnostic_verification = bool(enabled)
 
     def close(self):
         self.connected = False
@@ -71,6 +75,11 @@ class FakeSwitch:
 class IncompleteFakeMeter(FakeMeter):
     def measure_both_wavelengths(self):
         return {1310: -0.9400}
+
+
+class BlockedMeasurementMeter(FakeMeter):
+    def measure_both_wavelengths(self):
+        raise RuntimeError("Requested 1310 nm, but the ILM selected 1550 nm.")
 
 
 class PowerMeasurementDiagnosticsDialogTests(unittest.TestCase):
@@ -239,6 +248,7 @@ class PowerMeasurementDiagnosticsDialogTests(unittest.TestCase):
         dialog = self.create_dialog()
         QTest.mouseClick(dialog.connect_meter_button, Qt.LeftButton)
         self.assertTrue(self.wait_for(lambda: dialog.meter_connected))
+        self.assertTrue(FakeMeter.instances[0].diagnostic_verification)
         QTest.mouseClick(dialog.read_button, Qt.LeftButton)
         self.assertTrue(self.wait_for(lambda: not dialog.read_pending))
 
@@ -262,6 +272,20 @@ class PowerMeasurementDiagnosticsDialogTests(unittest.TestCase):
         self.assertTrue(self.wait_for(lambda: not dialog.read_pending))
         self.assertEqual(dialog.history_table.rowCount(), 0)
         self.assertEqual(dialog.current_labels[1310]["measured"].text(), "-")
+        dialog.close()
+
+    def test_blocked_measurement_is_not_added_to_history_or_monitoring(self):
+        dialog = PowerMeasurementDiagnosticsDialog(
+            meter_factory=BlockedMeasurementMeter,
+            switch_factory=FakeSwitch,
+        )
+        QTest.mouseClick(dialog.connect_meter_button, Qt.LeftButton)
+        self.assertTrue(self.wait_for(lambda: dialog.meter_connected))
+        QTest.mouseClick(dialog.read_button, Qt.LeftButton)
+        self.assertTrue(self.wait_for(lambda: not dialog.read_pending))
+        self.assertFalse(dialog.monitoring_active)
+        self.assertEqual(dialog.history_table.rowCount(), 0)
+        self.assertEqual(dialog.history, [])
         dialog.close()
 
     def test_reference_calculation_is_local_until_operator_applies_it(self):

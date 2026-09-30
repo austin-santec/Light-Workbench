@@ -30,6 +30,19 @@ WAVELENGTH_SETTLING_TIME_SECONDS = 0.1
 SOURCE_SETTLING_TIME_SECONDS = 0.5
 SOURCE_OFF_SETTLING_TIME_SECONDS = 0.1
 
+# These fields describe one wavelength sample, not the whole diagnostic
+# session.  They must be cleared before a new sample so trace setup events do
+# not accidentally describe the previous wavelength or source state.
+WAVELENGTH_TRACE_CONTEXT_FIELDS = (
+    "requested_wavelength_nm",
+    "actual_wavelength_nm",
+    "wavelength_index",
+    "wavelength_count",
+    "source_id",
+    "source_enabled",
+    "reference_power_dbm",
+)
+
 # Reference calibration is intentionally slower than production measurements.
 # The ILM is freshly connected for this operation, so its wavelength selection,
 # source output, and auto-ranging circuitry get additional time to settle
@@ -95,6 +108,7 @@ class OP815:
         self._trace_callback = trace_callback
         self._trace_context = {}
         self._trace_metadata = {}
+        self._diagnostic_verification_enabled = False
         self._bind_functions()
 
     def set_trace_callback(self, callback):
@@ -105,9 +119,18 @@ class OP815:
         """Set context associated with the next hardware trace events."""
         self._trace_context.update(context)
 
+    def clear_trace_context(self, *fields):
+        """Remove transient fields from the next hardware trace events."""
+        for field in fields:
+            self._trace_context.pop(field, None)
+
     def set_trace_metadata(self, **metadata):
         """Set session metadata attached to diagnostic trace events."""
         self._trace_metadata.update(metadata)
+
+    def set_diagnostic_verification(self, enabled):
+        """Enable final wavelength checks for the diagnostic workflow only."""
+        self._diagnostic_verification_enabled = bool(enabled)
 
     def _trace(self, event, **values):
         """Emit an optional trace event without affecting hardware behavior."""
@@ -460,18 +483,112 @@ class OP815:
         self._require_success("ReadPower", status)
         return power.value
 
+    @staticmethod
+    def _wavelength_validation_error(
+        requested_wavelength_nm,
+        actual_wavelength_nm,
+        wavelength_index,
+        wavelength_count,
+    ):
+        """Return a clear error when the instrument reports invalid state."""
+        if actual_wavelength_nm not in WAVELENGTHS_NM:
+            return "The ILM reported an unsupported wavelength."
+        if actual_wavelength_nm != requested_wavelength_nm:
+            return (
+                "Requested %d nm, but the ILM selected %d nm."
+                % (requested_wavelength_nm, actual_wavelength_nm)
+            )
+        expected_index = WAVELENGTHS_NM.index(requested_wavelength_nm)
+        if wavelength_count <= 0 or not 0 <= wavelength_index < wavelength_count:
+            return "The ILM reported an invalid wavelength index or count."
+        if wavelength_index != expected_index:
+            return "The ILM reported an inconsistent wavelength index."
+        return None
+
+    def _verify_wavelength_before_read(self, wavelength_nm):
+        """Verify wavelength immediately before ReadPower is allowed."""
+        source_id = SOURCE_ID_BY_WAVELENGTH[wavelength_nm]
+        verification_started = time.perf_counter()
+        actual_wavelength = None
+        wavelength_index = None
+        wavelength_count = None
+        self.clear_trace_context(
+            "actual_wavelength_nm",
+            "wavelength_index",
+            "wavelength_count",
+        )
+        try:
+            actual_wavelength, wavelength_index, wavelength_count = (
+                self.current_wavelength_details()
+            )
+            self.set_trace_context(
+                actual_wavelength_nm=actual_wavelength,
+                wavelength_index=wavelength_index,
+                wavelength_count=wavelength_count,
+            )
+            reference_key = "reference_%d_dbm" % wavelength_nm
+            if reference_key in getattr(self, "_trace_context", {}):
+                self.set_trace_context(
+                    reference_power_dbm=self._trace_context[reference_key]
+                )
+            error = self._wavelength_validation_error(
+                wavelength_nm,
+                actual_wavelength,
+                wavelength_index,
+                wavelength_count,
+            )
+            if error:
+                raise RuntimeError(error)
+        except Exception as error:
+            self._trace(
+                "verified_before_read",
+                operation="GetWavelength before ReadPower",
+                requested_wavelength_nm=wavelength_nm,
+                actual_wavelength_nm=actual_wavelength,
+                wavelength_index=wavelength_index,
+                wavelength_count=wavelength_count,
+                source_id=source_id,
+                source_enabled=True,
+                status="error",
+                error=str(error),
+                elapsed_ms=(time.perf_counter() - verification_started) * 1000.0,
+            )
+            if isinstance(error, RuntimeError):
+                raise
+            raise RuntimeError(
+                "Could not verify the ILM wavelength before reading %d nm: %s"
+                % (wavelength_nm, error)
+            ) from error
+
+        self._trace(
+            "verified_before_read",
+            operation="GetWavelength before ReadPower",
+            requested_wavelength_nm=wavelength_nm,
+            actual_wavelength_nm=actual_wavelength,
+            wavelength_index=wavelength_index,
+            wavelength_count=wavelength_count,
+            source_id=source_id,
+            source_enabled=True,
+            status="success",
+            status_code=1,
+            elapsed_ms=(time.perf_counter() - verification_started) * 1000.0,
+            details="Final wavelength verification passed before ReadPower.",
+        )
+
     def measure_wavelength(
         self,
         wavelength_nm,
         wavelength_settling_seconds=WAVELENGTH_SETTLING_TIME_SECONDS,
         source_settling_seconds=SOURCE_SETTLING_TIME_SECONDS,
         source_off_settling_seconds=SOURCE_OFF_SETTLING_TIME_SECONDS,
+        verify_before_read=False,
     ):
         """Enable one laser, take one absolute-power reading, then disable it."""
         if wavelength_nm not in SOURCE_ID_BY_WAVELENGTH:
             raise ValueError("No source is configured for %d nm." % wavelength_nm)
 
         source_id = SOURCE_ID_BY_WAVELENGTH[wavelength_nm]
+        self.clear_trace_context(*WAVELENGTH_TRACE_CONTEXT_FIELDS)
         self.set_trace_context(requested_wavelength_nm=wavelength_nm)
         started = time.perf_counter()
         self._trace(
@@ -504,25 +621,33 @@ class OP815:
             self.set_trace_context(
                 reference_power_dbm=self._trace_context[reference_key]
             )
-        if actual_wavelength != wavelength_nm:
+        validation_error = self._wavelength_validation_error(
+            wavelength_nm,
+            actual_wavelength,
+            wavelength_index,
+            wavelength_count,
+        )
+        if validation_error:
             self._trace(
                 "wavelength_measurement_failed",
                 operation="measure_wavelength",
                 requested_wavelength_nm=wavelength_nm,
                 actual_wavelength_nm=actual_wavelength,
                 status="error",
-                error="Instrument selected an unexpected wavelength.",
+                error=validation_error,
                 elapsed_ms=(time.perf_counter() - started) * 1000.0,
             )
-            raise RuntimeError(
-                "Requested %d nm, but the ILM selected %d nm."
-                % (wavelength_nm, actual_wavelength)
-            )
+            raise RuntimeError(validation_error)
 
         self.set_source_state(source_id, True)
         self.set_trace_context(source_id=source_id, source_enabled=True)
         try:
             time.sleep(source_settling_seconds)
+            # The source-settling interval can expose a stale or changed
+            # wavelength on some instrument/DLL combinations.  Never call
+            # ReadPower until the final wavelength check has passed.
+            if verify_before_read:
+                self._verify_wavelength_before_read(wavelength_nm)
             power = self._read_power(wavelength_nm)
             self._trace(
                 "wavelength_measurement_completed",
@@ -547,7 +672,12 @@ class OP815:
         source_off_settling_seconds=SOURCE_OFF_SETTLING_TIME_SECONDS,
     ):
         """Return absolute dBm readings keyed by 1310 and 1550 wavelength."""
+        self.clear_trace_context(*WAVELENGTH_TRACE_CONTEXT_FIELDS)
         original_wavelength = self.current_wavelength()
+        self.clear_trace_context(*WAVELENGTH_TRACE_CONTEXT_FIELDS)
+        verify_before_read = getattr(
+            self, "_diagnostic_verification_enabled", False
+        )
         measurements = {}
         self._trace(
             "measurement_started",
@@ -564,6 +694,7 @@ class OP815:
                     wavelength_settling_seconds,
                     source_settling_seconds,
                     source_off_settling_seconds,
+                    verify_before_read,
                 )
             self._trace(
                 "measurement_completed",

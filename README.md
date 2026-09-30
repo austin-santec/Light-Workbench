@@ -81,6 +81,13 @@ source state, channel context, status codes, timing, and errors. It is not
 created by normal runs and exporting does not modify the active run or any run
 files.
 
+Diagnostic exports default to local-time names such as
+`diagnostic-history-20260930-110405.csv` (or `.json`). If that automatically
+suggested name already exists, a deterministic `-01`, `-02`, and so on is
+used. The final wavelength is verified again immediately before each raw
+power read; a mismatch or invalid wavelength report blocks that sample rather
+than allowing an ambiguous reading into diagnostic history.
+
 Variation Analysis appears to the right of the reading history by default.
 Use `Hide Variation Analysis` to give the history table more room, or
 `Show Variation Analysis` to restore the panel. The splitter between the two
@@ -186,7 +193,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the current release version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.10.0**.
+current Light Workbench release is version **1.10.2**.
 
 For architecture, coding standards, testing, and contribution guidance, see
 the [`docs/README.md`](docs/README.md) documentation index.
@@ -245,22 +252,13 @@ IL Values` then commits the result to the table and CSV/JSON files before the
 worker advances to the next channel. Starting and stopping a run without
 writing any measurement leaves no empty run folder, CSV, or JSON file behind.
 
-For a one-step workflow, select `Tools > Noah Mode` while no hardware run is
-active and confirm the warning. The Read button becomes `Read & Write IL`:
-each successful reading is immediately committed to the run and the worker
-advances to the next channel. A failed reading is not committed. Noah Mode is
-off by default, lasts only until the application closes, and disables the
-separate Write IL button and shortcut while active. Turn it off to restore the
-standard read-review-write workflow.
-
-`Tools > Live Write Mode` provides a second optional workflow. After the run
+`Tools > Live Write Mode` provides an optional workflow. After the run
 routs each channel, the ILM automatically refreshes both wavelengths after a
 250 ms software pacing delay. The displayed value is not saved until `Write IL` is pressed;
 then the latest complete reading is committed and the run advances. The red
 `LIVE` indicator appears while updates are active.
 Live Write Mode is enabled by default on startup, lasts only for the current
-application session, and cannot be changed during an active run. It is separate from
-Noah Mode, which saves after a single reading.
+application session, and cannot be changed during an active run.
 
 The same panel includes a guarded `Start Real Hardware` path. It runs the
 existing OP815 DLL and OSX-150 VISA calls in a background worker, asks the

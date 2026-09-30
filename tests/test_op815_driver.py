@@ -8,8 +8,14 @@ class OP815CleanupTests(unittest.TestCase):
     def test_complete_measurement_trace_links_both_wavelengths_and_references(self):
         driver = OP815.__new__(OP815)
         events = []
+        sequence = []
         state = {"wavelength": 1310}
-        driver._trace_callback = events.append
+
+        def record_trace(event):
+            events.append(event)
+            sequence.append(("trace", event["event"]))
+
+        driver._trace_callback = record_trace
         driver._trace_context = {
             "measurement_id": 11,
             "method": "Manual",
@@ -17,8 +23,15 @@ class OP815CleanupTests(unittest.TestCase):
             "physical_port": 103,
             "reference_1310_dbm": -0.04,
             "reference_1550_dbm": 0.14,
+            "actual_wavelength_nm": 1550,
+            "wavelength_index": 1,
+            "wavelength_count": 2,
+            "source_id": 1,
+            "source_enabled": True,
+            "reference_power_dbm": 0.14,
         }
         driver._trace_metadata = {"application_version": "1.10.0"}
+        driver._diagnostic_verification_enabled = True
         driver.description = "OP815"
         driver.usb_serial = "meter-11"
 
@@ -44,14 +57,20 @@ class OP815CleanupTests(unittest.TestCase):
         driver.source_on = lambda _source_id, _state: 1
         driver.read_power = read_power
 
-        with patch("op815_driver.time.sleep"):
+        with patch(
+            "op815_driver.time.sleep",
+            side_effect=lambda seconds: sequence.append(("sleep", seconds)),
+        ):
             measurements = driver.measure_both_wavelengths(
                 wavelength_settling_seconds=0,
-                source_settling_seconds=0,
+                source_settling_seconds=0.5,
                 source_off_settling_seconds=0,
             )
 
         read_events = [event for event in events if event["event"] == "read_power"]
+        verification_events = [
+            event for event in events if event["event"] == "verified_before_read"
+        ]
         self.assertEqual(measurements, {1310: -0.94, 1550: -0.50})
         self.assertEqual([event["requested_wavelength_nm"] for event in read_events], [1310, 1550])
         self.assertEqual([event["measurement_id"] for event in read_events], [11, 11])
@@ -60,6 +79,129 @@ class OP815CleanupTests(unittest.TestCase):
             [-0.04, 0.14],
         )
         self.assertEqual([event["source_id"] for event in read_events], [0, 1])
+        self.assertEqual(
+            [(event["requested_wavelength_nm"], event["actual_wavelength_nm"])
+             for event in verification_events],
+            [(1310, 1310), (1550, 1550)],
+        )
+        self.assertTrue(all(event["status"] == "success" for event in verification_events))
+        for verification_event in verification_events:
+            verification_position = events.index(verification_event)
+            following_reads = [
+                event for event in read_events
+                if events.index(event) > verification_position
+            ]
+            self.assertTrue(following_reads)
+            self.assertEqual(
+                following_reads[0]["requested_wavelength_nm"],
+                verification_event["requested_wavelength_nm"],
+            )
+        verification_positions = [
+            index
+            for index, entry in enumerate(sequence)
+            if entry == ("trace", "verified_before_read")
+        ]
+        for verification_position in verification_positions:
+            self.assertEqual(sequence[verification_position - 2], ("sleep", 0.5))
+            self.assertEqual(
+                sequence[verification_position - 1],
+                ("trace", "get_wavelength"),
+            )
+
+        first_sample_start = next(
+            event for event in events
+            if event["event"] == "wavelength_measurement_started"
+        )
+        self.assertNotIn("actual_wavelength_nm", first_sample_start)
+        self.assertNotIn("source_enabled", first_sample_start)
+
+    def test_final_wavelength_mismatch_blocks_read_power(self):
+        driver = OP815.__new__(OP815)
+        events = []
+        state = {"wavelength": 1310, "get_calls": 0, "read_calls": 0}
+        driver._trace_callback = events.append
+        driver._trace_context = {"measurement_id": 12}
+        driver._trace_metadata = {}
+        driver.description = None
+        driver.usb_serial = None
+
+        def get_wavelength(wavelength, index, count):
+            state["get_calls"] += 1
+            reported = (1310, 1550)[state["get_calls"] - 1]
+            wavelength._obj.value = reported
+            index._obj.value = 0 if reported == 1310 else 1
+            count._obj.value = 2
+            return 1
+
+        driver.get_wavelength = get_wavelength
+        driver.set_wavelength = lambda wavelength: state.update(wavelength=wavelength) or 1
+        driver.source_on = lambda _source_id, _state: 1
+
+        def read_power(_power):
+            state["read_calls"] += 1
+            return 1
+
+        driver.read_power = read_power
+
+        with patch("op815_driver.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "selected 1550 nm"):
+                driver.measure_wavelength(
+                    1310,
+                    wavelength_settling_seconds=0,
+                    source_settling_seconds=0,
+                    source_off_settling_seconds=0,
+                    verify_before_read=True,
+                )
+
+        self.assertEqual(state["read_calls"], 0)
+        verification = [
+            event for event in events if event["event"] == "verified_before_read"
+        ]
+        self.assertEqual(len(verification), 1)
+        self.assertEqual(verification[0]["status"], "error")
+        self.assertEqual(verification[0]["actual_wavelength_nm"], 1550)
+
+    def test_final_wavelength_query_error_blocks_read_power(self):
+        driver = OP815.__new__(OP815)
+        events = []
+        state = {"get_calls": 0, "read_calls": 0}
+        driver._trace_callback = events.append
+        driver._trace_context = {}
+        driver._trace_metadata = {}
+        driver.description = None
+        driver.usb_serial = None
+
+        def get_wavelength(wavelength, index, count):
+            state["get_calls"] += 1
+            if state["get_calls"] == 2:
+                raise RuntimeError("verification query failed")
+            wavelength._obj.value = 1310
+            index._obj.value = 0
+            count._obj.value = 2
+            return 1
+
+        driver.get_wavelength = get_wavelength
+        driver.set_wavelength = lambda _wavelength: 1
+        driver.source_on = lambda _source_id, _state: 1
+        driver.read_power = lambda _power: state.update(read_calls=state["read_calls"] + 1) or 1
+
+        with patch("op815_driver.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "verification query failed"):
+                driver.measure_wavelength(
+                    1310,
+                    wavelength_settling_seconds=0,
+                    source_settling_seconds=0,
+                    source_off_settling_seconds=0,
+                    verify_before_read=True,
+                )
+
+        self.assertEqual(state["read_calls"], 0)
+        verification = [
+            event for event in events if event["event"] == "verified_before_read"
+        ]
+        self.assertEqual(len(verification), 1)
+        self.assertEqual(verification[0]["status"], "error")
+        self.assertIn("verification query failed", verification[0]["error"])
 
     def test_close_leaves_remote_mode_even_when_source_shutdown_fails(self):
         driver = OP815.__new__(OP815)

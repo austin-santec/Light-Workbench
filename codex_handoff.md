@@ -21,11 +21,18 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current user-facing release is **Light Workbench 1.10.0**. The single
+The current user-facing release is **Light Workbench 1.10.2**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
 The main window exposes this through `Help > About`.
+
+Diagnostic history exports default to local-time filenames in the form
+`diagnostic-history-YYYYMMDD-HHMMSS.csv` or `.json`; automatically suggested
+names receive deterministic numeric collision suffixes. The OP815 diagnostic
+sequence performs a final `GetWavelength` verification after source settling
+and immediately before `ReadPower`. A mismatch or invalid wavelength report
+blocks the sample and leaves no history row.
 
 | File | Responsibility |
 | --- | --- |
@@ -172,25 +179,19 @@ short range.
     ordered full passes ask whether to continue sequentially from the selected
     channel or resume the interrupted channel. Existing saved data is preserved
     until a replacement is written.
-    As an optional one-step alternative, `Tools > Noah Mode` changes the Read
-    button/keybind to Read & Write IL: successful readings are committed
-    immediately and the worker advances; failed reads are not saved. The mode
-    requires confirmation, cannot be toggled during a run, defaults off, and
-    is not persisted between application sessions.
-8. `Tools > Live Write Mode` is an optional hardware-run workflow. After the
+7. `Tools > Live Write Mode` is an optional hardware-run workflow. After the
     worker routes each channel, it automatically emits complete IL readings
     after a 250 ms software pacing delay; the operator moves the cable to the
     shown channel while the values update. The UI keeps the newest value pending
     until `Write IL` is pressed; only then is it committed and the worker advances.
-    The mode has a red `LIVE` indicator, is mutually exclusive with Noah Mode,
-    is disabled while a run is active, and defaults on each application
-    session.
-9. On completion, stop, or hardware failure, the instruments are closed. Rows
+    The mode has a red `LIVE` indicator, is disabled while a run is active, and
+    defaults on each application session.
+8. On completion, stop, or hardware failure, the instruments are closed. Rows
    accepted before interruption remain persisted.
-10. Existing CSVs can be opened for analysis. The table highlights either
+9. Existing CSVs can be opened for analysis. The table highlights either
 wavelength over the warning limit and Select Over-Limit selects rows for
 retest.
-11. `Analyze Replacements` uses measured rows whose channel is above the
+10. `Analyze Replacements` uses measured rows whose channel is above the
 configured designed-channel count as extra physical-port candidates. It
 selects worthwhile replacements, adds displaced production ports back into the
 spare pool, then ranks the best remaining readings as designated spares. The
@@ -213,7 +214,7 @@ headerless tab-separated logical-channel, 1310 nm IL, and 1550 nm IL values
 for direct pasting into an existing Excel table. It ignores the table filter,
 excludes pending/live readings and metadata, and does not create or modify run
 files.
-12. COC export is available after a hardware completion, stop, or failure with
+11. COC export is available after a hardware completion, stop, or failure with
 a run, and from the controls/File menu. It accepts partial and over-limit data;
 missing logical channels stay blank. `infrastructure/coc_export.py` copies the bundled XLSX
 template and writes the `OSX Template` sheet's split rows, Part Number, Main

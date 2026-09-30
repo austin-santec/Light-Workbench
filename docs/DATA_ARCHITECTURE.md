@@ -49,7 +49,9 @@ Migration helpers reject newer versions instead of silently dropping fields.
   include the diagnostic session's in-memory hardware trace. CSV uses a
   companion `<history-stem>-hardware-trace.csv`; JSON adds a `hardware_trace`
   object. Trace events are investigative data only and are not part of run
-  persistence.
+  persistence. Automatically suggested diagnostic filenames use local time in
+  the form `diagnostic-history-YYYYMMDD-HHMMSS` with deterministic `-01`,
+  `-02`, and later suffixes when a same-second export already exists.
 - XLSX: COC/report output only; it is not the primary application database.
 - Replacement analysis: calculated presentation data.
 - Manually recorded replacements and spares: persistent device data.

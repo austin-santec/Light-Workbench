@@ -67,6 +67,18 @@ beside the history export, while JSON adds a `hardware_trace` collection.
 Trace callback failures are swallowed by the adapter so optional diagnostics
 cannot change measurement behavior.
 
+For each diagnostic wavelength, the OP815 sequence remains SetWavelength,
+wavelength settling, source enable, source settling, and ReadPower. The
+diagnostic path now inserts a final GetWavelength immediately after source
+settling and immediately before ReadPower. That verification records a
+`verified_before_read` trace event with the requested/actual wavelength,
+source state, and result. A wavelength mismatch, unsupported wavelength, or
+invalid index/count blocks ReadPower and therefore creates no diagnostic
+history row. The production wavelength order and settling constants are
+unchanged. This verification is explicitly enabled only by the diagnostics
+controller; normal runs, Live IL, and the main-run reference workflow keep
+their existing measurement sequence.
+
 Live IL and Red Light now use the same session boundary for their individual
 meter-only and switch-only lifecycles. Their dialogs receive injected factory
 callables, defaulting to `HardwareFactory` without binding vendor classes in

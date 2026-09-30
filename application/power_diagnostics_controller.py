@@ -24,6 +24,9 @@ class PowerDiagnosticsWorker(QObject):
         self.meter = meter
         self.hardware_session = OpticalTestSession(meter)
         self._finished = False
+        setter = getattr(self.meter, "set_diagnostic_verification", None)
+        if setter is not None:
+            setter(True)
 
     @pyqtSlot()
     def start(self):

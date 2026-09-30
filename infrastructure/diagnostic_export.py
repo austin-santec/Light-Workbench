@@ -56,6 +56,47 @@ DIAGNOSTIC_TRACE_CSV_COLUMNS = (
 )
 
 
+def timestamped_diagnostic_filename(extension=".csv", when=None):
+    """Return the default local-time filename for a diagnostic export."""
+    normalized_extension = str(extension)
+    if not normalized_extension.startswith("."):
+        normalized_extension = "." + normalized_extension
+    timestamp = (when or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    return "diagnostic-history-%s%s" % (timestamp, normalized_extension)
+
+
+def available_diagnostic_export_path(path, include_hardware_trace=False):
+    """Return ``path`` or the next deterministic suffix that avoids collision."""
+    destination = Path(path)
+
+    def is_available(candidate):
+        if candidate.exists():
+            return False
+        if include_hardware_trace:
+            trace_destination = candidate.with_name(
+                "%s-hardware-trace.csv" % candidate.stem
+            )
+            if trace_destination.exists():
+                return False
+        return True
+
+    if is_available(destination):
+        return destination
+
+    suffix_number = 1
+    while True:
+        candidate = destination.with_name(
+            "%s-%02d%s" % (
+                destination.stem,
+                suffix_number,
+                destination.suffix,
+            )
+        )
+        if is_available(candidate):
+            return candidate
+        suffix_number += 1
+
+
 def _csv_row(reading: DiagnosticReading) -> dict[str, object]:
     """Return stable, human-readable export fields for one reading."""
     return {
@@ -243,5 +284,7 @@ def export_diagnostic_history(
 __all__ = [
     "DIAGNOSTIC_CSV_COLUMNS",
     "DIAGNOSTIC_TRACE_CSV_COLUMNS",
+    "available_diagnostic_export_path",
     "export_diagnostic_history",
+    "timestamped_diagnostic_filename",
 ]

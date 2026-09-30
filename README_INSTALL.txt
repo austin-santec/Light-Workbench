@@ -64,7 +64,7 @@ instructions. It is a self-contained guide and does not require internet access.
 No Python installation is needed.
 
 Use Help > About inside the application to view the current
-version and project capabilities. The current release is Light Workbench 1.10.0.
+version and project capabilities. The current release is Light Workbench 1.10.2.
 
 
 3. VERIFY VISA
@@ -155,6 +155,13 @@ CSV also creates a companion `<history-stem>-hardware-trace.csv`; JSON adds a
 `hardware_trace` object containing the in-memory OP815 command trace. This is
 an explicit diagnostic export and does not modify the active switch-test run
 or its CSV/JSON files.
+
+Diagnostic export names default to the local date and time, for example
+`diagnostic-history-20260930-110405.csv`. Automatically suggested names use a
+`-01`, `-02`, and later suffix when needed to avoid overwriting an export from
+the same second. Before each diagnostic power read, the application verifies
+the final instrument wavelength again after source settling; failed or
+unexpected verification prevents that sample from being recorded.
 
 Variation Analysis appears to the right of the history table. Use Hide
 Variation Analysis or Show Variation Analysis to collapse or restore it; the

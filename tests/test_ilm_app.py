@@ -187,7 +187,6 @@ class MainWindowTests(unittest.TestCase):
                 "Red Light Test...",
                 "Live IL Reading...",
                 "Power Measurement Diagnostics...",
-                "Noah Mode",
                 "Live Write Mode",
                 "Dark Mode",
             ],
@@ -797,56 +796,6 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(window.write_hardware_button.shortcut_label.text(), "[Ctrl+W]")
         window.close()
 
-    def test_noah_mode_is_session_only_and_updates_controls_and_keybinds(self):
-        window = MainWindow()
-        try:
-            window.toggle_live_write_mode(False)
-            self.assertFalse(window.noah_mode_enabled)
-            self.assertFalse(window.noah_mode_action.isChecked())
-            self.assertEqual(window.continue_hardware_button.title_label.text(), "Read IL")
-            self.assertTrue(window.write_shortcut.isEnabled())
-
-            with patch(
-                "ilm_app.QMessageBox.question",
-                return_value=QMessageBox.Yes,
-            ) as confirm:
-                window.noah_mode_action.trigger()
-
-            confirm.assert_called_once()
-            self.assertTrue(window.noah_mode_enabled)
-            self.assertTrue(window.noah_mode_action.isChecked())
-            self.assertEqual(
-                window.continue_hardware_button.title_label.text(),
-                "Read & Write IL",
-            )
-            self.assertFalse(window.write_shortcut.isEnabled())
-            self.assertFalse(window.write_hardware_button.isEnabled())
-
-            window.noah_mode_action.trigger()
-            self.assertFalse(window.noah_mode_enabled)
-            self.assertFalse(window.noah_mode_action.isChecked())
-            self.assertEqual(window.continue_hardware_button.title_label.text(), "Read IL")
-            self.assertTrue(window.write_shortcut.isEnabled())
-        finally:
-            window.close()
-
-    def test_noah_mode_cancellation_leaves_normal_mode_active(self):
-        window = MainWindow()
-        try:
-            window.toggle_live_write_mode(False)
-            with patch(
-                "ilm_app.QMessageBox.question",
-                return_value=QMessageBox.No,
-            ):
-                window.noah_mode_action.trigger()
-
-            self.assertFalse(window.noah_mode_enabled)
-            self.assertFalse(window.noah_mode_action.isChecked())
-            self.assertEqual(window.continue_hardware_button.title_label.text(), "Read IL")
-            self.assertTrue(window.write_shortcut.isEnabled())
-        finally:
-            window.close()
-
     def test_live_write_mode_is_confirmed_and_updates_the_reading_controls(self):
         window = MainWindow()
         try:
@@ -917,56 +866,6 @@ class MainWindowTests(unittest.TestCase):
             self.assertEqual(worker_calls, ["write"])
             window.scroll_to_channel.assert_called_once_with(7)
         finally:
-            window.close()
-
-    def test_noah_mode_commits_successful_read_and_advances_worker(self):
-        window = MainWindow()
-        try:
-            window.toggle_live_write_mode(False)
-            window.run_data = RunData(Path("test-run"), [], {})
-            recorder = MagicMock()
-            recorder.attempts = []
-            window.run_recorder = recorder
-            worker_calls = []
-            worker = type("FakeWorker", (), {})()
-            worker.write_current = lambda: worker_calls.append("write")
-            window.hardware_worker = worker
-            window.scroll_to_channel = lambda _channel: None
-
-            with patch(
-                "ilm_app.QMessageBox.question",
-                return_value=QMessageBox.Yes,
-            ):
-                window.toggle_noah_mode(True)
-
-            window.hardware_operator_required(7, 49)
-            window.hardware_reading_ready(7, 49, 1.2, 1.3)
-
-            self.assertEqual(
-                [(item.channel, item.physical_port, item.loss_1310, item.loss_1550)
-                 for item in window.run_data.measurements],
-                [(7, 49, 1.2, 1.3)],
-            )
-            recorder.record_attempt.assert_not_called()
-            recorder.save.assert_called()
-            self.assertEqual(worker_calls, ["write"])
-            self.assertIsNone(window.hardware_pending_reading)
-            self.assertFalse(window.write_hardware_button.isEnabled())
-            self.assertFalse(window.continue_hardware_button.isEnabled())
-        finally:
-            window.close()
-
-    def test_noah_mode_cannot_be_changed_during_a_hardware_run(self):
-        window = MainWindow()
-        try:
-            window.hardware_thread = object()
-            window.noah_mode_action.setChecked(True)
-            window.toggle_noah_mode(True)
-
-            self.assertFalse(window.noah_mode_enabled)
-            self.assertFalse(window.noah_mode_action.isChecked())
-        finally:
-            window.hardware_thread = None
             window.close()
 
     def test_reference_controls_use_two_decimals_and_point_zero_one_steps(self):

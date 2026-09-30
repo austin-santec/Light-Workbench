@@ -43,7 +43,11 @@ from domain.diagnostic_analysis import (
     analyze_diagnostic_readings,
 )
 from hardware.factory import HardwareFactory
-from infrastructure.diagnostic_export import export_diagnostic_history
+from infrastructure.diagnostic_export import (
+    available_diagnostic_export_path,
+    export_diagnostic_history,
+    timestamped_diagnostic_filename,
+)
 
 
 class DiagnosticExportOptionsDialog(QDialog):
@@ -823,10 +827,11 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
             )
             return
 
+        suggested_name = timestamped_diagnostic_filename()
         path, selected_filter = QFileDialog.getSaveFileName(
             self,
             "Export Diagnostic History",
-            "diagnostic-history.csv",
+            suggested_name,
             "CSV Files (*.csv);;JSON Files (*.json)",
         )
         if not path:
@@ -840,6 +845,15 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         include_trace = self._ask_trace_export()
         if include_trace is None:
             return
+
+        # Automatically generated timestamped names must not overwrite an
+        # export from the same second.  Deliberately edited filenames retain
+        # the existing save behavior.
+        if destination.stem == Path(suggested_name).stem:
+            destination = available_diagnostic_export_path(
+                destination,
+                include_hardware_trace=include_trace,
+            )
 
         try:
             export_diagnostic_history(

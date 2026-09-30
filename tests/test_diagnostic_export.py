@@ -2,11 +2,16 @@ import csv
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from domain.diagnostic_analysis import DiagnosticReading, MANUAL_METHOD
 from domain.diagnostic_trace import DiagnosticTraceEvent
-from infrastructure.diagnostic_export import export_diagnostic_history
+from infrastructure.diagnostic_export import (
+    available_diagnostic_export_path,
+    export_diagnostic_history,
+    timestamped_diagnostic_filename,
+)
 
 
 def sample_reading():
@@ -26,6 +31,36 @@ def sample_reading():
 
 
 class DiagnosticExportTests(unittest.TestCase):
+    def test_timestamped_default_filename_uses_local_timestamp(self):
+        timestamp = datetime(2026, 9, 30, 11, 4, 5)
+
+        self.assertEqual(
+            timestamped_diagnostic_filename("csv", timestamp),
+            "diagnostic-history-20260930-110405.csv",
+        )
+
+    def test_timestamped_filename_avoids_history_and_trace_collisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "diagnostic-history-20260930-110405.csv"
+            base_trace = base.with_name("%s-hardware-trace.csv" % base.stem)
+            first_collision = base.with_name(
+                "%s-01%s" % (base.stem, base.suffix)
+            )
+            first_trace = first_collision.with_name(
+                "%s-hardware-trace.csv" % first_collision.stem
+            )
+            base.touch()
+            base_trace.touch()
+            first_collision.touch()
+            first_trace.touch()
+
+            available = available_diagnostic_export_path(
+                base,
+                include_hardware_trace=True,
+            )
+
+        self.assertEqual(available.name, "diagnostic-history-20260930-110405-02.csv")
+
     def test_exports_complete_history_to_csv(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "diagnostic.csv"

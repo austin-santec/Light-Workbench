@@ -483,9 +483,8 @@ class MainWindow(QMainWindow):
             self._reference_calculation_ready
         )
         self.reference_controller.failed.connect(self._reference_calculation_failed)
-        # Noah Mode is deliberately session-only and defaults off. Live Write
-        # Mode is also session-only, but is the normal first-launch workflow.
-        self.noah_mode_enabled = False
+        # Live Write Mode is session-only and is the normal first-launch
+        # workflow.
         self.live_write_mode_enabled = True
         self.reference_progress = None
         self.run_recorder = None
@@ -648,11 +647,6 @@ class MainWindow(QMainWindow):
             self.show_power_measurement_diagnostics
         )
         tools_menu.addAction(power_diagnostics_action)
-        self.noah_mode_action = QAction("Noah Mode", self)
-        self.noah_mode_action.setCheckable(True)
-        self.noah_mode_action.setChecked(False)
-        self.noah_mode_action.triggered.connect(self.toggle_noah_mode)
-        tools_menu.addAction(self.noah_mode_action)
         self.live_write_mode_action = QAction("Live Write Mode", self)
         self.live_write_mode_action.setCheckable(True)
         self.live_write_mode_action.setChecked(self.live_write_mode_enabled)
@@ -1164,78 +1158,23 @@ class MainWindow(QMainWindow):
             "Dark mode enabled." if self.dark_mode_enabled else "Light mode enabled."
         )
 
-    def toggle_noah_mode(self, enabled):
-        """Enable one-step read-and-save behavior for hardware IL runs."""
-        enabled = bool(enabled)
-        if self.hardware_run_active:
-            self.noah_mode_action.setChecked(self.noah_mode_enabled)
-            self.statusBar().showMessage(
-                "Noah Mode cannot be changed during an active hardware run."
-            )
-            return
-        if enabled and self.live_write_mode_enabled:
-            self.noah_mode_action.setChecked(False)
-            QMessageBox.warning(
-                self,
-                "Noah Mode unavailable",
-                "Turn off Live Write Mode before enabling Noah Mode.",
-            )
-            return
-
-        if enabled:
-            confirmation = QMessageBox.question(
-                self,
-                "Enable Noah Mode?",
-                "Each successful IL reading will be written to the run "
-                "immediately, without a review or reread step first. "
-                "You can repeat a channel later, but its new reading will "
-                "replace the current table value.\n\n"
-                "Noah Mode will turn off when Light Workbench closes.",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if confirmation != QMessageBox.Yes:
-                self.noah_mode_action.setChecked(False)
-                return
-
-        self.noah_mode_enabled = enabled
-        self._apply_noah_mode_controls()
-        self.statusBar().showMessage(
-            "Noah Mode enabled: successful readings save automatically."
-            if enabled
-            else "Noah Mode disabled: Read IL and Write IL are separate steps."
-        )
-
-    def _apply_noah_mode_controls(self):
+    def _apply_run_mode_controls(self):
         """Update button and shortcut labels for the current session mode."""
-        if hasattr(self, "noah_mode_action"):
-            self.noah_mode_action.setChecked(self.noah_mode_enabled)
         if hasattr(self, "live_write_mode_action"):
             self.live_write_mode_action.setChecked(self.live_write_mode_enabled)
         if hasattr(self, "continue_hardware_button"):
-            if self.noah_mode_enabled:
-                title = "Read & Write IL"
-            elif self.live_write_mode_enabled:
-                title = "Live Reading"
-            else:
-                title = "Read IL"
+            title = "Live Reading" if self.live_write_mode_enabled else "Read IL"
             self.continue_hardware_button.title_label.setText(title)
             self.continue_hardware_button.setAccessibleName(title)
             self.continue_hardware_button.setToolTip(
-                "Read both wavelengths and save the result automatically."
-                if self.noah_mode_enabled
-                else (
-                    "Start continuous IL updates for the current channel; "
-                    "updates begin automatically when the channel is routed. "
-                    "Use Write IL when the reading is ready."
-                    if self.live_write_mode_enabled
-                    else "Read both wavelengths for the current channel."
-                )
+                "Start continuous IL updates for the current channel; "
+                "updates begin automatically when the channel is routed. "
+                "Use Write IL when the reading is ready."
+                if self.live_write_mode_enabled
+                else "Read both wavelengths for the current channel."
             )
         if hasattr(self, "write_shortcut") and self.write_shortcut is not None:
-            self.write_shortcut.setEnabled(not self.noah_mode_enabled)
-        if self.noah_mode_enabled and hasattr(self, "write_hardware_button"):
-            self.write_hardware_button.setEnabled(False)
+            self.write_shortcut.setEnabled(True)
 
     def toggle_live_write_mode(self, enabled):
         """Enable continuous IL updates until the operator writes a reading."""
@@ -1244,14 +1183,6 @@ class MainWindow(QMainWindow):
             self.live_write_mode_action.setChecked(self.live_write_mode_enabled)
             self.statusBar().showMessage(
                 "Live Write Mode cannot be changed during an active hardware run."
-            )
-            return
-        if enabled and self.noah_mode_enabled:
-            self.live_write_mode_action.setChecked(False)
-            QMessageBox.warning(
-                self,
-                "Live Write Mode unavailable",
-                "Turn off Noah Mode before enabling Live Write Mode.",
             )
             return
         if enabled:
@@ -1269,7 +1200,7 @@ class MainWindow(QMainWindow):
                 self.live_write_mode_action.setChecked(False)
                 return
         self.live_write_mode_enabled = enabled
-        self._apply_noah_mode_controls()
+        self._apply_run_mode_controls()
         self.statusBar().showMessage(
             "Live Write Mode enabled: live readings start automatically; write when ready."
             if enabled
@@ -2461,7 +2392,6 @@ class MainWindow(QMainWindow):
             return
         self.hardware_thread = self.hardware_controller.thread
         self.hardware_worker = self.hardware_controller.worker
-        self.noah_mode_action.setEnabled(False)
         self.live_write_mode_action.setEnabled(False)
         self.start_hardware_button.setEnabled(False)
         self.stop_hardware_button.setEnabled(True)
@@ -2733,8 +2663,6 @@ class MainWindow(QMainWindow):
                 self._hardware_command("read_current")
 
     def write_hardware(self):
-        if self.noah_mode_enabled:
-            return
         self._commit_and_advance_hardware()
 
     def _commit_and_advance_hardware(self):
@@ -2750,10 +2678,7 @@ class MainWindow(QMainWindow):
                 "The reading was not committed to the run:\n%s\n\n"
                 "Correct the storage problem and take the reading again." % error,
             )
-            if self.noah_mode_enabled:
-                self.continue_hardware_button.setEnabled(True)
-            else:
-                self.write_hardware_button.setEnabled(True)
+            self.write_hardware_button.setEnabled(True)
             return False
         if not committed:
             return False
@@ -2874,7 +2799,7 @@ class MainWindow(QMainWindow):
         )
         self.write_shortcut.setContext(Qt.ApplicationShortcut)
         self.write_shortcut.activated.connect(self.write_hardware)
-        self.write_shortcut.setEnabled(not self.noah_mode_enabled)
+        self.write_shortcut.setEnabled(True)
         self.settings.setValue(
             "continue_key",
             self.continue_shortcut.key().toString(),
@@ -2885,7 +2810,7 @@ class MainWindow(QMainWindow):
         )
         self.continue_hardware_button.set_shortcut(self.continue_shortcut.key())
         self.write_hardware_button.set_shortcut(self.write_shortcut.key())
-        self._apply_noah_mode_controls()
+        self._apply_run_mode_controls()
 
     def hardware_reading_ready(self, channel, _physical_port, loss_1310, loss_1550):
         self.hardware_session.set_pending_reading(
@@ -2901,19 +2826,13 @@ class MainWindow(QMainWindow):
         self.demo_1310_label.setText("1310 nm: %.4f dB" % loss_1310)
         self.demo_1550_label.setText("1550 nm: %.4f dB" % loss_1550)
         self.continue_hardware_button.setEnabled(not self.live_write_mode_enabled)
-        self.write_hardware_button.setEnabled(not self.noah_mode_enabled)
+        self.write_hardware_button.setEnabled(True)
         self.change_hardware_channel_button.setEnabled(True)
         self.hardware_live_indicator.setVisible(self.live_write_mode_enabled)
         self.demo_channel_label.setText(
-            (
-                "Channel %d measured - saving automatically" % channel
-                if self.noah_mode_enabled
-                else (
-                    "Channel %d live reading - write when ready" % channel
-                    if self.live_write_mode_enabled
-                    else "Channel %d measured - read again or write values" % channel
-                )
-            )
+            "Channel %d live reading - write when ready" % channel
+            if self.live_write_mode_enabled
+            else "Channel %d measured - read again or write values" % channel
         )
         self.refresh_table()
         # In Live Write Mode the table may receive many readings before the
@@ -2921,9 +2840,6 @@ class MainWindow(QMainWindow):
         # until Write IL commits the pending reading.
         if not self.live_write_mode_enabled:
             self.scroll_to_channel(channel)
-        if self.noah_mode_enabled:
-            self._commit_and_advance_hardware()
-
     def hardware_progress_changed(self, current, total):
         if self.hardware_manual_channel_order:
             self.demo_channel_label.setText(
@@ -2988,7 +2904,6 @@ class MainWindow(QMainWindow):
         if finished_thread is not None:
             finished_thread.deleteLater()
         self.start_hardware_button.setEnabled(True)
-        self.noah_mode_action.setEnabled(True)
         self.live_write_mode_action.setEnabled(True)
         self.hardware_live_indicator.setVisible(False)
         self.change_hardware_channel_button.setEnabled(False)

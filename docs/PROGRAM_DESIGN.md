@@ -71,7 +71,11 @@ The operator may optionally include the in-memory OP815 hardware trace. CSV
 exports write a companion `<history-stem>-hardware-trace.csv`; JSON exports
 add a `hardware_trace` object containing session metadata and chronological
 events. The trace is linked to each complete history reading by measurement ID
-and is never collected or written by normal production runs.
+and is never collected or written by normal production runs. Automatically
+suggested filenames use local time and deterministic numeric collision suffixes.
+The diagnostic hardware sequence performs a final `GetWavelength` verification
+after source settling and immediately before `ReadPower`; an unexpected or
+invalid result blocks that sample.
 
 `domain/reference.py` owns the zero-reference-to-offset conversion. Live IL,
 reference calculation, simulation, and hardware workflows can therefore share

@@ -49,6 +49,12 @@ class SantecPowerMeter:
         if setter is not None:
             setter(**metadata)
 
+    def set_diagnostic_verification(self, enabled):
+        """Enable final wavelength checks for Power Measurement Diagnostics."""
+        setter = getattr(self._driver, "set_diagnostic_verification", None)
+        if setter is not None:
+            setter(enabled)
+
     def measure_both_wavelengths(self):
         return self._driver.measure_both_wavelengths()
 

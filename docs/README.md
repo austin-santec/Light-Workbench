@@ -42,6 +42,12 @@ statistics. Diagnostic history can be explicitly exported as CSV or JSON with
 an optional in-memory OP815 hardware trace; this trace is never part of normal
 run persistence.
 
+Diagnostic history exports use local-time names in the form
+`diagnostic-history-YYYYMMDD-HHMMSS.csv` or `.json`, with deterministic numeric
+collision suffixes for automatically suggested names. The OP815 adapter also
+performs a final wavelength verification immediately before `ReadPower`; a
+failed verification blocks the diagnostic sample.
+
 ## Required reading before code changes
 
 Before modifying code, review:
