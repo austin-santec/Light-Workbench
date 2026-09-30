@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current user-facing release is **Light Workbench 1.10.2**. The single
+The current user-facing release is **Light Workbench 1.11.2**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -60,7 +60,9 @@ blocks the sample and leaves no history row.
 | infrastructure/unit_persistence.py | Atomic unit JSON records and numbered-run paths; root `unit_persistence.py` is a compatibility facade. |
 | infrastructure/coc_export.py | COC template lookup, XLSX writing, and drawing preservation; root `coc_export.py` is a compatibility facade. |
 | op815_driver.py | ctypes wrapper around the 32-bit OP815M.dll. Owns DLL discovery, function signatures, device selection, source control, wavelength selection, measurements, and cleanup. |
-| hardware/optical_switch.py | PyVISA/SCPI adapter for USB OSX-150 discovery, logical channel routing, configured-channel count, and physical-port reporting. |
+| hardware/optical_switch.py | Extensible Santec switch identity registry and verified OSX-150 PyVISA/SCPI adapter. |
+| hardware/device_identity.py | Compatibility-safe identity reporting for hardware adapters. |
+| ui/hardware_status.py | Compact Connected hardware status panel presented in the main header. |
 | osx150_driver.py | Compatibility facade for the OSX-150 hardware adapter. |
 | ui/red_light_test.py | Separate VFL pre-test dialog. Tools > Red Light Test opens it without connecting; its Start button connects and routes channels without creating readings or run/COC data. |
 | red_light_test.py | Compatibility facade for the Red Light presentation module. |
@@ -165,7 +167,8 @@ short range.
    window. Reference calibration uses a dedicated stabilized timing profile
    and does not slow normal production measurements.
 4. Choose Start Real Hardware and confirm the warning dialog.
-5. The worker connects to the OSX-150 and OP815, routes a logical channel, and
+5. The worker connects to the selected supported switch and OP815, reports its
+   identity and lifecycle state, routes a logical channel, and
    emits operator_required(channel, physical_port).
 6. The operator moves the cable and chooses Read IL Values. The worker
    measures both wavelengths and emits reading_ready(channel, physical_port,
@@ -278,6 +281,11 @@ off, measures 1310 then 1550, turns each source off in a finally block, and
 restores the original detector wavelength. Current settling constants are
 0.1 s wavelength, 0.5 s source-on, and 0.1 s source-off. Do not change source
 IDs, DLL signatures, or timing assumptions without a hardware validation plan.
+The actual wavelength returned by `GetWavelength` is safety-critical. A correct
+actual wavelength is not rejected solely because the DLL's index/count
+convention differs from the assumed zero-based mapping; diagnostics retain that
+discrepancy as a trace warning with the raw values. A wrong or unsupported
+actual wavelength still blocks `ReadPower`.
 
 ### OSX-150
 

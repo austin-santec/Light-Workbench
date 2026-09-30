@@ -31,7 +31,19 @@ class DiagnosticTraceRecorder:
         try:
             metadata_values = {
                 key: values[key]
-                for key in ("meter_description", "meter_serial")
+                for key in (
+                    "meter_description",
+                    "meter_serial",
+                    "meter_manufacturer",
+                    "meter_model",
+                    "meter_raw_identity",
+                    "meter_resource_address",
+                    "switch_manufacturer",
+                    "switch_model",
+                    "switch_serial",
+                    "switch_raw_identity",
+                    "switch_resource_address",
+                )
                 if values.get(key) not in (None, "")
             }
             if metadata_values:

@@ -202,6 +202,7 @@ imports:
  &#8226;   <a href="#tools.dependency_check">tools.dependency_check</a>
  &#8226;   <a href="#traceback">traceback</a>
  &#8226;   <a href="#types">types</a>
+ &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
@@ -437,6 +438,7 @@ imported by:
     <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
  &#8226;   <a href="#PyQt5.QtGui">PyQt5.QtGui</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
@@ -1608,6 +1610,8 @@ imports:
  &#8226;   <a href="#application.timing">application.timing</a>
  &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#hardware.device_identity">hardware.device_identity</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#hardware.session">hardware.session</a>
  &#8226;   <a href="#threading">threading</a>
@@ -3699,6 +3703,7 @@ imported by:
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
  &#8226;   <a href="#domain.reporting">domain.reporting</a>
  &#8226;   <a href="#domain.run_data">domain.run_data</a>
+ &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
  &#8226;   <a href="#pprint">pprint</a>
  &#8226;   <a href="#pyvisa.rname">pyvisa.rname</a>
@@ -3933,6 +3938,7 @@ imports:
 imported by:
     <a href="#application.hardware_planning">application.hardware_planning</a>
  &#8226;   <a href="#application.live_controller">application.live_controller</a>
+ &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
  &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
  &#8226;   <a href="#application.run_controller">application.run_controller</a>
  &#8226;   <a href="#domain">domain</a>
@@ -3940,9 +3946,16 @@ imported by:
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.reporting">domain.reporting</a>
  &#8226;   <a href="#domain.run_data">domain.run_data</a>
+ &#8226;   <a href="#hardware.device_identity">hardware.device_identity</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
+ &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
+ &#8226;   <a href="#hardware.power_meter">hardware.power_meter</a>
  &#8226;   <a href="#infrastructure.csv_run_loader">infrastructure.csv_run_loader</a>
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
+ &#8226;   <a href="#op815_driver">op815_driver</a>
  &#8226;   <a href="#run_data">run_data</a>
+ &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
+ &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
 
   </div>
 
@@ -7474,12 +7487,31 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#hardware.factory">hardware.factory</a>
+    <a href="#hardware.device_identity">hardware.device_identity</a>
+ &#8226;   <a href="#hardware.factory">hardware.factory</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
  &#8226;   <a href="#hardware.power_meter">hardware.power_meter</a>
  &#8226;   <a href="#hardware.session">hardware.session</a>
  &#8226;   <a href="#hardware.simulated">hardware.simulated</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="hardware.device_identity"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/hardware/device_identity.py" type="text/plain"><tt>hardware.device_identity</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#hardware">hardware</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application.measurement_worker">application.measurement_worker</a>
+ &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
 
   </div>
 
@@ -7516,6 +7548,7 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#hardware">hardware</a>
  &#8226;   <a href="#typing">typing</a>
 
@@ -7543,8 +7576,11 @@ imported by:
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/hardware/optical_switch.py" type="text/plain"><tt>hardware.optical_switch</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#hardware">hardware</a>
+    <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#hardware">hardware</a>
  &#8226;   <a href="#pyvisa">pyvisa</a>
+ &#8226;   <a href="#re">re</a>
  &#8226;   <a href="#time">time</a>
 
   </div>
@@ -7564,6 +7600,7 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#hardware">hardware</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#op815_driver">op815_driver</a>
@@ -9906,6 +9943,7 @@ imported by:
 imports:
     <a href="#ctypes">ctypes</a>
  &#8226;   <a href="#datetime">datetime</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#pathlib">pathlib</a>
  &#8226;   <a href="#struct">struct</a>
  &#8226;   <a href="#time">time</a>
@@ -15978,6 +16016,7 @@ imported by:
  &#8226;   <a href="#fractions">fractions</a>
  &#8226;   <a href="#ftplib">ftplib</a>
  &#8226;   <a href="#gettext">gettext</a>
+ &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
  &#8226;   <a href="#http.client">http.client</a>
  &#8226;   <a href="#http.cookiejar">http.cookiejar</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
@@ -17290,9 +17329,28 @@ imported by:
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/ui/__init__.py" type="text/plain"><tt>ui</tt></a>
 <span class="moduletype">Package</span>  <div class="import">
 imported by:
-    <a href="#ui.live_il_reading">ui.live_il_reading</a>
+    <a href="#ui.hardware_status">ui.hardware_status</a>
+ &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ui.hardware_status"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/ui/hardware_status.py" type="text/plain"><tt>ui.hardware_status</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#ui">ui</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
 
   </div>
 
@@ -17336,6 +17394,8 @@ imports:
  &#8226;   <a href="#config.app_info">config.app_info</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain.diagnostic_analysis">domain.diagnostic_analysis</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#hardware.device_identity">hardware.device_identity</a>
  &#8226;   <a href="#hardware.factory">hardware.factory</a>
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
  &#8226;   <a href="#pathlib">pathlib</a>

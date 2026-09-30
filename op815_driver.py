@@ -14,6 +14,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from domain.models import ConnectionState, DeviceCategory, DeviceInfo
+
 
 # The two physical laser sources installed in this ILM.  The DLL numbers the
 # sources from zero even though users identify them by wavelength.
@@ -114,6 +116,22 @@ class OP815:
     def set_trace_callback(self, callback):
         """Set an optional callback for non-invasive diagnostic events."""
         self._trace_callback = callback
+
+    def get_device_info(
+        self,
+        state=ConnectionState.DISCONNECTED,
+        error="",
+    ):
+        """Return the current OP815 identity for application status display."""
+        return DeviceInfo(
+            category=DeviceCategory.POWER_METER,
+            manufacturer="Santec",
+            model=self.description or "OP815",
+            serial_number=self.usb_serial or "",
+            raw_identity=self.description or "",
+            state=state,
+            error=error,
+        )
 
     def set_trace_context(self, **context):
         """Set context associated with the next hardware trace events."""
@@ -490,7 +508,7 @@ class OP815:
         wavelength_index,
         wavelength_count,
     ):
-        """Return a clear error when the instrument reports invalid state."""
+        """Return an error only when the actual wavelength is unsafe."""
         if actual_wavelength_nm not in WAVELENGTHS_NM:
             return "The ILM reported an unsupported wavelength."
         if actual_wavelength_nm != requested_wavelength_nm:
@@ -498,11 +516,35 @@ class OP815:
                 "Requested %d nm, but the ILM selected %d nm."
                 % (requested_wavelength_nm, actual_wavelength_nm)
             )
+        return None
+
+    @staticmethod
+    def _wavelength_metadata_warning(
+        requested_wavelength_nm,
+        wavelength_index,
+        wavelength_count,
+    ):
+        """Describe an index/count convention difference without blocking power.
+
+        The vendor DLL's index fields are diagnostic metadata.  The actual
+        wavelength is the safety-critical value because it identifies which
+        source was selected.  Keeping this distinction prevents a harmless
+        one-based or vendor-specific index convention from stopping a normal
+        production run.
+        """
         expected_index = WAVELENGTHS_NM.index(requested_wavelength_nm)
         if wavelength_count <= 0 or not 0 <= wavelength_index < wavelength_count:
-            return "The ILM reported an invalid wavelength index or count."
+            return (
+                "The ILM reported wavelength %d nm with index %d of %d; "
+                "the index/count metadata is outside the expected range."
+                % (requested_wavelength_nm, wavelength_index, wavelength_count)
+            )
         if wavelength_index != expected_index:
-            return "The ILM reported an inconsistent wavelength index."
+            return (
+                "The ILM reported wavelength %d nm with index %d of %d; "
+                "the index differs from the assumed zero-based mapping."
+                % (requested_wavelength_nm, wavelength_index, wavelength_count)
+            )
         return None
 
     def _verify_wavelength_before_read(self, wavelength_nm):
@@ -539,6 +581,11 @@ class OP815:
             )
             if error:
                 raise RuntimeError(error)
+            metadata_warning = self._wavelength_metadata_warning(
+                wavelength_nm,
+                wavelength_index,
+                wavelength_count,
+            )
         except Exception as error:
             self._trace(
                 "verified_before_read",
@@ -569,10 +616,13 @@ class OP815:
             wavelength_count=wavelength_count,
             source_id=source_id,
             source_enabled=True,
-            status="success",
+            status="warning" if metadata_warning else "success",
             status_code=1,
             elapsed_ms=(time.perf_counter() - verification_started) * 1000.0,
-            details="Final wavelength verification passed before ReadPower.",
+            details=(
+                metadata_warning
+                or "Final wavelength verification passed before ReadPower."
+            ),
         )
 
     def measure_wavelength(
@@ -633,11 +683,33 @@ class OP815:
                 operation="measure_wavelength",
                 requested_wavelength_nm=wavelength_nm,
                 actual_wavelength_nm=actual_wavelength,
+                wavelength_index=wavelength_index,
+                wavelength_count=wavelength_count,
                 status="error",
                 error=validation_error,
                 elapsed_ms=(time.perf_counter() - started) * 1000.0,
             )
             raise RuntimeError(validation_error)
+
+        metadata_warning = self._wavelength_metadata_warning(
+            wavelength_nm,
+            wavelength_index,
+            wavelength_count,
+        )
+        if metadata_warning:
+            self._trace(
+                "wavelength_metadata_warning",
+                operation="GetWavelength",
+                requested_wavelength_nm=wavelength_nm,
+                actual_wavelength_nm=actual_wavelength,
+                wavelength_index=wavelength_index,
+                wavelength_count=wavelength_count,
+                source_id=source_id,
+                source_enabled=False,
+                status="warning",
+                details=metadata_warning,
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            )
 
         self.set_source_state(source_id, True)
         self.set_trace_context(source_id=source_id, source_enabled=True)

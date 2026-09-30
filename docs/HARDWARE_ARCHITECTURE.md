@@ -25,9 +25,18 @@ active vendor session.
 
 `hardware/power_meter.py` contains the integrated Santec OP815 adapter and the
 hardware-free simulated meter. The vendor DLL wrapper remains in
-`op815_driver.py`. `hardware/optical_switch.py` contains the OSX-150
-PyVISA/SCPI adapter. The root `power_meter.py` and `osx150_driver.py` modules
-are compatibility facades.
+`op815_driver.py`. `hardware/optical_switch.py` contains the Santec switch
+identity parser and capability-profile registry. The verified OSX-150 profile
+currently supplies the PyVISA/SCPI commands; future models such as OSX-100 can
+be added only after their identity and command compatibility are verified. The
+root `power_meter.py` and `osx150_driver.py` modules are compatibility facades.
+
+`domain/models.py` owns the vendor-neutral `DeviceInfo`, `DeviceCategory`, and
+`ConnectionState` models. `hardware/device_identity.py` provides a fallback
+for older adapters and test doubles. The normal run worker reports Connecting,
+Connected, Disconnected, and Error transitions through the run controller;
+`ui/hardware_status.py` displays them with model and serial information. These
+are transient status values and are not added to the existing run file formats.
 
 `hardware/simulated.py` provides contract-compatible laser and switch
 implementations for hardware-free workflow tests. They are not used by the
@@ -64,6 +73,8 @@ logical/physical channel context. Each complete two-wavelength history sample
 and its trace events share a measurement ID. The trace is exported only when
 the operator selects `Include Hardware Trace`: CSV creates a companion file
 beside the history export, while JSON adds a `hardware_trace` collection.
+The trace session also includes detected meter and switch manufacturer, model,
+serial, raw identification string, and VISA resource address when available.
 Trace callback failures are swallowed by the adapter so optional diagnostics
 cannot change measurement behavior.
 
@@ -72,12 +83,14 @@ wavelength settling, source enable, source settling, and ReadPower. The
 diagnostic path now inserts a final GetWavelength immediately after source
 settling and immediately before ReadPower. That verification records a
 `verified_before_read` trace event with the requested/actual wavelength,
-source state, and result. A wavelength mismatch, unsupported wavelength, or
-invalid index/count blocks ReadPower and therefore creates no diagnostic
-history row. The production wavelength order and settling constants are
-unchanged. This verification is explicitly enabled only by the diagnostics
-controller; normal runs, Live IL, and the main-run reference workflow keep
-their existing measurement sequence.
+source state, and result. A wavelength mismatch or unsupported wavelength
+blocks ReadPower and therefore creates no diagnostic history row. If the
+actual wavelength is correct but the DLL's index/count convention differs from
+the assumed zero-based mapping, the trace records a warning with the raw
+values instead of treating the sample as a wrong-wavelength measurement.
+Normal production runs use the same actual-wavelength safety check but do not
+fail solely on an index/count convention difference. The production
+wavelength order and settling constants are unchanged.
 
 Live IL and Red Light now use the same session boundary for their individual
 meter-only and switch-only lifecycles. Their dialogs receive injected factory

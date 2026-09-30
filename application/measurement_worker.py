@@ -7,6 +7,8 @@ from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from domain.measurement import calculate_insertion_loss
+from domain.models import ConnectionState, DeviceCategory
+from hardware.device_identity import device_info_for
 from hardware.interfaces import OpticalSwitch, PowerMeter
 from hardware.session import OpticalTestSession
 
@@ -28,6 +30,7 @@ class MeasurementWorker(QObject):
     completed = pyqtSignal()
     stopped = pyqtSignal()
     failed = pyqtSignal(str)
+    device_status_changed = pyqtSignal(object)
 
     def __init__(
         self,
@@ -73,7 +76,9 @@ class MeasurementWorker(QObject):
         terminal_state = None
         terminal_message = None
         try:
+            self._emit_device_status(ConnectionState.CONNECTING)
             self.hardware_session.connect()
+            self._emit_device_status(ConnectionState.CONNECTED)
             configured_count = None
             if self.channels is not None:
                 channels = list(self.channels)
@@ -151,6 +156,13 @@ class MeasurementWorker(QObject):
                         cleanup_error,
                     )
 
+            final_state = (
+                ConnectionState.ERROR
+                if terminal_state == "failed"
+                else ConnectionState.DISCONNECTED
+            )
+            self._emit_device_status(final_state, terminal_message or "")
+
         # Terminal signals are intentionally emitted after the finally block
         # so the UI never starts thread shutdown while a device close is still
         # executing in the worker thread.
@@ -160,6 +172,25 @@ class MeasurementWorker(QObject):
             self.stopped.emit()
         elif terminal_state == "failed":
             self.failed.emit(terminal_message or "Hardware worker failed.")
+
+    def _emit_device_status(self, state, error=""):
+        """Publish transient identities without coupling the worker to Qt UI."""
+        self.device_status_changed.emit(
+            device_info_for(
+                self.power_meter,
+                DeviceCategory.POWER_METER,
+                state=state,
+                error=error,
+            )
+        )
+        self.device_status_changed.emit(
+            device_info_for(
+                self.switch,
+                DeviceCategory.OPTICAL_SWITCH,
+                state=state,
+                error=error,
+            )
+        )
 
     def _run_channels(self, channels, existing_channels=None, start_channel=None):
         """Run channels while allowing safe mid-run channel overrides."""

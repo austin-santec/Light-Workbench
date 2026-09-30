@@ -35,6 +35,7 @@ from application.diagnostic_trace import DiagnosticTraceRecorder
 from application.red_light_controller import RedLightTestController
 from application.timing import LIVE_UPDATE_PAUSE_MS
 from config.app_info import APP_VERSION
+from domain.models import ConnectionState, DeviceCategory
 from domain.diagnostic_analysis import (
     DiagnosticAnalysis,
     DiagnosticReading,
@@ -43,6 +44,7 @@ from domain.diagnostic_analysis import (
     analyze_diagnostic_readings,
 )
 from hardware.factory import HardwareFactory
+from hardware.device_identity import device_info_for
 from infrastructure.diagnostic_export import (
     available_diagnostic_export_path,
     export_diagnostic_history,
@@ -464,6 +466,15 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
     def _meter_connected(self, description):
         self.meter_connected = True
         self.trace_recorder.update_metadata(meter_description=description)
+        meter = getattr(self.meter_controller.worker, "meter", None)
+        if meter is not None:
+            self._record_trace_device_identity(
+                device_info_for(
+                    meter,
+                    DeviceCategory.POWER_METER,
+                    state=ConnectionState.CONNECTED,
+                )
+            )
         self.meter_status_label.setText(description)
         self.status_label.setText(
             "Meter connected. Read the current absolute power when ready."
@@ -735,11 +746,38 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
     def _switch_connected(self, channel_count):
         self.switch_connected = True
         self.channel_count = channel_count
+        switch = self.switch_controller.switch
+        if switch is not None:
+            self._record_trace_device_identity(
+                device_info_for(
+                    switch,
+                    DeviceCategory.OPTICAL_SWITCH,
+                    state=ConnectionState.CONNECTED,
+                )
+            )
         self.channel_spin.setRange(1, channel_count)
         self.switch_status_label.setText(
             "Connected. Select a logical channel and click Set Channel."
         )
         self._update_controls()
+
+    def _record_trace_device_identity(self, info):
+        """Keep optional diagnostic exports self-describing without persistence."""
+        prefix = {
+            DeviceCategory.POWER_METER: "meter",
+            DeviceCategory.OPTICAL_SWITCH: "switch",
+        }.get(info.category)
+        if prefix is None:
+            return
+        self.trace_recorder.update_metadata(
+            **{
+                "%s_manufacturer" % prefix: info.manufacturer,
+                "%s_model" % prefix: info.model,
+                "%s_serial" % prefix: info.serial_number,
+                "%s_raw_identity" % prefix: info.raw_identity,
+                "%s_resource_address" % prefix: info.resource_address,
+            }
+        )
 
     def set_channel(self):
         if not self.switch_connected or self.read_pending or self.monitoring_active:

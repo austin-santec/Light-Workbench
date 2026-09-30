@@ -3,6 +3,7 @@ import unittest
 from PyQt5.QtWidgets import QApplication
 
 from application.measurement_worker import MeasurementWorker as ApplicationMeasurementWorker
+from domain.models import ConnectionState, DeviceCategory
 from hardware.session import OpticalTestSession
 from measurement_worker import MeasurementWorker
 
@@ -110,6 +111,32 @@ class MeasurementWorkerTests(unittest.TestCase):
         worker.run()
 
         self.assertEqual(terminal_state, [(True, True)])
+
+    def test_device_status_lifecycle_reports_connect_and_disconnect(self):
+        worker = MeasurementWorker(
+            FakePowerMeter(),
+            FakeSwitch(),
+            [1],
+            {1310: 0.72, 1550: 0.28},
+        )
+        statuses = []
+        worker.device_status_changed.connect(statuses.append)
+        worker.operator_required.connect(lambda _channel, _port: worker.continue_current())
+        worker.reading_ready.connect(lambda *_values: worker.write_current())
+
+        worker.run()
+
+        self.assertEqual(
+            [(status.category, status.state) for status in statuses],
+            [
+                (DeviceCategory.POWER_METER, ConnectionState.CONNECTING),
+                (DeviceCategory.OPTICAL_SWITCH, ConnectionState.CONNECTING),
+                (DeviceCategory.POWER_METER, ConnectionState.CONNECTED),
+                (DeviceCategory.OPTICAL_SWITCH, ConnectionState.CONNECTED),
+                (DeviceCategory.POWER_METER, ConnectionState.DISCONNECTED),
+                (DeviceCategory.OPTICAL_SWITCH, ConnectionState.DISCONNECTED),
+            ],
+        )
 
     def test_stop_before_operator_continuation(self):
         meter = FakePowerMeter()

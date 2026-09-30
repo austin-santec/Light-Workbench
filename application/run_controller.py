@@ -47,6 +47,7 @@ class HardwareRunController(QObject):
     failed = pyqtSignal(str)
     thread_finished = pyqtSignal()
     state_changed = pyqtSignal(object)
+    device_status_changed = pyqtSignal(object)
 
     # These signals are connected to worker slots after the worker enters its
     # thread. Qt queues UI commands safely into the worker thread.
@@ -145,6 +146,7 @@ class HardwareRunController(QObject):
         worker.operator_required.connect(self._relay_operator_required)
         worker.reading_ready.connect(self._relay_reading_ready)
         worker.progress_changed.connect(self.progress_changed)
+        worker.device_status_changed.connect(self.device_status_changed)
         worker.completed.connect(self._worker_completed)
         worker.stopped.connect(self._worker_stopped)
         worker.failed.connect(self._worker_failed)

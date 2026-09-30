@@ -74,8 +74,10 @@ events. The trace is linked to each complete history reading by measurement ID
 and is never collected or written by normal production runs. Automatically
 suggested filenames use local time and deterministic numeric collision suffixes.
 The diagnostic hardware sequence performs a final `GetWavelength` verification
-after source settling and immediately before `ReadPower`; an unexpected or
-invalid result blocks that sample.
+after source settling and immediately before `ReadPower`; an unsupported or
+actual-wavelength mismatch blocks that sample. Index/count convention
+differences are retained as diagnostic warnings and do not stop a normal
+production run when the actual wavelength is correct.
 
 `domain/reference.py` owns the zero-reference-to-offset conversion. Live IL,
 reference calculation, simulation, and hardware workflows can therefore share
@@ -129,6 +131,16 @@ root `coc_export.py` module remains a compatibility facade, while
 and switch adapters. The current default remains the integrated Santec ILM and
 OSX-150, while a future OPM-plus-laser setup can be introduced without
 spreading vendor selection through the UI.
+
+`domain/models.py` defines transient vendor-neutral `DeviceInfo`,
+`DeviceCategory`, and `ConnectionState` values. Hardware adapters report those
+identities through the optional `DeviceIdentifiable` capability, the run
+controller relays lifecycle updates, and `ui/hardware_status.py` renders them
+in the compact Connected hardware panel in the main window header, keeping the
+hardware-controls layout focused on operator actions.
+Switch recognition uses adapter-owned capability profiles: only a model with a
+verified command profile is accepted, while unknown and recognized-but-
+unsupported models fail explicitly.
 
 `HardwareRunController.is_active` is the authoritative lifecycle check for a
 normal hardware run. The main window uses it for command routing, tool guards,

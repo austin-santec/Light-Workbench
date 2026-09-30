@@ -5,7 +5,7 @@ models provide a safer representation for new application code while the
 serialization migration happens incrementally.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from collections.abc import Mapping
 
@@ -49,6 +49,46 @@ class MeasurementStatus(str, Enum):
     READY_TO_WRITE = "ready_to_write"
     WRITTEN = "written"
     FAILED = "failed"
+
+
+class DeviceCategory(str, Enum):
+    """Vendor-neutral hardware categories shown to the operator."""
+
+    POWER_METER = "power_meter"
+    OPTICAL_SWITCH = "optical_switch"
+    LASER_SOURCE = "laser_source"
+
+
+class ConnectionState(str, Enum):
+    """Connection lifecycle states for one physical device."""
+
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class DeviceInfo:
+    """Identity and connection state reported by a hardware adapter.
+
+    This model is intentionally separate from run metadata.  It describes the
+    transient device currently connected to the workstation and is therefore
+    not written to CSV, JSON, or COC output.
+    """
+
+    category: DeviceCategory
+    manufacturer: str = ""
+    model: str = ""
+    serial_number: str = ""
+    raw_identity: str = ""
+    resource_address: str = ""
+    state: ConnectionState = ConnectionState.DISCONNECTED
+    error: str = ""
+
+    def with_state(self, state: ConnectionState, error: str = "") -> "DeviceInfo":
+        """Return this identity with an updated transient connection state."""
+        return replace(self, state=state, error=error)
 
 
 @dataclass(frozen=True)

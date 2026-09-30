@@ -64,7 +64,7 @@ instructions. It is a self-contained guide and does not require internet access.
 No Python installation is needed.
 
 Use Help > About inside the application to view the current
-version and project capabilities. The current release is Light Workbench 1.10.2.
+version and project capabilities. The current release is Light Workbench 1.11.2.
 
 
 3. VERIFY VISA
@@ -87,7 +87,10 @@ folder; install VISA through the approved vendor installer.
 
   1. Close Santec Terminal completely before starting the tester. It must not
      be holding the OSX-150 VISA connection. Check Task Manager if necessary.
-  2. Connect and power on the ILM/OP815 and OSX-150.
+  2. Connect and power on the ILM/OP815 and OSX-150. During a run, the compact
+     Connected hardware panel in the top header shows each device's connection
+     state, model, and serial number. Unknown or unverified switch models are rejected instead
+     of being treated as OSX-150 compatible.
   3. Start LightWorkbench.exe.
   4. Select Single channel and choose one channel for the first test.
   5. Enter the serial numbers. References start at 0.00 dBm until you click
@@ -160,8 +163,10 @@ Diagnostic export names default to the local date and time, for example
 `diagnostic-history-20260930-110405.csv`. Automatically suggested names use a
 `-01`, `-02`, and later suffix when needed to avoid overwriting an export from
 the same second. Before each diagnostic power read, the application verifies
-the final instrument wavelength again after source settling; failed or
-unexpected verification prevents that sample from being recorded.
+the final instrument wavelength again after source settling; an actual
+wavelength mismatch or unsupported wavelength prevents that sample from being
+recorded. Index/count convention differences are retained as diagnostic
+warnings when the actual wavelength is correct.
 
 Variation Analysis appears to the right of the history table. Use Hide
 Variation Analysis or Show Variation Analysis to collapse or restore it; the

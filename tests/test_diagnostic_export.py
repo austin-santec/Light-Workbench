@@ -120,6 +120,9 @@ class DiagnosticExportTests(unittest.TestCase):
                     "application_version": "1.10.0",
                     "meter_description": "OP815",
                     "meter_serial": "meter-1",
+                    "meter_model": "OP815",
+                    "switch_model": "OSX-150",
+                    "switch_serial": "switch-1",
                 },
             )
             trace_path = Path(directory) / "diagnostic-hardware-trace.csv"
@@ -129,6 +132,8 @@ class DiagnosticExportTests(unittest.TestCase):
         self.assertEqual(rows[0]["Measurement ID"], "1")
         self.assertEqual(rows[0]["Raw power (dBm)"], "-0.9400")
         self.assertEqual(rows[0]["Meter serial"], "meter-1")
+        self.assertEqual(rows[0]["Meter model"], "OP815")
+        self.assertEqual(rows[0]["Switch serial"], "switch-1")
 
     def test_json_adds_trace_without_changing_reading_shape(self):
         event = DiagnosticTraceEvent(

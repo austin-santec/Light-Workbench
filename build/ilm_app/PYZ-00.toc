@@ -408,6 +408,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\hardware\\__init__.py',
    'PYMODULE'),
+  ('hardware.device_identity',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\hardware\\device_identity.py',
+   'PYMODULE'),
   ('hardware.factory',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\hardware\\factory.py',
@@ -1373,6 +1377,10 @@
   ('ui',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\__init__.py',
+   'PYMODULE'),
+  ('ui.hardware_status',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\hardware_status.py',
    'PYMODULE'),
   ('ui.live_il_reading',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '

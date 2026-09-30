@@ -11,10 +11,10 @@ packages.
 ilm_app.py, ILMReadLoss.py       Application entry points
 application/                     Workflow controllers, measurement worker, reference lifecycle, run-start boundaries, and diagnostic trace recording
 config/                          Application paths and user-facing release metadata
-ui/                              Qt dialogs and presentation workers
+ui/                              Qt dialogs, status panels, and presentation workers
 tools/                           Optional dependency and environment diagnostics
 domain/                          Vendor-neutral models and business rules
-hardware/                        Hardware contracts, adapters, factories, and sessions
+hardware/                        Hardware contracts, identity, adapters, factories, and sessions
 infrastructure/                  File repositories, CSV/unit persistence, loaders, COC/diagnostic export, queries, and reports
 tests/                            Hardware-free automated tests
 ```
@@ -48,6 +48,8 @@ be used as source locations. The release scripts keep deployment output in
 - Calculations, validation, and rules that do not need Qt or hardware:
   `domain/`.
 - Vendor-neutral contracts and composed hardware lifecycle: `hardware/`.
+- Hardware identity/status presentation: `hardware/device_identity.py` and
+  `ui/hardware_status.py`.
 - CSV/JSON/XLSX/filesystem and future storage adapters: `infrastructure/`.
 - Compatibility behavior for older callers: existing root-level facades.
 - Packaging and deployment behavior: `ilm_app.spec` and the PowerShell release

@@ -1,10 +1,24 @@
 import unittest
 from unittest.mock import patch
 
+from domain.models import ConnectionState, DeviceCategory
 from op815_driver import OP815
 
 
 class OP815CleanupTests(unittest.TestCase):
+    def test_identity_exposes_detected_description_and_serial(self):
+        driver = OP815.__new__(OP815)
+        driver.description = "OP815"
+        driver.usb_serial = "ILM-1"
+
+        info = driver.get_device_info(state=ConnectionState.CONNECTED)
+
+        self.assertEqual(info.category, DeviceCategory.POWER_METER)
+        self.assertEqual(info.manufacturer, "Santec")
+        self.assertEqual(info.model, "OP815")
+        self.assertEqual(info.serial_number, "ILM-1")
+        self.assertEqual(info.state, ConnectionState.CONNECTED)
+
     def test_complete_measurement_trace_links_both_wavelengths_and_references(self):
         driver = OP815.__new__(OP815)
         events = []
@@ -114,6 +128,102 @@ class OP815CleanupTests(unittest.TestCase):
         )
         self.assertNotIn("actual_wavelength_nm", first_sample_start)
         self.assertNotIn("source_enabled", first_sample_start)
+
+    def test_normal_measurement_tolerates_vendor_index_convention(self):
+        driver = OP815.__new__(OP815)
+        state = {"wavelength": 1310}
+        driver._trace_callback = None
+        driver._trace_context = {}
+        driver._trace_metadata = {}
+        driver._diagnostic_verification_enabled = False
+
+        def get_wavelength(wavelength, index, count):
+            wavelength._obj.value = state["wavelength"]
+            index._obj.value = 1 if state["wavelength"] == 1310 else 2
+            count._obj.value = 2
+            return 1
+
+        driver.get_wavelength = get_wavelength
+        driver.set_wavelength = lambda wavelength: state.update(wavelength=wavelength) or 1
+        driver.source_on = lambda _source_id, _state: 1
+        driver.read_power = lambda power: setattr(
+            power._obj,
+            "value",
+            -0.94 if state["wavelength"] == 1310 else -0.50,
+        ) or 1
+
+        with patch("op815_driver.time.sleep"):
+            measurements = driver.measure_both_wavelengths()
+
+        self.assertEqual(measurements, {1310: -0.94, 1550: -0.50})
+
+    def test_normal_measurement_still_rejects_actual_wavelength_mismatch(self):
+        driver = OP815.__new__(OP815)
+        read_calls = []
+        driver._trace_callback = None
+        driver._trace_context = {}
+        driver._trace_metadata = {}
+        driver._diagnostic_verification_enabled = False
+        driver.get_wavelength = lambda wavelength, index, count: (
+            setattr(wavelength._obj, "value", 1550),
+            setattr(index._obj, "value", 1),
+            setattr(count._obj, "value", 2),
+            1,
+        )[-1]
+        driver.set_wavelength = lambda _wavelength: 1
+        driver.source_on = lambda _source_id, _state: 1
+        driver.read_power = lambda _power: read_calls.append(True) or 1
+
+        with patch("op815_driver.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "selected 1550 nm"):
+                driver.measure_wavelength(
+                    1310,
+                    wavelength_settling_seconds=0,
+                    source_settling_seconds=0,
+                    source_off_settling_seconds=0,
+                )
+
+        self.assertEqual(read_calls, [])
+
+    def test_diagnostic_trace_reports_index_discrepancy_as_warning(self):
+        driver = OP815.__new__(OP815)
+        events = []
+        driver._trace_callback = events.append
+        driver._trace_context = {}
+        driver._trace_metadata = {}
+        driver._diagnostic_verification_enabled = True
+        driver.get_wavelength = lambda wavelength, index, count: (
+            setattr(wavelength._obj, "value", 1310),
+            setattr(index._obj, "value", 1),
+            setattr(count._obj, "value", 2),
+            1,
+        )[-1]
+        driver.set_wavelength = lambda _wavelength: 1
+        driver.source_on = lambda _source_id, _state: 1
+        driver.read_power = lambda power: setattr(power._obj, "value", -0.94) or 1
+
+        with patch("op815_driver.time.sleep"):
+            power = driver.measure_wavelength(
+                1310,
+                wavelength_settling_seconds=0,
+                source_settling_seconds=0,
+                source_off_settling_seconds=0,
+                verify_before_read=True,
+            )
+
+        self.assertEqual(power, -0.94)
+        verification = [
+            event for event in events if event["event"] == "verified_before_read"
+        ]
+        self.assertEqual(len(verification), 1)
+        self.assertEqual(verification[0]["status"], "warning")
+        self.assertIn("index 1 of 2", verification[0]["details"])
+        metadata_warnings = [
+            event
+            for event in events
+            if event["event"] == "wavelength_metadata_warning"
+        ]
+        self.assertEqual(len(metadata_warnings), 1)
 
     def test_final_wavelength_mismatch_blocks_read_power(self):
         driver = OP815.__new__(OP815)

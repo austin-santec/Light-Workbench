@@ -7,6 +7,7 @@ from hardware.interfaces import (
     PowerMeter,
     validate_wavelength_readings,
 )
+from domain.models import ConnectionState, DeviceCategory, DeviceInfo
 from op815_driver import OP815
 
 
@@ -23,6 +24,14 @@ class SantecPowerMeter:
     @property
     def usb_serial(self):
         return self._driver.usb_serial
+
+    def get_device_info(
+        self,
+        state=ConnectionState.DISCONNECTED,
+        error="",
+    ):
+        """Expose the wrapped driver identity through the hardware boundary."""
+        return self._driver.get_device_info(state=state, error=error)
 
     def find_devices(self):
         """List connected OP815 meters without opening remote mode."""
@@ -83,6 +92,22 @@ class SimulatedPowerMeter:
 
     def connect(self):
         self.connected = True
+
+    def get_device_info(
+        self,
+        state=ConnectionState.DISCONNECTED,
+        error="",
+    ):
+        """Expose a deterministic identity for UI and hardware-free tests."""
+        return DeviceInfo(
+            category=DeviceCategory.POWER_METER,
+            manufacturer="Santec",
+            model="Simulated OP815",
+            serial_number=self.usb_serial,
+            raw_identity=self.description,
+            state=state,
+            error=error,
+        )
 
     def measure_both_wavelengths(self):
         if not self.connected:

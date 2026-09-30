@@ -42,6 +42,14 @@ For every channel, it can:
 The application does **not** change the references saved in the ILM or edit the
 replacement-channel configuration saved in the OSX-150.
 
+During a hardware run, the **Connected hardware** panel appears in the top
+header beside **Open Existing CSV** and shows the detected ILM/power-meter and
+optical-switch state, model, and serial number. It updates
+through Connecting, Connected, Disconnected, and Error states. If a switch
+reports a recognized model that has not been verified for this application,
+the run is refused with an explicit unsupported-device message; unknown device
+identities are not silently treated as compatible.
+
 From `Tools > Red Light Test...`, the operator can open a separate pre-test
 window for checking a switch with a VFL. Opening the menu item does not connect
 to the switch. Click `Start Red Light Test` to connect and select channel 1;
@@ -80,6 +88,9 @@ OP815 command events. The trace includes raw power, references, wavelength and
 source state, channel context, status codes, timing, and errors. It is not
 created by normal runs and exporting does not modify the active run or any run
 files.
+When available, the trace session also includes the detected meter and switch
+manufacturer, model, serial, raw identification string, and VISA resource
+address.
 
 Diagnostic exports default to local-time names such as
 `diagnostic-history-20260930-110405.csv` (or `.json`). If that automatically
@@ -103,7 +114,7 @@ summary to the system clipboard for pasting into notes or another document.
 | `ilm_app.py` | Current Light Workbench PyQt5 desktop application and hardware-test UI |
 | `ILMReadLoss.py` | Legacy console workflow retained for compatibility |
 | `run_data.py` | CSV loader and configurable over-limit analysis model |
-| `domain/models.py` | Typed vendor-neutral measurement, unit, run, reference, and workflow models |
+| `domain/models.py` | Typed vendor-neutral measurement, device, unit, run, reference, and workflow models |
 | `domain/run_data.py` | Domain run model and over-limit analysis rules |
 | `domain/raw_export.py` | Pure tab-separated formatting for copying accepted readings to Excel |
 | `domain/diagnostic_analysis.py` | In-memory diagnostic samples and variation statistics |
@@ -143,8 +154,10 @@ summary to the system clipboard for pasting into notes or another document.
 | `ui/red_light_test.py` | Separate VFL pre-test dialog presentation module |
 | `tools/dependency_check.py` | Non-destructive prerequisite and connection diagnostics |
 | `hardware/interfaces.py` | Vendor-neutral power-meter, laser-source, and optical-switch contracts |
+| `hardware/device_identity.py` | Compatibility-safe identity reporting for hardware adapters |
 | `hardware/power_meter.py` | Integrated OP815 adapter and simulated meter implementations |
-| `hardware/optical_switch.py` | OSX-150 PyVISA/SCPI adapter implementation |
+| `hardware/optical_switch.py` | Extensible Santec switch identity registry and OSX-150 adapter |
+| `ui/hardware_status.py` | Connected hardware status presentation panel |
 | `hardware/factory.py` | Lazy composition of real and future hardware adapters |
 | `power_meter.py` | Compatibility facade for the hardware power-meter adapters |
 | `osx150_driver.py` | Compatibility facade for the OSX-150 hardware adapter |
@@ -193,7 +206,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the current release version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.10.2**.
+current Light Workbench release is version **1.11.2**.
 
 For architecture, coding standards, testing, and contribution guidance, see
 the [`docs/README.md`](docs/README.md) documentation index.
@@ -266,6 +279,11 @@ operator to move the cable before each reading, and provides a stop control
 that releases both instruments. Hardware-run results are currently displayed
 and saved incrementally to the same CSV/JSON pair, including results accepted
 before a stop or hardware error.
+
+Before a production power sample is taken, the driver confirms that the actual
+ILM wavelength matches the requested wavelength. A difference in the DLL's
+diagnostic index/count convention alone does not stop the run when the actual
+wavelength is correct; diagnostics retain those raw values as warnings.
 
 The 1310 nm and 1550 nm reference powers are configurable in the desktop
 setup panel. A real full-pass run queries the OSX-150 for its configured

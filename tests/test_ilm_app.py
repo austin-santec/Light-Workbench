@@ -13,6 +13,7 @@ from PyQt5.QtCore import QEventLoop, QTimer, Qt
 from PyQt5.QtTest import QTest
 
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
+from domain.models import ConnectionState, DeviceCategory, DeviceInfo
 from ilm_app import (
     AboutDialog,
     CompletedReplacementDialog,
@@ -118,6 +119,44 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("Version: %s" % APP_VERSION, dialog.about_view.toPlainText())
         self.assertEqual(dialog.tagline_label.text(), APP_TAGLINE)
         dialog.close()
+
+    def test_connected_hardware_panel_displays_transient_identity(self):
+        window = MainWindow()
+        window.show()
+        QApplication.processEvents()
+
+        self.assertIsNot(
+            window.hardware_status_panel.parentWidget(),
+            window.start_hardware_button.parentWidget(),
+        )
+        self.assertLessEqual(
+            window.hardware_status_panel.geometry().right(),
+            window.open_csv_button.geometry().left(),
+        )
+        window._hardware_device_status_changed(
+            DeviceInfo(
+                category=DeviceCategory.POWER_METER,
+                manufacturer="Santec",
+                model="OP815",
+                serial_number="METER-123",
+                state=ConnectionState.CONNECTED,
+            )
+        )
+        window._hardware_device_status_changed(
+            DeviceInfo(
+                category=DeviceCategory.OPTICAL_SWITCH,
+                manufacturer="Santec",
+                model="OSX-150",
+                serial_number="SWITCH-456",
+                state=ConnectionState.CONNECTED,
+            )
+        )
+
+        self.assertIn("Connected", window.hardware_status_panel.power_meter_status.text())
+        self.assertIn("OP815", window.hardware_status_panel.power_meter_status.text())
+        self.assertIn("SWITCH-456", window.hardware_status_panel.optical_switch_status.text())
+        self.assertIn("#22c55e", window.hardware_status_panel.optical_switch_status.styleSheet())
+        window.close()
 
     def test_completed_replacement_dialog_prefills_recommendations(self):
         dialog = CompletedReplacementDialog(
@@ -232,6 +271,10 @@ class MainWindowTests(unittest.TestCase):
             self.assertTrue(window.dark_mode_enabled)
             self.assertTrue(window.dark_mode_action.isChecked())
             self.assertIn("#202124", window.styleSheet())
+            self.assertEqual(
+                window.hardware_status_panel.objectName(),
+                "connected_hardware_status",
+            )
             self.assertIn(
                 "QDialog, QMessageBox, QInputDialog, QProgressDialog",
                 window.styleSheet(),

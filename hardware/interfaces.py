@@ -10,6 +10,8 @@ or a particular instrument model.
 from collections.abc import Mapping, Sequence
 from typing import Protocol, runtime_checkable
 
+from domain.models import ConnectionState, DeviceInfo
+
 
 WAVELENGTHS_NM: tuple[int, ...] = (1310, 1550)
 
@@ -69,6 +71,18 @@ class OpticalSwitch(Protocol):
 
     def close(self) -> None:
         """Release the switch connection."""
+
+
+@runtime_checkable
+class DeviceIdentifiable(Protocol):
+    """Optional identity capability shared by hardware adapters."""
+
+    def get_device_info(
+        self,
+        state: ConnectionState = ConnectionState.DISCONNECTED,
+        error: str = "",
+    ) -> DeviceInfo:
+        """Return transient identity and connection state."""
 
 
 class ChannelRouter(OpticalSwitch, Protocol):

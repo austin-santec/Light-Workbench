@@ -45,8 +45,17 @@ run persistence.
 Diagnostic history exports use local-time names in the form
 `diagnostic-history-YYYYMMDD-HHMMSS.csv` or `.json`, with deterministic numeric
 collision suffixes for automatically suggested names. The OP815 adapter also
-performs a final wavelength verification immediately before `ReadPower`; a
-failed verification blocks the diagnostic sample.
+performs a final wavelength verification immediately before `ReadPower`; an
+unsupported or actual-wavelength mismatch blocks the diagnostic sample. Raw
+index/count convention differences are retained as trace warnings.
+
+The normal hardware-run window includes a compact Connected hardware panel in
+the top header, beside Open Existing CSV, for the ILM/power meter and optical
+switch. It displays each device's transient
+connection state, manufacturer/model, and serial when available. Hardware
+identity is represented by vendor-neutral `DeviceInfo` models and selected by
+an adapter-owned capability registry; an unverified or unknown switch model is
+reported clearly and is not treated as an OSX-150-compatible device.
 
 ## Required reading before code changes
 

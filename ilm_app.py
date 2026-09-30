@@ -82,6 +82,7 @@ from ui.red_light_test import RedLightTestDialog
 from config.app_info import APP_NAME, APP_TAGLINE, APP_VERSION, about_text
 from ui.live_il_reading import LiveILReadingDialog, LiveILReadingWorker
 from ui.power_measurement_diagnostics import PowerMeasurementDiagnosticsDialog
+from ui.hardware_status import HardwareStatusPanel
 
 
 ACCENT = "#e60013"
@@ -603,6 +604,9 @@ class MainWindow(QMainWindow):
             self.hardware_operator_required
         )
         self.hardware_controller.reading_ready.connect(self.hardware_reading_ready)
+        self.hardware_controller.device_status_changed.connect(
+            self._hardware_device_status_changed
+        )
         self.hardware_controller.progress_changed.connect(
             self.hardware_progress_changed
         )
@@ -612,6 +616,11 @@ class MainWindow(QMainWindow):
         self.hardware_controller.thread_finished.connect(
             self.hardware_thread_finished
         )
+
+    def _hardware_device_status_changed(self, device_info):
+        """Render transient device identity reported by the run controller."""
+        if hasattr(self, "hardware_status_panel"):
+            self.hardware_status_panel.set_device_status(device_info)
 
     def _build_ui(self):
         self.setStyleSheet(self._theme_stylesheet(self.dark_mode_enabled))
@@ -713,6 +722,8 @@ class MainWindow(QMainWindow):
             self.logo_label.hide()
         header.addLayout(titles)
         header.addStretch()
+        self.hardware_status_panel = HardwareStatusPanel(central)
+        header.addWidget(self.hardware_status_panel)
         self.open_csv_button = QPushButton("Open Existing CSV")
         self.open_csv_button.clicked.connect(self.open_csv)
         header.addWidget(self.open_csv_button)

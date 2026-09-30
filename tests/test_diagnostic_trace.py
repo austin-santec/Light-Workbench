@@ -33,6 +33,28 @@ class DiagnosticTraceTests(unittest.TestCase):
         self.assertEqual(events[1].status_code, -1)
         self.assertEqual(recorder.metadata()["meter_serial"], "meter-7")
 
+    def test_recorder_preserves_optional_device_identity_metadata(self):
+        recorder = DiagnosticTraceRecorder("1.11.1")
+        recorder.record(
+            {
+                "event": "connected",
+                "meter_manufacturer": "Santec",
+                "meter_model": "OP815",
+                "meter_raw_identity": "OP815,meter-7",
+                "meter_resource_address": "USB-METER",
+                "switch_manufacturer": "Santec",
+                "switch_model": "OSX-150",
+                "switch_serial": "switch-7",
+                "switch_raw_identity": "SANTEC,OSX-150,switch-7,1.0",
+                "switch_resource_address": "USB-SWITCH",
+            }
+        )
+
+        metadata = recorder.metadata()
+        self.assertEqual(metadata["meter_model"], "OP815")
+        self.assertEqual(metadata["switch_serial"], "switch-7")
+        self.assertEqual(metadata["switch_resource_address"], "USB-SWITCH")
+
     def test_recorder_ignores_malformed_callback_payload(self):
         recorder = DiagnosticTraceRecorder("1.10.0")
         recorder.record(None)
