@@ -186,6 +186,7 @@ class MainWindowTests(unittest.TestCase):
                 "Check Dependencies...",
                 "Red Light Test...",
                 "Live IL Reading...",
+                "Power Measurement Diagnostics...",
                 "Noah Mode",
                 "Live Write Mode",
                 "Dark Mode",

@@ -57,6 +57,38 @@ repeated reads, and never connects to the switch or saves run data. `Start Live
 Updates` automatically refreshes both values without saving data and changes to
 `Stop Live Updates` while active.
 
+From `Tools > Power Measurement Diagnostics...`, the operator can connect to
+the meter without starting a run and view raw absolute power at both
+wavelengths alongside the exact insertion-loss calculation. The tool can also
+connect to the switch independently so a logical channel can be routed before
+the reading. Diagnostic readings and history stay in memory only; they do not
+change the active run or create CSV, JSON, COC, or other output files.
+
+The diagnostics history also records whether each sample was collected
+manually or through monitoring. `Analyze Repeatability` uses only manual
+readings, representing cable disconnect/reconnect samples. `Analyze Stability`
+uses only automatic monitoring readings, representing an undisturbed optical
+connection. Both analyses show average, minimum, maximum, range, sample
+standard deviation, and first-to-last change for each wavelength; results are
+temporary and are not saved.
+
+Use `Export History...` to explicitly save the complete diagnostic history as
+CSV or JSON. The export asks whether to include the optional in-memory hardware
+trace. If selected, CSV creates a companion `<history-stem>-hardware-trace.csv`
+and JSON adds a `hardware_trace` object with session metadata and chronological
+OP815 command events. The trace includes raw power, references, wavelength and
+source state, channel context, status codes, timing, and errors. It is not
+created by normal runs and exporting does not modify the active run or any run
+files.
+
+Variation Analysis appears to the right of the reading history by default.
+Use `Hide Variation Analysis` to give the history table more room, or
+`Show Variation Analysis` to restore the panel. The splitter between the two
+areas can also be resized.
+
+When results are displayed, `Copy Analysis` copies the formatted variation
+summary to the system clipboard for pasting into notes or another document.
+
 ## Folder contents
 
 | File or folder | Purpose |
@@ -67,11 +99,15 @@ Updates` automatically refreshes both values without saving data and changes to
 | `domain/models.py` | Typed vendor-neutral measurement, unit, run, reference, and workflow models |
 | `domain/run_data.py` | Domain run model and over-limit analysis rules |
 | `domain/raw_export.py` | Pure tab-separated formatting for copying accepted readings to Excel |
+| `domain/diagnostic_analysis.py` | In-memory diagnostic samples and variation statistics |
+| `domain/diagnostic_trace.py` | Typed in-memory hardware trace event model |
 | `config/app_config.py` | Centralized default paths and injectable application path configuration |
 | `config/app_info.py` | Single source for application name, version, tagline, and About text |
 | `application/run_controller.py` | Hardware-run lifecycle controller and queued worker command boundary |
 | `application/live_controller.py` | Live IL meter worker lifecycle controller |
 | `application/red_light_controller.py` | Red Light Test switch worker lifecycle controller |
+| `application/power_diagnostics_controller.py` | Non-recording raw-power diagnostic lifecycle controller |
+| `application/diagnostic_trace.py` | Thread-safe in-memory recorder for optional diagnostic trace events |
 | `application/timing.py` | Shared pacing defaults for automatic live readings |
 | `infrastructure/csv_run_loader.py` | CSV parsing adapter for current and legacy run files |
 | `infrastructure/run_persistence.py` | Atomic CSV/JSON run recorder and filename rules |
@@ -79,6 +115,7 @@ Updates` automatically refreshes both values without saving data and changes to
 | `infrastructure/coc_export.py` | COC template lookup, workbook export, and drawing preservation |
 | `infrastructure/run_query.py` | Read-only queries over indexed unit runs |
 | `infrastructure/run_reports.py` | File-backed multi-run reporting service |
+| `infrastructure/diagnostic_export.py` | Explicit CSV/JSON export for diagnostic history and optional hardware trace |
 | `infrastructure/schema.py` | Run and unit schema versions and migrations |
 | `run_persistence.py` | Compatibility facade for infrastructure run persistence |
 | `unit_persistence.py` | Compatibility facade for infrastructure unit persistence |
@@ -95,6 +132,7 @@ Updates` automatically refreshes both values without saving data and changes to
 | `application/measurement_worker.py` | Background hardware-run orchestration worker |
 | `application/run_start.py` | Hardware-run planning and controller-request preparation |
 | `ui/live_il_reading.py` | Meter-only Live IL dialog and worker presentation module |
+| `ui/power_measurement_diagnostics.py` | Raw-power diagnostics dialog with optional switch routing |
 | `ui/red_light_test.py` | Separate VFL pre-test dialog presentation module |
 | `tools/dependency_check.py` | Non-destructive prerequisite and connection diagnostics |
 | `hardware/interfaces.py` | Vendor-neutral power-meter, laser-source, and optical-switch contracts |
@@ -148,7 +186,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the current release version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.8.2**.
+current Light Workbench release is version **1.10.0**.
 
 For architecture, coding standards, testing, and contribution guidance, see
 the [`docs/README.md`](docs/README.md) documentation index.

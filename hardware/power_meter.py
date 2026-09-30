@@ -31,6 +31,24 @@ class SantecPowerMeter:
     def connect(self):
         self._driver.connect()
 
+    def set_trace_callback(self, callback):
+        """Enable optional diagnostic tracing on the wrapped OP815 driver."""
+        setter = getattr(self._driver, "set_trace_callback", None)
+        if setter is not None:
+            setter(callback)
+
+    def set_trace_context(self, **context):
+        """Attach the current diagnostic measurement context to trace events."""
+        setter = getattr(self._driver, "set_trace_context", None)
+        if setter is not None:
+            setter(**context)
+
+    def set_trace_metadata(self, **metadata):
+        """Attach session metadata without changing normal meter behavior."""
+        setter = getattr(self._driver, "set_trace_metadata", None)
+        if setter is not None:
+            setter(**metadata)
+
     def measure_both_wavelengths(self):
         return self._driver.measure_both_wavelengths()
 

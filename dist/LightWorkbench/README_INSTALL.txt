@@ -64,7 +64,7 @@ instructions. It is a self-contained guide and does not require internet access.
 No Python installation is needed.
 
 Use Help > About inside the application to view the current
-version and project capabilities. The current release is Light Workbench 1.7.1.
+version and project capabilities. The current release is Light Workbench 1.10.0.
 
 
 3. VERIFY VISA
@@ -130,6 +130,37 @@ is preserved and existing files are never overwritten.
 Real switch runs also record start time, stop time, continuation times, session
 count, and accumulated switch-test duration in the CSV metadata. Live IL and
 Red Light Test are not included in this timing.
+
+OPTIONAL POWER MEASUREMENT DIAGNOSTICS
+
+Use Tools > Power Measurement Diagnostics... when you need to investigate the
+raw ILM/OP815 power values without creating or changing a run. Connect the
+meter, optionally connect the switch and route a logical channel, then click
+Read Measured Power. The window shows the measured dBm values, the selected
+references, and the exact calculation `reference - measured = insertion loss`.
+Calculate Reference and Apply to Main Setup are available when a new baseline
+is needed. The diagnostic history remains in memory only and is never written
+to CSV, JSON, COC, or another output file.
+
+Use Analyze Repeatability for manually triggered readings taken after
+disconnecting and reconnecting the cable. Use Analyze Stability for readings
+collected by Start Monitoring while the cable remains connected. The two
+analyses are kept separate and show average, minimum, maximum, range, sample
+standard deviation, and first-to-last change for 1310 nm and 1550 nm. Results
+remain in memory only.
+
+If the diagnostic history needs to be retained, click Export History... and
+choose CSV or JSON. The export then offers Include Hardware Trace. If selected,
+CSV also creates a companion `<history-stem>-hardware-trace.csv`; JSON adds a
+`hardware_trace` object containing the in-memory OP815 command trace. This is
+an explicit diagnostic export and does not modify the active switch-test run
+or its CSV/JSON files.
+
+Variation Analysis appears to the right of the history table. Use Hide
+Variation Analysis or Show Variation Analysis to collapse or restore it; the
+splitter between the table and panel can be resized.
+When an analysis is displayed, Copy Analysis copies its formatted summary to
+the clipboard for use in notes or another document.
 
 
 5. SAVED RUNS AND COC EXPORT

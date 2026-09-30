@@ -41,6 +41,32 @@ The normal measurement worker uses this session boundary for its meter and
 switch. Live IL and Red Light retain their separate controller-owned sessions
 because those tools intentionally operate independently.
 
+`PowerMeasurementDiagnosticsDialog` is also an independent, non-recording
+workflow. `application/power_diagnostics_controller.py` owns the OP815/meter
+worker and uses a meter-only session, while the dialog can optionally create a
+separate `RedLightTestController` for switch routing. Neither connection is
+opened when the dialog is launched. The operator explicitly connects each
+device, and the switch is only changed after a logical channel is selected and
+Set Channel is pressed. This keeps raw-power investigation useful with a
+switch, without coupling the meter read to switch ownership or normal run
+state.
+
+The dialog records each complete sample in memory with its acquisition method:
+manual readings support cable-reseat repeatability analysis, while monitoring
+readings support undisturbed-connection stability analysis. Both analyses use
+the same complete two-wavelength measurement result and do not change hardware
+timing or create persistence files.
+
+The diagnostics dialog also supports an optional in-memory OP815 hardware trace.
+When enabled for export, the trace records vendor command outcomes, status
+codes, wavelength/source state, raw power, references, timing, errors, and the
+logical/physical channel context. Each complete two-wavelength history sample
+and its trace events share a measurement ID. The trace is exported only when
+the operator selects `Include Hardware Trace`: CSV creates a companion file
+beside the history export, while JSON adds a `hardware_trace` collection.
+Trace callback failures are swallowed by the adapter so optional diagnostics
+cannot change measurement behavior.
+
 Live IL and Red Light now use the same session boundary for their individual
 meter-only and switch-only lifecycles. Their dialogs receive injected factory
 callables, defaulting to `HardwareFactory` without binding vendor classes in

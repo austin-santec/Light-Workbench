@@ -66,38 +66,39 @@ remove or weaken that workflow without a separate approved change.
 - New runs have stable identities.
 - All file-backed tests pass.
 
-## Milestone 2 - Local SQLite index and query repository
+## Milestone 2 - Direct central database repository
 
 ### Implement
 
-- Add a local SQLite database under application data, not the source tree.
-- Add schema migrations and foreign-key constraints.
-- Import existing unit/run JSON and accepted measurements.
-- Index unit, run, measurement, replacement, and spare data.
-- Add a rebuild/reindex operation.
-- Add repository interfaces so reporting does not depend on SQLite details.
+- Add a database repository behind the existing infrastructure boundary.
+- Add central schema migrations and foreign-key constraints.
+- Add direct queries for units, runs, measurements, replacements, and spares.
+- Use parameterized SQL, bounded connections, and short transactions.
+- Add stable IDs and idempotent insert/update behavior.
+- Keep SQL and connection handling out of the UI and hardware controllers.
 
 ### Initial behavior
 
 - CSV/JSON remain the operational source.
-- SQLite is a local read index and may be rebuilt.
-- Hardware operations do not require SQLite.
-- Reports can fall back to file-backed queries if SQLite is unavailable.
+- The central database is an optional destination for accepted data.
+- Hardware operations do not require a successful database connection.
+- File-backed reports remain available while database reporting is introduced.
+- The repository can be replaced by an API client later if required.
 
 ### Tests
 
-- Import a complete run.
-- Import a partial run.
+- Submit a complete run.
+- Submit a partial run without treating it as complete.
 - Ignore transient and overwritten readings.
-- Rebuild the index without duplicates.
-- Query one unit and all units.
-- Confirm report totals match existing file-backed reports.
+- Retry an accepted run without creating duplicates.
+- Query one unit and all units through the repository.
+- Confirm database report totals match file-backed reports.
 
 ### Exit criteria
 
-- Hundreds of runs can be queried without scanning every CSV for each query.
-- Reindexing is repeatable and safe.
-- Removing the local database does not remove production run files.
+- Multiple workstations can use the same central schema safely.
+- Repeating a submission is safe and idempotent.
+- Removing database access does not remove local production run files.
 
 ## Milestone 3 - Run classification and local submission controls
 
@@ -134,42 +135,49 @@ remove or weaken that workflow without a separate approved change.
 - No run is silently deleted.
 - Status changes are auditable locally.
 
-## Milestone 4 - Local synchronization outbox
+## Milestone 4 - Direct-write reliability and offline recovery
 
 ### Implement
 
-- Add an outbox transaction after local run persistence.
-- Queue only records eligible for synchronization.
-- Add retry count, error details, and synchronization status.
-- Add idempotency keys.
-- Add manual retry and diagnostic status.
-- Keep synchronization asynchronous and non-blocking.
+- Save CSV/JSON before attempting database submission.
+- Add an asynchronous database worker with bounded connections.
+- Add submission status and error details to the run state.
+- Retry failed submissions using stable run IDs and source-file hashes.
+- Add a manual retry or submit-selected-run operation.
+- Add central audit events after successful transactions.
+- Keep database writes non-blocking for hardware operations.
 
 ### Tests
 
 - Network failure leaves local data intact.
 - Retry eventually succeeds.
 - Duplicate retry does not duplicate data.
-- Local-only runs do not enter the upload queue.
-- A run remains usable while synchronization is pending.
+- Local-only runs are never submitted.
+- A run remains usable while database submission is pending.
+- A successful database write followed by a local status failure is safe to
+  retry.
 
 ### Exit criteria
 
 - A disconnected workstation can complete a full test.
-- Pending data is visible and recoverable.
+- Pending submissions are visible and recoverable from local files.
 - No hardware operation waits on the database.
 
-## Milestone 5 - Central API and database pilot
+## Milestone 5 - Central database pilot
 
 ### Implement
 
-- Create the internal API service.
 - Implement central schema migrations.
-- Add authentication and authorization.
-- Implement batch synchronization.
+- Configure approved direct database authentication.
+- Restrict database network access to approved workstations or segments.
+- Implement direct run and measurement transactions.
 - Validate payload schema and application compatibility.
 - Add central duplicate and conflict detection.
 - Add audit records for submission and status changes.
+
+An API is not required for this milestone. If direct database access is later
+rejected by IT or security, the repository contract should be retained and an
+API-backed repository can replace the direct implementation.
 
 ### Pilot scope
 
@@ -179,7 +187,7 @@ remove or weaken that workflow without a separate approved change.
 
 ### Tests
 
-- Authenticated submission.
+- Authenticated direct submission.
 - Invalid payload rejection.
 - Duplicate upload handling.
 - Concurrent update conflict detection.
@@ -188,7 +196,7 @@ remove or weaken that workflow without a separate approved change.
 
 ### Exit criteria
 
-- Pilot workstations synchronize without changing their local workflow.
+- Pilot workstations submit data without changing their local workflow.
 - Central records match local accepted measurements.
 - Conflicts are visible and resolvable.
 
@@ -286,22 +294,25 @@ When implementation begins, use the existing project boundaries:
 ```text
 domain/                    Run classification and reporting rules
 application/               Submission and synchronization orchestration
-infrastructure/            SQLite, file import, API client, repositories
+infrastructure/            Database repository, file import, SQL, repositories
 config/                    Database and service configuration defaults
 ui/                        Status, submission, review, and reporting screens
 tests/                     Hardware-free repository and workflow tests
 docs/                      Architecture, operations, and migration guidance
 ```
 
-The central API should be a separately deployable service rather than a
-hardware or UI module inside the desktop executable.
+The central database remains outside the desktop executable. Direct database
+access belongs in an infrastructure repository with configuration and secret
+handling kept separate from hardware and UI code. An API can be added later
+behind the same repository contract if required.
 
 ## Testing strategy
 
 Every milestone should include:
 
 - Unit tests for domain rules.
-- Repository tests with temporary directories or temporary SQLite databases.
+- Repository tests with temporary directories and a disposable test database
+  or database test container.
 - Migration tests using representative old records.
 - Synchronization tests using a fake API.
 - Failure and retry tests.
@@ -315,8 +326,8 @@ Python compilation, and `git diff --check`.
 ## Release and rollout strategy
 
 1. Release local classification fields first.
-2. Pilot SQLite indexing without central submission.
-3. Pilot synchronization with non-critical data.
+2. Pilot direct database submission with non-critical data.
+3. Verify direct-write retry and offline recovery.
 4. Verify backup and restore.
 5. Import historical data in a separate controlled operation.
 6. Enable reporting for a small user group.

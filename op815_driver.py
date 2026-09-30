@@ -11,6 +11,7 @@ constructs :class:`OP815` must also be 32-bit.
 import ctypes
 import struct
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -71,7 +72,7 @@ class OP815:
     deliberately kept inside this class.
     """
 
-    def __init__(self, dll_path=None):
+    def __init__(self, dll_path=None, trace_callback=None):
         # A 64-bit Python process cannot load this 32-bit DLL.  Check before
         # attempting to load it so the user gets an actionable error message.
         if struct.calcsize("P") * 8 != 32:
@@ -91,7 +92,47 @@ class OP815:
         self.remote_enabled = False
         self.description = None
         self.usb_serial = None
+        self._trace_callback = trace_callback
+        self._trace_context = {}
+        self._trace_metadata = {}
         self._bind_functions()
+
+    def set_trace_callback(self, callback):
+        """Set an optional callback for non-invasive diagnostic events."""
+        self._trace_callback = callback
+
+    def set_trace_context(self, **context):
+        """Set context associated with the next hardware trace events."""
+        self._trace_context.update(context)
+
+    def set_trace_metadata(self, **metadata):
+        """Set session metadata attached to diagnostic trace events."""
+        self._trace_metadata.update(metadata)
+
+    def _trace(self, event, **values):
+        """Emit an optional trace event without affecting hardware behavior."""
+        if getattr(self, "_trace_callback", None) is None:
+            return
+        payload = dict(getattr(self, "_trace_metadata", {}))
+        payload.update(getattr(self, "_trace_context", {}))
+        payload.update(values)
+        description = getattr(self, "description", None)
+        serial = getattr(self, "usb_serial", None)
+        if description:
+            payload.setdefault("meter_description", description)
+        if serial:
+            payload.setdefault("meter_serial", serial)
+        payload["event"] = event
+        payload["timestamp"] = datetime.now(timezone.utc).isoformat(
+            timespec="milliseconds"
+        )
+        try:
+            self._trace_callback(payload)
+        except Exception:
+            # Tracing is investigative instrumentation and must never change a
+            # measurement result or turn a successful hardware command into a
+            # failed one.
+            return
 
     def _bind(self, name, argument_types):
         """Declare a DLL function's arguments and integer return status."""
@@ -229,26 +270,57 @@ class OP815:
     def connect(self):
         """Open the selected ILM, enable remote mode, and leave lasers off."""
         device_index, self.description, self.usb_serial = self.select_device()
+        self._trace(
+            "device_selected",
+            operation="select_device",
+            status="success",
+            details="OP815 device selected",
+        )
         handle = ctypes.c_uint32()
 
         status = self.open_usb_device(device_index, ctypes.byref(handle))
+        self._trace(
+            "command",
+            operation="OpenUSBDevice",
+            status="success" if status == 1 else "error",
+            status_code=status,
+        )
         self._require_success("OpenUSBDevice", status)
         self.usb_handle = handle.value
         self.usb_device_open = True
 
         try:
             status = self.open_driver(handle.value)
+            self._trace(
+                "command",
+                operation="OpenDriver",
+                status="success" if status == 1 else "error",
+                status_code=status,
+            )
             self._require_success("OpenDriver", status)
             self.driver_open = True
 
             status = self.remote_mode(1)
+            self._trace(
+                "command",
+                operation="RemoteMode(1)",
+                status="success" if status == 1 else "error",
+                status_code=status,
+            )
             self._require_success("RemoteMode(1)", status)
             self.remote_enabled = True
 
             # This legacy DLL build does not return a dependable status from
             # OperationMode.  The physical sources are therefore controlled
             # explicitly for every measurement below.
-            self.operation_mode(1)
+            operation_status = self.operation_mode(1)
+            self._trace(
+                "command",
+                operation="OperationMode(1)",
+                status="returned",
+                status_code=operation_status,
+                details="Legacy DLL status is recorded but not enforced.",
+            )
             time.sleep(0.5)
             self.turn_all_sources_off()
             time.sleep(SOURCE_OFF_SETTLING_TIME_SECONDS)
@@ -264,7 +336,29 @@ class OP815:
     def set_source_state(self, source_id, enabled):
         """Turn one zero-based physical laser source on or off."""
         state = 1 if enabled else 0
-        status = self.source_on(source_id, state)
+        started = time.perf_counter()
+        try:
+            status = self.source_on(source_id, state)
+        except Exception as error:
+            self._trace(
+                "source_state",
+                operation="SourceON",
+                source_id=source_id,
+                source_enabled=bool(enabled),
+                status="exception",
+                error=str(error),
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            )
+            raise
+        self._trace(
+            "source_state",
+            operation="SourceON",
+            source_id=source_id,
+            source_enabled=bool(enabled),
+            status="success" if status == 1 else "error",
+            status_code=status,
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+        )
         self._require_success(
             "SourceON(%d, %d)" % (source_id, state),
             status,
@@ -277,16 +371,94 @@ class OP815:
 
     def current_wavelength(self):
         """Return the detector's currently selected wavelength in nanometers."""
+        return self.current_wavelength_details()[0]
+
+    def current_wavelength_details(self):
+        """Return wavelength plus the DLL's index and count diagnostics."""
+        started = time.perf_counter()
         wavelength = ctypes.c_int()
         wavelength_index = ctypes.c_int()
         wavelength_count = ctypes.c_int()
-        status = self.get_wavelength(
-            ctypes.byref(wavelength),
-            ctypes.byref(wavelength_index),
-            ctypes.byref(wavelength_count),
+        try:
+            status = self.get_wavelength(
+                ctypes.byref(wavelength),
+                ctypes.byref(wavelength_index),
+                ctypes.byref(wavelength_count),
+            )
+        except Exception as error:
+            self._trace(
+                "get_wavelength",
+                operation="GetWavelength",
+                status="exception",
+                error=str(error),
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            )
+            raise
+        self._trace(
+            "get_wavelength",
+            operation="GetWavelength",
+            actual_wavelength_nm=wavelength.value,
+            wavelength_index=wavelength_index.value,
+            wavelength_count=wavelength_count.value,
+            status="success" if status == 1 else "error",
+            status_code=status,
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
         )
         self._require_success("GetWavelength", status)
-        return wavelength.value
+        return wavelength.value, wavelength_index.value, wavelength_count.value
+
+    def _set_wavelength(self, wavelength_nm):
+        """Set wavelength and record the vendor command result."""
+        started = time.perf_counter()
+        try:
+            status = self.set_wavelength(wavelength_nm)
+        except Exception as error:
+            self._trace(
+                "set_wavelength",
+                operation="SetWavelength",
+                requested_wavelength_nm=wavelength_nm,
+                status="exception",
+                error=str(error),
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            )
+            raise
+        self._trace(
+            "set_wavelength",
+            operation="SetWavelength",
+            requested_wavelength_nm=wavelength_nm,
+            status="success" if status == 1 else "error",
+            status_code=status,
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+        )
+        self._require_success("SetWavelength(%d)" % wavelength_nm, status)
+
+    def _read_power(self, wavelength_nm):
+        """Read one absolute power sample and record its raw DLL result."""
+        started = time.perf_counter()
+        power = ctypes.c_double()
+        try:
+            status = self.read_power(ctypes.byref(power))
+        except Exception as error:
+            self._trace(
+                "read_power",
+                operation="ReadPower",
+                requested_wavelength_nm=wavelength_nm,
+                status="exception",
+                error=str(error),
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            )
+            raise
+        self._trace(
+            "read_power",
+            operation="ReadPower",
+            requested_wavelength_nm=wavelength_nm,
+            raw_power_dbm=power.value,
+            status="success" if status == 1 else "error",
+            status_code=status,
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+        )
+        self._require_success("ReadPower", status)
+        return power.value
 
     def measure_wavelength(
         self,
@@ -300,6 +472,15 @@ class OP815:
             raise ValueError("No source is configured for %d nm." % wavelength_nm)
 
         source_id = SOURCE_ID_BY_WAVELENGTH[wavelength_nm]
+        self.set_trace_context(requested_wavelength_nm=wavelength_nm)
+        started = time.perf_counter()
+        self._trace(
+            "wavelength_measurement_started",
+            operation="measure_wavelength",
+            requested_wavelength_nm=wavelength_nm,
+            source_id=source_id,
+            status="started",
+        )
 
         # Only one laser should be active.  This matches the ILM front panel's
         # rapid 1310-on/read/off then 1550-on/read/off sequence.
@@ -307,31 +488,57 @@ class OP815:
             if other_source_id != source_id:
                 self.set_source_state(other_source_id, False)
 
-        status = self.set_wavelength(wavelength_nm)
-        self._require_success("SetWavelength(%d)" % wavelength_nm, status)
+        self._set_wavelength(wavelength_nm)
         time.sleep(wavelength_settling_seconds)
 
-        actual_wavelength = self.current_wavelength()
+        actual_wavelength, wavelength_index, wavelength_count = (
+            self.current_wavelength_details()
+        )
+        self.set_trace_context(
+            actual_wavelength_nm=actual_wavelength,
+            wavelength_index=wavelength_index,
+            wavelength_count=wavelength_count,
+        )
+        reference_key = "reference_%d_dbm" % wavelength_nm
+        if reference_key in getattr(self, "_trace_context", {}):
+            self.set_trace_context(
+                reference_power_dbm=self._trace_context[reference_key]
+            )
         if actual_wavelength != wavelength_nm:
+            self._trace(
+                "wavelength_measurement_failed",
+                operation="measure_wavelength",
+                requested_wavelength_nm=wavelength_nm,
+                actual_wavelength_nm=actual_wavelength,
+                status="error",
+                error="Instrument selected an unexpected wavelength.",
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            )
             raise RuntimeError(
                 "Requested %d nm, but the ILM selected %d nm."
                 % (wavelength_nm, actual_wavelength)
             )
 
         self.set_source_state(source_id, True)
+        self.set_trace_context(source_id=source_id, source_enabled=True)
         try:
             time.sleep(source_settling_seconds)
-            power = ctypes.c_double()
-            self._require_success(
-                "ReadPower",
-                self.read_power(ctypes.byref(power)),
+            power = self._read_power(wavelength_nm)
+            self._trace(
+                "wavelength_measurement_completed",
+                operation="measure_wavelength",
+                requested_wavelength_nm=wavelength_nm,
+                raw_power_dbm=power,
+                status="success",
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
             )
         finally:
             # A source is always turned off, including when ReadPower fails.
             self.set_source_state(source_id, False)
+            self.set_trace_context(source_enabled=False)
             time.sleep(source_off_settling_seconds)
 
-        return power.value
+        return power
 
     def measure_both_wavelengths(
         self,
@@ -342,6 +549,11 @@ class OP815:
         """Return absolute dBm readings keyed by 1310 and 1550 wavelength."""
         original_wavelength = self.current_wavelength()
         measurements = {}
+        self._trace(
+            "measurement_started",
+            operation="measure_both_wavelengths",
+            status="started",
+        )
 
         try:
             self.turn_all_sources_off()
@@ -353,11 +565,17 @@ class OP815:
                     source_settling_seconds,
                     source_off_settling_seconds,
                 )
+            self._trace(
+                "measurement_completed",
+                operation="measure_both_wavelengths",
+                status="success",
+                details="1310 nm and 1550 nm completed.",
+            )
         finally:
             # Preserve the user's original display wavelength and never leave
             # a laser enabled after a completed or interrupted measurement.
             self.turn_all_sources_off()
-            self.set_wavelength(original_wavelength)
+            self._set_wavelength(original_wavelength)
 
         return measurements
 

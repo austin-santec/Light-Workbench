@@ -34,6 +34,14 @@ The current release version is maintained in `config/app_info.py`; do not
 duplicate it in this index. The current desktop entry point is `ilm_app.py`,
 while `ILMReadLoss.py` remains a supported legacy console workflow.
 
+The non-recording `Tools > Power Measurement Diagnostics...` workflow follows
+the hardware and lifecycle boundaries described here while displaying
+absolute power and exact insertion-loss math. Its manual and monitoring
+samples are analyzed separately for temporary repeatability and stability
+statistics. Diagnostic history can be explicitly exported as CSV or JSON with
+an optional in-memory OP815 hardware trace; this trace is never part of normal
+run persistence.
+
 ## Required reading before code changes
 
 Before modifying code, review:

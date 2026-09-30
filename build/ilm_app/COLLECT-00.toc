@@ -391,6 +391,9 @@
   ('_ssl.pyd',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\DLLs\\_ssl.pyd',
    'EXTENSION'),
+  ('_uuid.pyd',
+   'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\DLLs\\_uuid.pyd',
+   'EXTENSION'),
   ('assets\\Lulu - C&C-white_square.ico',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\assets\\Lulu - C&C-white_square.ico',

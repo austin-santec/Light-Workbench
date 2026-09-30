@@ -43,6 +43,13 @@ Migration helpers reject newer versions instead of silently dropping fields.
 - CSV: human-readable measurement export and compatibility with existing tools.
 - Clipboard raw-data copy: transient tab-separated text from accepted readings;
   it is not persisted and excludes metadata and pending readings.
+- Diagnostic history export: an explicit operator-selected CSV or JSON export
+  of temporary Power Measurement Diagnostics samples; it is separate from run
+  persistence and never changes the active run. The export can optionally
+  include the diagnostic session's in-memory hardware trace. CSV uses a
+  companion `<history-stem>-hardware-trace.csv`; JSON adds a `hardware_trace`
+  object. Trace events are investigative data only and are not part of run
+  persistence.
 - XLSX: COC/report output only; it is not the primary application database.
 - Replacement analysis: calculated presentation data.
 - Manually recorded replacements and spares: persistent device data.
@@ -61,21 +68,21 @@ Migration helpers reject newer versions instead of silently dropping fields.
 ## Future multi-run analysis
 
 If analysis grows to hundreds or thousands of runs, use a repository abstraction
-and consider SQLite for indexing and aggregation. CSV should remain available
-as an export, but application-wide queries should not require scanning every
-CSV file manually.
+and consider a central database for indexing and aggregation. CSV should remain
+available as an export, but application-wide queries should not require scanning
+every CSV file manually.
 
 The current reporting groundwork follows that boundary. `domain/reporting.py`
 defines typed, read-only summaries from accepted measurements, while
 `infrastructure/run_query.py` reads the unit's indexed CSV runs through the
 repository adapters. It is intentionally not connected to the UI yet; future
 operator reports can consume these summaries without knowing whether the
-underlying storage remains file-based or moves to SQLite.
+underlying storage remains file-based or moves to a central database.
 
-SQLite remains a possible future optimization if file scanning becomes a
-measurable bottleneck. It is deliberately not part of the current application;
-current reporting operates in memory over summaries loaded through the file
-repository.
+The current proposal intentionally does not add SQLite. A future database
+repository should write directly to the approved central database while keeping
+CSV/JSON as the local record and recovery path. Database availability must not
+block hardware testing or local persistence.
 
 `domain/reporting.py` provides this aggregation through
 `aggregate_run_summaries`. Timing averages exclude runs without recorded

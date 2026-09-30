@@ -1,7 +1,7 @@
 """User-facing Light Workbench identity and release information."""
 
 APP_NAME = "Light Workbench"
-APP_VERSION = "1.8.2"
+APP_VERSION = "1.10.0"
 APP_TAGLINE = "Make light work, light work! Ha!"
 APP_DESCRIPTION = (
     "Optical testing and measurement software for insertion-loss testing, "
@@ -25,6 +25,10 @@ def about_text():
             "- XLSX COC export and saved run review",
             "- Headerless raw-data clipboard export for Excel",
             "- Live IL readings, reference calculation, and repeatability testing",
+            "- Non-recording raw-power diagnostics with optional switch routing",
+            "- Repeatability and stability variation analysis",
+            "- CSV and JSON export for diagnostic reading history",
+            "- Optional OP815 hardware trace export for diagnostics",
             "- Optional one-step IL capture with Noah Mode",
             "- Live Write Mode for continuous reading before acceptance",
             "- Numbered runs grouped by unit with shared replacements and spares",

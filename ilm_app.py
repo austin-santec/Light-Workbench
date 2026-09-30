@@ -81,6 +81,7 @@ from tools.dependency_check import DependencyReport, collect_dependency_report
 from ui.red_light_test import RedLightTestDialog
 from config.app_info import APP_NAME, APP_TAGLINE, APP_VERSION, about_text
 from ui.live_il_reading import LiveILReadingDialog, LiveILReadingWorker
+from ui.power_measurement_diagnostics import PowerMeasurementDiagnosticsDialog
 
 
 ACCENT = "#e60013"
@@ -639,6 +640,14 @@ class MainWindow(QMainWindow):
         live_il_action = QAction("Live IL Reading...", self)
         live_il_action.triggered.connect(self.show_live_il_reading)
         tools_menu.addAction(live_il_action)
+        power_diagnostics_action = QAction(
+            "Power Measurement Diagnostics...",
+            self,
+        )
+        power_diagnostics_action.triggered.connect(
+            self.show_power_measurement_diagnostics
+        )
+        tools_menu.addAction(power_diagnostics_action)
         self.noah_mode_action = QAction("Noah Mode", self)
         self.noah_mode_action.setCheckable(True)
         self.noah_mode_action.setChecked(False)
@@ -1375,6 +1384,26 @@ class MainWindow(QMainWindow):
             meter_factory=self.hardware_factory.create_power_meter,
         )
         self.reference_values_changed.connect(dialog.set_reference_values)
+        dialog.references_changed.connect(self.set_reference_values)
+        dialog.exec_()
+
+    def show_power_measurement_diagnostics(self):
+        """Open the non-recording raw-power diagnostic tool."""
+        if self.hardware_run_active:
+            QMessageBox.warning(
+                self,
+                "Hardware run active",
+                "Stop the current hardware run before starting Power "
+                "Measurement Diagnostics.",
+            )
+            return
+        dialog = PowerMeasurementDiagnosticsDialog(
+            self,
+            reference_1310=self.reference_1310_spin.value(),
+            reference_1550=self.reference_1550_spin.value(),
+            meter_factory=self.hardware_factory.create_power_meter,
+            switch_factory=self.hardware_factory.create_switch,
+        )
         dialog.references_changed.connect(self.set_reference_values)
         dialog.exec_()
 

@@ -38,6 +38,11 @@ provide the same separation for the meter-only Live IL and switch-only Red
 Light workflows. Red Light switch I/O no longer runs directly in the dialog's
 UI thread.
 
+`application/power_diagnostics_controller.py` provides the same worker boundary
+for the non-recording Power Measurement Diagnostics tool. Its dialog can own a
+meter controller and an optional independent switch controller; raw readings,
+reference math, and history remain in memory and never enter run persistence.
+
 `application/hardware_planning.py` contains the pure channel-selection rules
 for hardware runs. It converts UI selections into a `HardwareRunPlan` before
 hardware is created, while preserving the worker's existing full-pass and
@@ -52,6 +57,21 @@ only the existing commit path writes a reading to the run.
 Workers provide absolute measurements and reference powers to this service,
 which keeps calculation logic reusable for an integrated ILM or separate OPM
 and laser source.
+
+`domain/diagnostic_analysis.py` owns the in-memory diagnostic sample model and
+variation statistics. Manual samples and automatic monitoring samples carry
+different acquisition methods so repeatability and stability analysis cannot
+silently mix their populations. This module has no Qt, hardware, or
+persistence dependencies.
+
+`infrastructure/diagnostic_export.py` owns the explicit CSV/JSON export of
+diagnostic history. The export is initiated by the operator and is separate
+from run persistence; no diagnostic file is created merely by taking readings.
+The operator may optionally include the in-memory OP815 hardware trace. CSV
+exports write a companion `<history-stem>-hardware-trace.csv`; JSON exports
+add a `hardware_trace` object containing session metadata and chronological
+events. The trace is linked to each complete history reading by measurement ID
+and is never collected or written by normal production runs.
 
 `domain/reference.py` owns the zero-reference-to-offset conversion. Live IL,
 reference calculation, simulation, and hardware workflows can therefore share
@@ -134,6 +154,16 @@ CSV files, or call vendor drivers directly.
 The main window remains in `ilm_app.py` as the application entry point. The
 standalone Live IL and Red Light dialogs live in `ui/`; their root-level module
 names remain compatibility facades for existing callers.
+
+The Power Measurement Diagnostics dialog places its in-memory variation
+analysis beside the history table in a resizable splitter. The panel is
+presentation-only and can be hidden without clearing readings or analysis
+results; collection, statistics, and export behavior remain in their existing
+application/domain/infrastructure boundaries.
+
+The panel also provides a presentation-only `Copy Analysis` action for the
+currently displayed formatted summary. It does not create a file or alter
+diagnostic history.
 
 ### Application layer
 

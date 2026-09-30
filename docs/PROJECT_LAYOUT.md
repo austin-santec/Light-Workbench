@@ -9,13 +9,13 @@ packages.
 
 ```text
 ilm_app.py, ILMReadLoss.py       Application entry points
-application/                     Workflow controllers, measurement worker, reference lifecycle, and run-start boundaries
+application/                     Workflow controllers, measurement worker, reference lifecycle, run-start boundaries, and diagnostic trace recording
 config/                          Application paths and user-facing release metadata
 ui/                              Qt dialogs and presentation workers
 tools/                           Optional dependency and environment diagnostics
 domain/                          Vendor-neutral models and business rules
 hardware/                        Hardware contracts, adapters, factories, and sessions
-infrastructure/                  File repositories, CSV/unit persistence, loaders, COC export, queries, and reports
+infrastructure/                  File repositories, CSV/unit persistence, loaders, COC/diagnostic export, queries, and reports
 tests/                            Hardware-free automated tests
 ```
 

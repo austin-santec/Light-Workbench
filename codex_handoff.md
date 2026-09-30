@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current user-facing release is **Light Workbench 1.8.2**. The single
+The current user-facing release is **Light Workbench 1.10.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -33,6 +33,7 @@ The main window exposes this through `Help > About`.
 | application/measurement_worker.py | Qt worker/orchestrator. Connects instruments, routes channels, waits for operator cable placement, supports repeated reads, emits readings/progress, and always closes instruments. |
 | measurement_worker.py | Compatibility facade for the application measurement worker. |
 | application/live_controller.py | Shared meter worker lifecycle used by Live IL and the main-window reference calculation. |
+| application/power_diagnostics_controller.py | Non-recording raw-power meter worker lifecycle for Power Measurement Diagnostics. |
 | application/hardware_planning.py | Normalizes channel-mode selections before a hardware run starts. |
 | application/run_start.py | Prepares normalized hardware-run plans and controller requests without UI or hardware access. |
 | application/run_controller.py | Owns hardware-run worker lifecycle, requests, commands, and terminal cleanup. |
@@ -42,6 +43,10 @@ The main window exposes this through `Help > About`.
 | application/ | Workflow controllers, measurement worker, planning, and transient hardware-run state. |
 | domain/ | Vendor-neutral models, calculations, replacement rules, timing, and reporting. |
 | domain/raw_export.py | Pure Excel-compatible TSV formatting for accepted run measurements; it does not persist data. |
+| domain/diagnostic_analysis.py | In-memory diagnostic samples and separate repeatability/stability statistics. |
+| domain/diagnostic_trace.py | Typed in-memory diagnostic hardware trace event model. |
+| application/diagnostic_trace.py | Thread-safe recorder for optional diagnostic trace events. |
+| infrastructure/diagnostic_export.py | Explicit CSV/JSON export for diagnostic history and optional companion OP815 hardware trace; no automatic persistence. |
 | hardware/ | Hardware contracts, factories, simulated adapters, and composed sessions. |
 | infrastructure/ | File repositories, schema migration, run queries, reports, and COC adapters. |
 | infrastructure/run_persistence.py | Atomic CSV/JSON recorder and run filename rules; root `run_persistence.py` is a compatibility facade. |
@@ -53,6 +58,7 @@ The main window exposes this through `Help > About`.
 | ui/red_light_test.py | Separate VFL pre-test dialog. Tools > Red Light Test opens it without connecting; its Start button connects and routes channels without creating readings or run/COC data. |
 | red_light_test.py | Compatibility facade for the Red Light presentation module. |
 | ui/live_il_reading.py | Meter-only Live IL Reading dialog. It connects only to the OP815, calculates both wavelength losses from editable references, supports non-persistent reconnect repeatability testing and timed live updates, and never controls the switch or persists data. |
+| ui/power_measurement_diagnostics.py | Non-recording raw-power diagnostic dialog showing absolute readings and exact IL math, with optional independent switch routing and opt-in trace export. |
 | live_il_reading.py | Compatibility facade for the Live IL presentation module. |
 | config/app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
 | app_info.py | Compatibility facade for application release metadata. |

@@ -34,6 +34,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\__init__.py',
    'PYMODULE'),
+  ('application.diagnostic_trace',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\diagnostic_trace.py',
+   'PYMODULE'),
   ('application.hardware_planning',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\hardware_planning.py',
@@ -49,6 +53,10 @@
   ('application.measurement_worker',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\measurement_worker.py',
+   'PYMODULE'),
+  ('application.power_diagnostics_controller',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\power_diagnostics_controller.py',
    'PYMODULE'),
   ('application.red_light_controller',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -265,6 +273,14 @@
   ('domain.comparison',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\comparison.py',
+   'PYMODULE'),
+  ('domain.diagnostic_analysis',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\diagnostic_analysis.py',
+   'PYMODULE'),
+  ('domain.diagnostic_trace',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\diagnostic_trace.py',
    'PYMODULE'),
   ('domain.measurement',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -512,6 +528,10 @@
   ('infrastructure.csv_run_loader',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\csv_run_loader.py',
+   'PYMODULE'),
+  ('infrastructure.diagnostic_export',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\diagnostic_export.py',
    'PYMODULE'),
   ('infrastructure.run_persistence',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -1358,6 +1378,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\live_il_reading.py',
    'PYMODULE'),
+  ('ui.power_measurement_diagnostics',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\power_measurement_diagnostics.py',
+   'PYMODULE'),
   ('ui.red_light_test',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\red_light_test.py',
@@ -1376,6 +1400,9 @@
    'PYMODULE'),
   ('urllib.response',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\urllib\\response.py',
+   'PYMODULE'),
+  ('uuid',
+   'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\uuid.py',
    'PYMODULE'),
   ('xml',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\xml\\__init__.py',
