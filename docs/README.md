@@ -8,6 +8,10 @@ covers the current application workflow, deployment requirements, and operator
 features. This file focuses on architecture, coding practices, testing, and
 how to choose the other documents in this folder.
 
+The root [`Requirements.md`](../Requirements.md) maps the draft OSX insertion-loss
+requirements workbook to the current implementation, known gaps, decisions,
+and proposed delivery milestones.
+
 ## Documentation map
 
 - [`PROGRAM_DESIGN.md`](PROGRAM_DESIGN.md) — application purpose, boundaries,
