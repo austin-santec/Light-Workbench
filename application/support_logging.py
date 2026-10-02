@@ -41,11 +41,13 @@ class SupportLoggingStatus:
     queue_depth: int
     dropped_event_count: int
     last_writer_error: str
-    retention_days: int
+    retention_days: int | None
     max_file_bytes: int
     max_total_bytes: int
     fallback_active: bool
     memory_event_count: int
+    total_size_bytes: int = 0
+    over_size_limit: bool = False
 
 
 @dataclass(frozen=True)
@@ -342,6 +344,8 @@ class SupportLoggingService:
             max_total_bytes=SUPPORT_LOG_MAX_TOTAL_BYTES,
             fallback_active=self.writer.fallback_active,
             memory_event_count=len(self.writer.memory_events),
+            total_size_bytes=getattr(self.writer, "total_size_bytes", 0),
+            over_size_limit=getattr(self.writer, "over_size_limit", False),
         )
 
 

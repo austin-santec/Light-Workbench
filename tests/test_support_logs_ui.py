@@ -31,17 +31,21 @@ class SupportLogsUiTests(unittest.TestCase):
             queue_depth=3,
             dropped_event_count=2,
             last_writer_error="preferred directory unavailable",
-            retention_days=30,
+            retention_days=None,
             max_file_bytes=25 * 1024 * 1024,
             max_total_bytes=500 * 1024 * 1024,
             fallback_active=True,
             memory_event_count=1,
+            total_size_bytes=600 * 1024 * 1024,
+            over_size_limit=True,
         )
         dialog = LoggingStatusDialog(status)
         views = dialog.findChildren(QPlainTextEdit)
         self.assertEqual(len(views), 1)
         self.assertIn("Fallback directory active: Yes", views[0].toPlainText())
         self.assertIn("Dropped events: 2", views[0].toPlainText())
+        self.assertIn("Retention: Indefinitely", views[0].toPlainText())
+        self.assertIn("Over total-size warning limit: Yes", views[0].toPlainText())
         dialog.setStyleSheet("QDialog { background: #202124; color: #e8eaed; }")
         self.assertIn("#202124", dialog.styleSheet())
         dialog.close()

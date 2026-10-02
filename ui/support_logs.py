@@ -40,9 +40,18 @@ class LoggingStatusDialog(QDialog):
                     "Queue depth: %s" % status.queue_depth,
                     "Dropped events: %s" % status.dropped_event_count,
                     "In-memory buffered events: %s" % status.memory_event_count,
-                    "Retention: %s days" % status.retention_days,
+                    "Retention: %s"
+                    % (
+                        "Indefinitely"
+                        if status.retention_days is None
+                        else "%s days" % status.retention_days
+                    ),
                     "Per-file limit: %.1f MB" % (status.max_file_bytes / 1024 / 1024),
                     "Total limit: %.1f MB" % (status.max_total_bytes / 1024 / 1024),
+                    "Managed log size: %.1f MB"
+                    % (getattr(status, "total_size_bytes", 0) / 1024 / 1024),
+                    "Over total-size warning limit: %s"
+                    % ("Yes" if getattr(status, "over_size_limit", False) else "No"),
                     "Fallback directory active: %s"
                     % ("Yes" if status.fallback_active else "No"),
                     "Last writer error: %s"

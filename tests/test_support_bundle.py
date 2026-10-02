@@ -35,7 +35,7 @@ class SupportBundleTests(unittest.TestCase):
                 start_date=date(2026, 10, 1),
                 end_date=date(2026, 10, 2),
                 application_name="Light Workbench",
-                application_version="1.13.0",
+                application_version="1.13.1",
                 dependency_report="dependency report",
                 configuration_summary={
                     "dark_mode": True,
@@ -77,7 +77,7 @@ class SupportBundleTests(unittest.TestCase):
                 start_date=date(2026, 10, 2),
                 end_date=date(2026, 10, 2),
                 application_name="Light Workbench",
-                application_version="1.13.0",
+                application_version="1.13.1",
                 dependency_report="ok",
                 configuration_summary={},
             )

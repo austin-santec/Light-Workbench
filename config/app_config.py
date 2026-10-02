@@ -12,7 +12,10 @@ DEFAULT_PART_LOOKUP_ROOT = Path(
     r"U:\Product Log\Units-COCs-Param Files\OSX-150"
 )
 COC_TEMPLATE_FILENAME = "OSX-100 Single Mode COC Template 1.xlsx"
-SUPPORT_LOG_RETENTION_DAYS = 30
+# Support logs are retained indefinitely. The 500 MB value is a warning
+# threshold for operator-managed archiving/deletion, not an automatic cleanup
+# limit.
+SUPPORT_LOG_RETENTION_DAYS = None
 SUPPORT_LOG_COMPRESSION_AFTER_DAYS = 7
 SUPPORT_LOG_MAX_FILE_BYTES = 25 * 1024 * 1024
 SUPPORT_LOG_MAX_TOTAL_BYTES = 500 * 1024 * 1024

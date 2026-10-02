@@ -227,7 +227,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.13.0**; an existing executable keeps its prior
+current source version is **1.13.1**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see

@@ -478,6 +478,7 @@ class MainWindow(QMainWindow):
         self.support_logger = support_logger or get_support_logging_service()
         self.current_run_workflow = None
         self.reference_workflow = None
+        self._support_log_size_warning_shown = False
         self.run_data: RunData | None = None
         # Keep adapter selection in one composition point. Passing the module
         # aliases preserves the existing test seam while allowing future
@@ -560,6 +561,14 @@ class MainWindow(QMainWindow):
         )
         if self.support_logger is not None and self.support_logger.status().fallback_active:
             QTimer.singleShot(0, self._show_degraded_logging_warning)
+        if self.support_logger is not None:
+            QTimer.singleShot(0, self._warn_if_support_logs_exceed_limit)
+            self.support_log_size_timer = QTimer(self)
+            self.support_log_size_timer.setInterval(30000)
+            self.support_log_size_timer.timeout.connect(
+                self._warn_if_support_logs_exceed_limit
+            )
+            self.support_log_size_timer.start()
         if initial_path:
             self.load_path(Path(initial_path))
 
@@ -3502,6 +3511,8 @@ class MainWindow(QMainWindow):
         self.load_run_button.setEnabled(available)
 
     def closeEvent(self, event):
+        if hasattr(self, "support_log_size_timer"):
+            self.support_log_size_timer.stop()
         self._record_support(
             SupportEventCategory.APPLICATION,
             "application.close_requested",
@@ -4196,6 +4207,23 @@ class MainWindow(QMainWindow):
             "Support logging is degraded. Testing can continue; see Help > "
             "Support Logs > Logging Status for details.",
             12000,
+        )
+
+    def _warn_if_support_logs_exceed_limit(self):
+        """Ask the operator to archive or delete logs without auto-deleting."""
+        if self.support_logger is None or self._support_log_size_warning_shown:
+            return
+        status = self.support_logger.status()
+        if not status.over_size_limit:
+            return
+        self._support_log_size_warning_shown = True
+        QMessageBox.warning(
+            self,
+            "Support logs exceed 500 MB",
+            "The Light Workbench support logs now exceed 500 MB.\n\n"
+            "Logs are retained indefinitely. Please use Open Logs Folder or "
+            "Export Support Bundle to archive the logs, then delete older log "
+            "files when appropriate.",
         )
 
     def _support_log_folder(self):

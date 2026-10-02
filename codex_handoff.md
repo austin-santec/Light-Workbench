@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.13.0**. The single
+The current source release is **Light Workbench 1.13.1**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -103,10 +103,11 @@ improve it.
 
 ## Engineering support logging
 
-Version 1.13.0 initializes an always-on support logger before the main window.
+Version 1.13.1 initializes an always-on support logger before the main window.
 It writes daily JSONL under `%LOCALAPPDATA%\LightWorkbench\logs`, rolls files at
 25 MB and local midnight, compresses inactive files older than seven days,
-retains 30 days, and caps managed logs at 500 MB. A temporary folder and then a
+retains them indefinitely, and warns the operator when managed logs exceed
+500 MB. A temporary folder and then a
 bounded memory buffer provide degraded fallback. Producers use a bounded
 non-blocking queue so logging cannot change UI or hardware timing.
 
@@ -438,7 +439,7 @@ the application provides a configurable folder and manual part-number fallback.
 
 Completed in the inspected environment:
 
-- python -m unittest discover -s tests: 264 tests passed, including support-log
+- python -m unittest discover -s tests: 265 tests passed, including support-log
   rotation, retention, redaction, fallback, trace fan-out, support bundles,
   hardware connection safety, persistence, XLSX mapping, and UI coverage.
 - python -m compileall -q -f .: passed.

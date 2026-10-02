@@ -114,29 +114,49 @@ class SupportLogWriterTests(unittest.TestCase):
                 max_total_bytes=50,
             )
 
-            self.assertFalse(expired.exists())
-            self.assertFalse(compressible.exists())
-            self.assertTrue((root / (compressible.name + ".gz")).exists() or not recent.exists())
+            self.assertTrue(expired.exists() or expired.with_suffix(".jsonl.gz").exists())
+            self.assertTrue(
+                (root / (compressible.name + ".gz")).exists()
+                or compressible.exists()
+            )
+            self.assertTrue(recent.exists())
             self.assertTrue(unrelated.exists())
             self.assertEqual(unrelated.read_text(), "keep")
-            self.assertTrue(all(path.name == unrelated.name or path.stat().st_size <= 50 for path in root.iterdir()))
+            self.assertGreater(writer.total_size_bytes, 50)
 
-    def test_retention_removes_only_logs_older_than_thirty_days(self):
+    def test_retention_keeps_logs_indefinitely(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "logs"
             root.mkdir()
             boundary = root / "light-workbench-2026-09-02.jsonl"
-            expired = root / "light-workbench-2026-09-01.jsonl"
+            old = root / "light-workbench-2020-01-01.jsonl"
             boundary.write_text("boundary")
-            expired.write_text("expired")
+            old.write_text("old")
             SupportLogWriter(
                 root,
                 Path(directory) / "fallback",
                 now=MutableClock(datetime(2026, 10, 2, 12, tzinfo=timezone.utc)),
+                compression_after_days=9999,
             )
-            self.assertTrue(boundary.exists() or boundary.with_suffix(".jsonl.gz").exists())
-            self.assertFalse(expired.exists())
-            self.assertFalse(expired.with_suffix(".jsonl.gz").exists())
+            self.assertTrue(boundary.exists())
+            self.assertTrue(old.exists())
+
+    def test_over_size_limit_is_reported_without_deleting_logs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "logs"
+            root.mkdir()
+            old = root / "light-workbench-2026-09-01.jsonl"
+            old.write_text("x" * 20, encoding="utf-8")
+            writer = SupportLogWriter(
+                root,
+                Path(directory) / "fallback",
+                now=MutableClock(datetime(2026, 10, 2, 12, tzinfo=timezone.utc)),
+                max_total_bytes=10,
+                compression_after_days=9999,
+            )
+            self.assertTrue(writer.over_size_limit)
+            self.assertEqual(writer.total_size_bytes, 20)
+            self.assertTrue(old.exists())
 
     def test_inactive_log_older_than_seven_days_is_gzip_compressed(self):
         with tempfile.TemporaryDirectory() as directory:

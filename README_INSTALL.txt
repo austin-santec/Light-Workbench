@@ -65,7 +65,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.13.0; an existing executable keeps its prior version until rebuilt.
+1.13.1; an existing executable keeps its prior version until rebuilt.
 
 
 3. VERIFY VISA

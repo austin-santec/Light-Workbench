@@ -84,7 +84,7 @@ used as the location for architecture decisions.
 
 - Version updated in `config/app_info.py` when appropriate.
 - Support logging tests cover JSONL validity, date/size rollover, compression,
-  retention, total-size cleanup, redaction, bounded queues, fallback writing,
+  indefinite retention, over-size warnings, redaction, bounded queues, fallback writing,
   trace fan-out, bundles, and UI dialogs without using real hardware.
 - Tests pass.
 - Build succeeds.

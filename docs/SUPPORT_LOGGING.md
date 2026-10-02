@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-Light Workbench 1.13.0 adds always-on, local engineering support logs. Their
+Light Workbench 1.13.1 adds always-on, local engineering support logs. Their
 purpose is to help engineering reconstruct operator workflows, hardware
 communication, two-wavelength measurements, insertion-loss calculations,
 connection ownership, persistence, exports, and failures.
@@ -32,10 +32,11 @@ light-workbench-YYYY-MM-DD-part03.jsonl
 The date is the workstation's local calendar date. Multiple application
 launches append to the same daily file. A new file is selected at midnight
 while the program remains open. A part rolls at 25 MB. Inactive files older
-than seven days are gzip-compressed, files older than 30 days are removed, and
-managed logs are trimmed oldest-first when their combined size exceeds 500 MB.
-The active file is protected. Cleanup only considers names matching the Light
-Workbench support-log pattern.
+than seven days are gzip-compressed and retained indefinitely. No managed log
+is automatically deleted. When the combined managed-log size exceeds 500 MB,
+the application displays a warning asking the operator to archive or delete
+older files. Cleanup and compression only consider names matching the Light
+Workbench support-log pattern; the active file is never compressed.
 
 If the normal folder is unavailable, the writer tries the operating system's
 temporary directory under `LightWorkbench\logs`. If neither folder can be
@@ -114,8 +115,8 @@ are needed for engineering correlation.
 - **Export Support Bundle...**: exports an explicit local-date range.
 - **Copy Logs Folder Path**: copies only the folder path.
 - **Logging Status...**: shows health, active file/folder, application instance,
-  schema, queue depth, dropped count, last error, retention/size limits, and
-  fallback state.
+  schema, queue depth, dropped count, last error, current managed-log size,
+  retention/size limits, and fallback state.
 
 There is intentionally no operator control that disables logging.
 
@@ -157,5 +158,5 @@ termination, native DLL abort, or operating-system process termination.
   has not yet been implemented.
 
 A future release may add controlled central collection, authentication,
-authorization, and database ingestion. Version 1.13.0 performs no upload and
+authorization, and database ingestion. Version 1.13.1 performs no upload and
 has no graphical log viewer.

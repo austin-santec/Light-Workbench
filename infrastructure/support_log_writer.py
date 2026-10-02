@@ -99,7 +99,7 @@ class SupportLogWriter:
         *,
         now: Callable[[], datetime] | None = None,
         max_file_bytes: int = SUPPORT_LOG_MAX_FILE_BYTES,
-        retention_days: int = SUPPORT_LOG_RETENTION_DAYS,
+        retention_days: int | None = SUPPORT_LOG_RETENTION_DAYS,
         compression_after_days: int = SUPPORT_LOG_COMPRESSION_AFTER_DAYS,
         max_total_bytes: int = SUPPORT_LOG_MAX_TOTAL_BYTES,
         memory_capacity: int = SUPPORT_LOG_MEMORY_CAPACITY,
@@ -108,7 +108,9 @@ class SupportLogWriter:
         self.fallback_root = Path(fallback_root)
         self.now = now or (lambda: datetime.now().astimezone())
         self.max_file_bytes = int(max_file_bytes)
-        self.retention_days = int(retention_days)
+        self.retention_days = (
+            None if retention_days is None else int(retention_days)
+        )
         self.compression_after_days = int(compression_after_days)
         self.max_total_bytes = int(max_total_bytes)
         self.memory_events = deque(maxlen=max(1, int(memory_capacity)))
@@ -269,6 +271,22 @@ class SupportLogWriter:
             if path.is_file() and LOG_NAME_PATTERN.match(path.name)
         )
 
+    @property
+    def total_size_bytes(self) -> int:
+        """Return the size of all managed logs in the active log directory."""
+        total = 0
+        for path in self.managed_files():
+            try:
+                total += path.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    @property
+    def over_size_limit(self) -> bool:
+        """Indicate that operator archiving/deletion should be considered."""
+        return self.total_size_bytes > self.max_total_bytes
+
     def _run_maintenance(self) -> None:
         """Apply retention and compression only to managed inactive files."""
         if self.active_root is None:
@@ -281,14 +299,16 @@ class SupportLogWriter:
                 if managed_day is None or path == active:
                     continue
                 age = (today - managed_day).days
-                if age > self.retention_days:
+                if (
+                    self.retention_days is not None
+                    and age > self.retention_days
+                ):
                     path.unlink(missing_ok=True)
                 elif (
                     age > self.compression_after_days
                     and path.suffix == ".jsonl"
                 ):
                     self._compress(path)
-            self._enforce_total_size(active)
         except Exception as error:
             self.last_error = "Support-log maintenance failed: %s" % redact_path(error)
 
@@ -303,24 +323,6 @@ class SupportLogWriter:
             path.unlink()
         finally:
             temporary.unlink(missing_ok=True)
-
-    def _enforce_total_size(self, active: Path | None) -> None:
-        files = self.managed_files()
-        sizes = {}
-        for path in files:
-            try:
-                sizes[path] = path.stat().st_size
-            except OSError:
-                sizes[path] = 0
-        total = sum(sizes.values())
-        for path in sorted(files, key=lambda item: (self._managed_date(item), item.name)):
-            if total <= self.max_total_bytes:
-                break
-            if path == active:
-                continue
-            size = sizes[path]
-            path.unlink(missing_ok=True)
-            total -= size
 
     def flush(self) -> None:
         """Writes are flushed per event; retained for the service contract."""
