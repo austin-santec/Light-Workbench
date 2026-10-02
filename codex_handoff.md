@@ -7,7 +7,7 @@ and the Git worktree are the source of truth.
 ## Mission
 
 This project automates optical insertion-loss testing for an ILM-100/OP815
-meter and a Santec OSX-150 optical switch. The operator selects logical switch
+meter and a Santec OSX-100/OSX-150 optical switch. The operator selects logical switch
 channels, moves the output cable when prompted, and obtains insertion loss at
 1310 nm and 1550 nm.
 
@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.13.1**. The single
+The current source release is **Light Workbench 1.14.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -67,10 +67,10 @@ blocks the sample and leaves no history row.
 | infrastructure/unit_persistence.py | Atomic unit JSON records and numbered-run paths; root `unit_persistence.py` is a compatibility facade. |
 | infrastructure/coc_export.py | COC template lookup, XLSX writing, and drawing preservation; root `coc_export.py` is a compatibility facade. |
 | op815_driver.py | ctypes wrapper around the 32-bit OP815M.dll. Owns DLL discovery, function signatures, device selection, source control, wavelength selection, measurements, and cleanup. |
-| hardware/optical_switch.py | Extensible Santec switch identity registry and verified OSX-150 PyVISA/SCPI adapter. |
+| hardware/optical_switch.py | Extensible Santec switch identity registry and verified OSX-100/OSX-150 PyVISA/SCPI adapter. |
 | hardware/device_identity.py | Compatibility-safe identity reporting for hardware adapters. |
 | ui/hardware_status.py | Compact Connected hardware status panel presented in the main header. |
-| osx150_driver.py | Compatibility facade for the OSX-150 hardware adapter. |
+| osx150_driver.py | Compatibility facade for the Santec optical-switch adapter. |
 | ui/red_light_test.py | Separate VFL pre-test dialog. Tools > Red Light Test opens it without connecting; its Start button connects and routes channels without creating readings or run/COC data. |
 | red_light_test.py | Compatibility facade for the Red Light presentation module. |
 | ui/live_il_reading.py | Meter-only Live IL Reading dialog. It connects only to the OP815, calculates both wavelength losses from editable references, supports non-persistent reconnect repeatability testing and timed live updates, and never controls the switch or persists data. |
@@ -125,7 +125,8 @@ immutable FUN-048 audit history.
 The incremental refactor has progressed without changing the current
 operator workflow. `hardware/interfaces.py` now defines the application-facing
 contracts for a power meter, separate laser source, and optical switch. The
-existing OP815 meter and OSX-150 switch continue to be used exactly as before.
+existing OP815 meter and OSX-100/OSX-150 switch profiles continue to use the
+same command and timing behavior.
 Their application-facing adapters now live in `hardware/power_meter.py` and
 `hardware/optical_switch.py`; the root modules remain compatibility facades so
 existing imports remain compatible.
@@ -150,10 +151,10 @@ regression tests and a documented migration path.
 - OP815M.dll beside op815_driver.py for source runs, or beside the built
   executable in the PyInstaller distribution.
 - The ILM/OP815 USB driver and a VISA implementation such as NI-VISA for the
-  OSX-150.
+  supported OSX-100/OSX-150.
 - The approved OptoTest OP-USB driver package is available at
   `https://santec-inst.files.svdcdn.com/production/USB-Driver-for-Santec-CA-Optotest.zip?dm=1768835182`.
-- Santec Terminal must release the OSX-150 VISA resource before this program
+- Santec Terminal must release the Santec OSX VISA resource before this program
   connects.
 
 In the inspected environment, python resolved to
@@ -316,9 +317,9 @@ convention differs from the assumed zero-based mapping; diagnostics retain that
 discrepancy as a trace warning with the raw values. A wrong or unsupported
 actual wavelength still blocks `ReadPower`.
 
-### OSX-150
+### Santec OSX-100 / OSX-150
 
-hardware/optical_switch.py tries the operator's manual address, a separately
+`hardware/optical_switch.py` tries the operator's manual address, a separately
 remembered automatic address, then a targeted `USB?*::INSTR` enumeration
 filtered by Santec VID/PID 0x2428 / 0xD00D. Each candidate gets a fresh LF and,
 if needed, CRLF `*IDN?` probe. A supported identity is followed by channel-count
@@ -331,6 +332,14 @@ information but block routing and close the session safely. It uses:
 
 `CLOSe?` must not be used as a connection probe. It is valid only after
 `CLOSe <logical channel>` has routed a channel.
+
+Both explicit `OSX-100`/`OSX-150` identities are supported. Older OSX-100
+firmware may report `SANTEC,OSX,<serial>,<firmware>`; when the identity is
+complete, this is resolved to OSX-100 with a visible legacy-generic warning.
+The raw identity, resolved model, detection method, serial, firmware, VISA
+address, discovery method, SCPI line ending, and configured channel count are
+retained in transient status and support traces. Unsupported or malformed
+identities are rejected before any channel command is sent.
 
 The switch applies its own replacement mapping. Python should request the
 logical test channel and record the reported physical port; it should not

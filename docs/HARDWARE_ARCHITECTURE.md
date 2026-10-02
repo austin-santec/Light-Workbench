@@ -12,26 +12,29 @@ Application workflows should depend on capability contracts in
 - `OpticalSwitch`: connects, reports configured logical channels, selects a
   logical channel, and closes.
 
-The current `SantecPowerMeter` and `OSX150` classes are adapters for these
+The current `SantecPowerMeter` and `SantecOpticalSwitch` classes are adapters for these
 capabilities. The application should not import `OP815`, `pyvisa`, `ctypes`,
 or vendor-specific SCPI details in its domain or UI code.
 
 `hardware/factory.py` is the composition boundary for selecting concrete
 adapters. UI workflows request capabilities from the factory instead of
 constructing vendor adapters independently. Its default factories import the
-OP815 and OSX-150 implementations only when a real hardware object is created,
+OP815 and Santec OSX-100/OSX-150 implementations only when a real hardware object is created,
 so importing the contracts and running hardware-free tests does not require an
 active vendor session.
 
 `hardware/power_meter.py` contains the integrated Santec OP815 adapter and the
 hardware-free simulated meter. The vendor DLL wrapper remains in
 `op815_driver.py`. `hardware/optical_switch.py` contains the Santec switch
-identity parser and capability-profile registry. The verified OSX-150 profile
-currently supplies the PyVISA/SCPI commands; future models such as OSX-100 can
-be added only after their identity and command compatibility are verified. The
-root `power_meter.py` and `osx150_driver.py` modules are compatibility facades.
+identity parser and capability-profile registry. The verified OSX-100 and
+OSX-150 profiles currently use the same PyVISA/SCPI commands, but remain
+separate so a future model-specific command change is isolated. The legacy
+`SANTEC,OSX,<serial>,<firmware>` identity is accepted as OSX-100 only when all
+identity fields are present and is shown as a legacy-generic warning. Explicit
+unsupported or malformed identities are rejected. The root `power_meter.py`
+and `osx150_driver.py` modules are compatibility facades.
 
-The OSX-150 adapter tries addresses in a bounded order: the optional manual
+The Santec optical-switch adapter tries addresses in a bounded order: the optional manual
 address, a separately stored last-known automatic address, then resources from
 `list_resources("USB?*::INSTR")` filtered to Santec's USB VID/PID. This avoids
 the backend failure seen with broad, all-interface VISA enumeration. Automatic

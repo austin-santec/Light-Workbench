@@ -1,3 +1,5 @@
+#cd "C:\Users\Austin\Documents\Python Stuff\ILM Python Testing"
+# powershell -NoProfile -ExecutionPolicy Bypass -File .\build_windows.ps1
 $ErrorActionPreference = "Stop"
 
 $launcherCheck = $null

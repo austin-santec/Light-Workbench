@@ -74,6 +74,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\run_start.py',
    'PYMODULE'),
+  ('application.support_logging',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\support_logging.py',
+   'PYMODULE'),
   ('application.timing',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\timing.py',
@@ -318,6 +322,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\run_data.py',
    'PYMODULE'),
+  ('domain.support_events',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\support_events.py',
+   'PYMODULE'),
   ('domain.timing',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\timing.py',
@@ -556,6 +564,14 @@
   ('infrastructure.schema',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\schema.py',
+   'PYMODULE'),
+  ('infrastructure.support_bundle',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\support_bundle.py',
+   'PYMODULE'),
+  ('infrastructure.support_log_writer',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\support_log_writer.py',
    'PYMODULE'),
   ('infrastructure.unit_persistence',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -1401,6 +1417,10 @@
   ('ui.red_light_test',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\red_light_test.py',
+   'PYMODULE'),
+  ('ui.support_logs',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\support_logs.py',
    'PYMODULE'),
   ('urllib',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\urllib\\__init__.py',

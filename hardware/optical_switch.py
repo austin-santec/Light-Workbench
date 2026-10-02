@@ -61,6 +61,7 @@ class SwitchConnectionDiagnostics:
     raw_failed_response: str = ""
     user_message: str = ""
     connection_warning: str = ""
+    model_detection_method: str = ""
 
 
 class SwitchConnectionError(RuntimeError):
@@ -81,6 +82,24 @@ class SantecSwitchProfile:
     channel_command: str = "CLOSe %d"
 
 
+class SwitchModelDetection(str, Enum):
+    """How a Santec switch model was resolved from its VISA identity."""
+
+    EXPLICIT = "explicit_model"
+    LEGACY_GENERIC_OSX = "legacy_generic_osx"
+    MALFORMED_IDENTITY = "malformed_identity"
+
+
+@dataclass(frozen=True)
+class SantecSwitchProfileResolution:
+    """Resolved model/profile information without opening a hardware session."""
+
+    model: str = ""
+    profile: SantecSwitchProfile | None = None
+    detection_method: str = ""
+    raw_model: str = ""
+
+
 @dataclass(frozen=True)
 class _IdentityProbe:
     instrument: object
@@ -88,19 +107,24 @@ class _IdentityProbe:
     write_termination: str
 
 
-# Keep recognition and command compatibility in one registry. OSX-100 is
-# intentionally absent until its command set has been verified on hardware.
+# Keep recognition and command compatibility in one registry. Separate profile
+# entries make it possible to diverge safely if a future firmware revision
+# changes one model's commands.
 SANTEC_SWITCH_PROFILES = {
+    "OSX-100": SantecSwitchProfile(model="OSX-100"),
     "OSX-150": SantecSwitchProfile(model="OSX-150"),
 }
-KNOWN_SANTEC_SWITCH_MODEL_PATTERN = re.compile(r"\bOSX[- ]?\d+\b", re.IGNORECASE)
+NORMALIZED_SANTEC_MODEL_PATTERN = re.compile(r"OSX[- ]?(\d+)", re.IGNORECASE)
 SCPI_ERROR_RESPONSE_PATTERN = re.compile(r'^-\d+\s*,\s*"')
 
 
 def detect_santec_switch_model(identity: object) -> str | None:
     """Extract a normalized model token from a Santec identity string."""
-    match = KNOWN_SANTEC_SWITCH_MODEL_PATTERN.search(str(identity or ""))
-    return match.group(0).upper().replace(" ", "-") if match else None
+    _manufacturer, raw_model, _serial, _firmware = _identity_fields(identity)
+    match = NORMALIZED_SANTEC_MODEL_PATTERN.fullmatch(
+        re.sub(r"[\s_]+", "-", raw_model.strip().upper())
+    )
+    return "OSX-%s" % match.group(1) if match else None
 
 
 def _identity_fields(identity: object) -> tuple[str, str, str, str]:
@@ -109,13 +133,59 @@ def _identity_fields(identity: object) -> tuple[str, str, str, str]:
     return fields[0], fields[1], fields[2], fields[3]
 
 
+def resolve_santec_switch_profile(identity: object) -> SantecSwitchProfileResolution:
+    """Resolve explicit and legacy-generic Santec OSX identities.
+
+    Older OSX-100 firmware reports ``SANTEC,OSX,<serial>,<firmware>`` while
+    newer firmware may report an explicit OSX-100 model.  The generic form is
+    intentionally accepted only when the manufacturer, serial, and firmware
+    fields are present; an incomplete identity must not be guessed.
+    """
+    manufacturer, raw_model, serial, firmware = _identity_fields(identity)
+    normalized_model = raw_model.strip().upper().replace("_", "-")
+    normalized_model = re.sub(r"\s+", "-", normalized_model)
+    if not manufacturer.upper().startswith("SANTEC"):
+        return SantecSwitchProfileResolution(raw_model=raw_model)
+
+    if not raw_model or not serial or not firmware:
+        return SantecSwitchProfileResolution(
+            model=detect_santec_switch_model(identity) or raw_model.upper(),
+            detection_method=SwitchModelDetection.MALFORMED_IDENTITY.value,
+            raw_model=raw_model,
+        )
+
+    if normalized_model == "OSX":
+        return SantecSwitchProfileResolution(
+            model="OSX-100",
+            profile=SANTEC_SWITCH_PROFILES["OSX-100"],
+            detection_method=SwitchModelDetection.LEGACY_GENERIC_OSX.value,
+            raw_model=raw_model,
+        )
+
+    match = NORMALIZED_SANTEC_MODEL_PATTERN.fullmatch(normalized_model)
+    if not match:
+        return SantecSwitchProfileResolution(
+            model=normalized_model,
+            detection_method=SwitchModelDetection.MALFORMED_IDENTITY.value,
+            raw_model=raw_model,
+        )
+
+    model = "OSX-%s" % match.group(1)
+    return SantecSwitchProfileResolution(
+        model=model,
+        profile=SANTEC_SWITCH_PROFILES.get(model),
+        detection_method=SwitchModelDetection.EXPLICIT.value,
+        raw_model=raw_model,
+    )
+
+
 def extract_santec_serial(identity: object) -> str:
     """Extract the serial field from the usual comma-separated VISA IDN."""
     return _identity_fields(identity)[2]
 
 
-class OSX150:
-    """Manage one supported Santec switch connected through USB VISA."""
+class SantecOpticalSwitch:
+    """Manage a supported Santec OSX switch connected through USB VISA."""
 
     def __init__(
         self,
@@ -132,8 +202,8 @@ class OSX150:
         self.last_known_address = last_known_address.strip()
         self.address_observer = address_observer
         self.write_termination = None
-        self.model = "OSX-150"
-        self.profile = SANTEC_SWITCH_PROFILES["OSX-150"]
+        self.model = "Santec optical switch"
+        self.profile = None
         self._configured_channel_count = None
         self.connection_diagnostics = SwitchConnectionDiagnostics()
         self._enumeration_error = ""
@@ -197,18 +267,20 @@ class OSX150:
         termination: str = "",
     ) -> SwitchConnectionDiagnostics:
         manufacturer, _raw_model, serial, firmware = _identity_fields(identity)
+        resolution = resolve_santec_switch_profile(identity)
         return SwitchConnectionDiagnostics(
             discovery_method=discovery_method,
             resource_address=address,
             enumeration_error=self._enumeration_error,
             raw_identity=identity,
             manufacturer=manufacturer,
-            model=detect_santec_switch_model(identity) or "",
+            model=resolution.model,
             serial_number=serial,
             firmware_version=firmware,
             write_termination=(
                 "CRLF" if termination == "\r\n" else "LF" if termination else ""
             ),
+            model_detection_method=resolution.detection_method,
         )
 
     def _candidate_addresses(self) -> Iterator[tuple[str, str]]:
@@ -486,6 +558,10 @@ class OSX150:
             transport_parts.append(
                 "VISA enumeration warning: %s" % diagnostics.enumeration_error
             )
+        if diagnostics.model_detection_method:
+            transport_parts.append(
+                "Model detection: %s" % diagnostics.model_detection_method
+            )
         return DeviceInfo(
             category=DeviceCategory.OPTICAL_SWITCH,
             manufacturer=diagnostics.manufacturer or "Santec",
@@ -503,6 +579,7 @@ class OSX150:
             failed_command=diagnostics.failed_command,
             raw_response=diagnostics.raw_failed_response,
             connection_warning=diagnostics.connection_warning,
+            model_detection_method=diagnostics.model_detection_method,
         )
 
     def connect(self) -> None:
@@ -517,8 +594,9 @@ class OSX150:
                 if probe is None:
                     continue
 
-                model = detect_santec_switch_model(probe.identity)
-                profile = SANTEC_SWITCH_PROFILES.get(model)
+                resolution = resolve_santec_switch_profile(probe.identity)
+                model = resolution.model or detect_santec_switch_model(probe.identity)
+                profile = resolution.profile
                 diagnostics = self._base_diagnostics(
                     address,
                     discovery_method,
@@ -546,7 +624,32 @@ class OSX150:
                                 "Identity: %s" % (address, probe.identity)
                             ),
                         )
+                    if resolution.detection_method == (
+                        SwitchModelDetection.MALFORMED_IDENTITY.value
+                    ):
+                        diagnostics = replace(
+                            diagnostics,
+                            user_message=(
+                                "The Santec switch at %s returned an incomplete or "
+                                "malformed identity. Expected manufacturer, model, "
+                                "serial number, and firmware fields. Identity: %s"
+                                % (address, probe.identity)
+                            ),
+                        )
                     self._last_failure = diagnostics
+                    self.connection_diagnostics = diagnostics
+                    self._trace(
+                        "switch_model_rejected",
+                        manufacturer=diagnostics.manufacturer,
+                        model=diagnostics.model,
+                        device_serial=diagnostics.serial_number,
+                        firmware=diagnostics.firmware_version,
+                        resource_address=address,
+                        discovery_method=discovery_method,
+                        model_detection_method=diagnostics.model_detection_method,
+                        raw_response=probe.identity,
+                        status="error",
+                    )
                     continue
 
                 self.instrument = probe.instrument
@@ -556,16 +659,28 @@ class OSX150:
                 self.model = profile.model
                 self.profile = profile
                 warning = ""
+                if resolution.detection_method == (
+                    SwitchModelDetection.LEGACY_GENERIC_OSX.value
+                ):
+                    warning = (
+                        "The switch reported the legacy generic Santec model "
+                        "identity 'OSX'. Light Workbench resolved it as OSX-100 "
+                        "using the verified OSX-100 profile."
+                    )
                 if (
                     self._manual_address_failed
                     and discovery_method != SwitchDiscoveryMethod.MANUAL.value
                 ):
-                    warning = (
+                    warning = (warning + " " if warning else "") + (
                         "The saved manual switch address did not respond; Light "
                         "Workbench connected using %s at %s."
                         % (discovery_method.lower(), address)
                     )
-                diagnostics = replace(diagnostics, connection_warning=warning)
+                diagnostics = replace(
+                    diagnostics,
+                    connection_warning=warning,
+                    model_detection_method=resolution.detection_method,
+                )
                 self._configured_channel_count = self._read_and_validate_channel_count(
                     diagnostics
                 )
@@ -585,10 +700,13 @@ class OSX150:
                     model=self.model,
                     device_serial=diagnostics.serial_number,
                     firmware=diagnostics.firmware_version,
+                    raw_identity=diagnostics.raw_identity,
                     resource_address=address,
                     discovery_method=discovery_method,
                     configured_channel_count=self._configured_channel_count,
                     write_termination=self.connection_diagnostics.write_termination,
+                    model_detection_method=diagnostics.model_detection_method,
+                    connection_warning=diagnostics.connection_warning,
                     status="success",
                 )
                 return
@@ -714,10 +832,16 @@ class OSX150:
         self._trace("switch_closed", status="success")
 
 
+# Compatibility alias retained for existing imports and application test seams.
+OSX150 = SantecOpticalSwitch
+
+
 __all__ = [
     "MIN_SWITCH_CHANNEL",
     "OSX150",
+    "SantecOpticalSwitch",
     "SantecSwitchProfile",
+    "SantecSwitchProfileResolution",
     "SANTEC_SWITCH_PROFILES",
     "SANTEC_USB_PRODUCT_ID",
     "SANTEC_USB_RESOURCE_QUERY",
@@ -727,6 +851,8 @@ __all__ = [
     "SwitchConnectionError",
     "SwitchConnectionStage",
     "SwitchDiscoveryMethod",
+    "SwitchModelDetection",
     "detect_santec_switch_model",
     "extract_santec_serial",
+    "resolve_santec_switch_profile",
 ]

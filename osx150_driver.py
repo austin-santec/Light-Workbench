@@ -3,6 +3,7 @@
 from hardware.optical_switch import (
     MIN_SWITCH_CHANNEL,
     OSX150,
+    SantecOpticalSwitch,
     SANTEC_USB_PRODUCT_ID,
     SANTEC_USB_RESOURCE_QUERY,
     SANTEC_USB_VENDOR_ID,
@@ -11,11 +12,14 @@ from hardware.optical_switch import (
     SwitchConnectionError,
     SwitchConnectionStage,
     SwitchDiscoveryMethod,
+    SwitchModelDetection,
+    resolve_santec_switch_profile,
 )
 
 __all__ = [
     "MIN_SWITCH_CHANNEL",
     "OSX150",
+    "SantecOpticalSwitch",
     "SANTEC_USB_PRODUCT_ID",
     "SANTEC_USB_RESOURCE_QUERY",
     "SANTEC_USB_VENDOR_ID",
@@ -24,4 +28,6 @@ __all__ = [
     "SwitchConnectionError",
     "SwitchConnectionStage",
     "SwitchDiscoveryMethod",
+    "SwitchModelDetection",
+    "resolve_santec_switch_profile",
 ]

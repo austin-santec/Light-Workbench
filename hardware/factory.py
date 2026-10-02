@@ -14,16 +14,17 @@ def _create_default_power_meter() -> PowerMeter:
 
 
 def _create_default_switch() -> OpticalSwitch:
-    """Create the OSX-150 adapter only when hardware is requested."""
-    from hardware.optical_switch import OSX150
+    """Create the supported Santec switch adapter on demand."""
+    from hardware.optical_switch import SantecOpticalSwitch
 
-    return OSX150()
+    return SantecOpticalSwitch()
 
 
 class HardwareFactory:
     """Create the hardware adapters selected for the current workstation.
 
-    The default composition is the current integrated ILM plus OSX-150 switch.
+    The default composition is the current integrated ILM plus a supported
+    Santec OSX-100/OSX-150 switch.
     A future OPM-plus-laser configuration can provide a different meter or
     additional capabilities without adding vendor conditionals to the UI.
     """

@@ -72,11 +72,10 @@ Check an item only after the **Still needed** portion is implemented and tested.
     using defined validity rules.
 
 - [ ] **FUN-015 — Find the selected OSX model and show its connection status.** `[MVP]`
-  - Already works: Verified OSX-150 devices are detected using manual,
+  - Already works: Verified OSX-100 and OSX-150 devices are detected using manual,
     last-known, and targeted USB VISA discovery, with LF/CRLF identity probing,
     channel-count validation, and detailed identity/status reporting.
-  - Still needed: Connect discovery to an operator-selected family and add verified
-    OSX-100 support.
+  - Still needed: Add an operator-selected family and family-mismatch workflow.
 
 - [ ] **FUN-017 — Route a channel and confirm the switch finished moving.** `[MVP]`
   - Already works: The application sends the route command and reads back the

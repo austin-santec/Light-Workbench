@@ -1148,7 +1148,9 @@ class MainWindow(QMainWindow):
         run_controls_layout = QHBoxLayout()
         self.start_hardware_button = QPushButton("Start Run")
         self.start_hardware_button.setObjectName("hardware_primary_control")
-        self.start_hardware_button.setToolTip("Start a real OP815 and OSX-150 hardware run.")
+        self.start_hardware_button.setToolTip(
+            "Start a real OP815 and supported Santec OSX-100/OSX-150 hardware run."
+        )
         self.start_hardware_button.clicked.connect(self.start_hardware)
         run_controls_layout.addWidget(self.start_hardware_button)
         self.stop_hardware_button = QPushButton("Stop run")
@@ -1550,7 +1552,7 @@ class MainWindow(QMainWindow):
         address, accepted = QInputDialog.getText(
             self,
             "Switch VISA Address",
-            "Optional manual VISA address for the OSX-150. Leave blank to try "
+            "Optional manual VISA address for a Santec OSX-100/OSX-150. Leave blank to try "
             "the last working address and then automatic USB discovery. Changes "
             "apply to the next switch connection:",
             text=self.switch_visa_address,

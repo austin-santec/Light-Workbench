@@ -2,8 +2,8 @@ LIGHT WORKBENCH - INSTALLATION AND QUICK START
 ===============================================
 
 This ZIP contains the Light Workbench desktop application. Its current
-insertion-loss workflow uses an ILM/OP815 power meter and a Santec OSX-150
-optical switch, with room for additional optical meters, lasers, and switch
+insertion-loss workflow uses an ILM/OP815 power meter and a Santec OSX-100 or
+OSX-150 optical switch, with room for additional optical meters, lasers, and switch
 workflows in the future.
 
 IMPORTANT: Keep the complete LightWorkbench folder together. Do not copy or
@@ -23,7 +23,7 @@ The target computer needs:
   * Windows 10 or Windows 11.
   * The ILM/OP815 USB driver.
   * A compatible 32-bit VISA runtime, such as NI-VISA with 32-bit support.
-  * The ILM and OSX-150 connected by USB and powered on for hardware tests.
+  * The ILM and supported OSX-100/OSX-150 connected by USB and powered on for hardware tests.
 
 The application is 32-bit. It normally runs on both 32-bit and 64-bit Windows,
 but a 64-bit computer must still have the 32-bit VISA support installed.
@@ -65,7 +65,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.13.1; an existing executable keeps its prior version until rebuilt.
+1.14.0; an existing executable keeps its prior version until rebuilt.
 
 
 3. VERIFY VISA
@@ -213,10 +213,13 @@ Engineering support logs are written automatically under:
   %LOCALAPPDATA%\LightWorkbench\logs
 
 Use Help > Support Logs to open the folder, check logging status, copy the
-folder path, or export a dated support bundle for engineering. Support logging
-does not change run files or hardware behavior. A degraded logging warning does
-not block testing. Support bundles stay local until the operator sends or moves
-them through an approved process; no automatic upload occurs.
+folder path, or export a dated support bundle for engineering. Logs are retained
+indefinitely. Inactive logs older than seven days are gzip-compressed, and a
+warning appears when the managed logs exceed 500 MB so they can be archived or
+deleted. Support logging does not change run files or hardware behavior. A
+degraded logging warning does not block testing. Support bundles stay local
+until the operator sends or moves them through an approved process; no
+automatic upload occurs.
 
 
 6. COMMON PROBLEMS
@@ -227,7 +230,7 @@ them through an approved process; no automatic upload occurs.
   installed. The approved OptoTest OP-USB driver is available at the download
   link in section 1. Close other software using the ILM.
 
-"No Santec OSX-150 was detected over USB VISA"
+"No supported Santec OSX switch was detected over USB VISA"
   Confirm the switch is powered on and connected. Close Santec Terminal and
   verify that the compatible 32-bit VISA runtime is installed.
 
@@ -253,6 +256,6 @@ The program will not start
   [ ] ILM/OP815 USB driver is installed.
   [ ] 32-bit VISA runtime is installed.
   [ ] Santec Terminal is closed before testing.
-  [ ] ILM and OSX-150 are powered and connected.
+  [ ] ILM and supported OSX-100/OSX-150 are powered and connected.
   [ ] Documents\ILM-Reads is writable.
   [ ] The U: lookup path is available if automatic part lookup is needed.

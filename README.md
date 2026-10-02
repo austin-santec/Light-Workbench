@@ -5,7 +5,7 @@ testing and measurement. Its current workflow measures insertion loss at
 **1310 nm** and **1550 nm** and controls:
 
 - An ILM-100 exposed to the vendor DLL as an **OP815**
-- A Santec **OSX-150** optical switch connected through USB VISA
+- A Santec **OSX-100 or OSX-150** optical switch connected through USB VISA
 
 The operator moves the output cable when prompted. The program changes the
 switch channel, takes both wavelength readings, displays the calculated losses,
@@ -15,7 +15,7 @@ and saves accepted readings to a CSV file that opens directly in Excel.
 
 At startup, the program offers three workflows:
 
-1. **Full pass** — tests every logical channel configured in the OSX-150.
+1. **Full pass** — tests every logical channel configured in the connected Santec switch.
 2. **One channel** — tests a single logical channel.
 3. **Specific channels and ranges** — accepts individual channels, inclusive
    ranges, or both in one comma-separated entry. For example,
@@ -26,7 +26,7 @@ Repeated channels are tested only once. For example, `1, 1-3` tests channels
 
 For every channel, it can:
 
-- Automatically route the OSX-150 to the requested logical channel.
+- Automatically route the connected OSX-100/OSX-150 to the requested logical channel.
 - Measure absolute power at 1310 nm and 1550 nm.
 - Calculate insertion loss using reference values entered by the operator.
 - Display both insertion-loss values before saving them.
@@ -177,11 +177,11 @@ redaction, and support-bundle details.
 | `domain/hardware_connection.py` | Vendor-neutral hardware capabilities, readiness snapshots, and connection errors |
 | `hardware/device_identity.py` | Compatibility-safe identity reporting for hardware adapters |
 | `hardware/power_meter.py` | Integrated OP815 adapter and simulated meter implementations |
-| `hardware/optical_switch.py` | Extensible Santec switch identity registry and OSX-150 adapter |
+| `hardware/optical_switch.py` | Extensible Santec switch identity registry and OSX-100/OSX-150 adapter |
 | `ui/hardware_status.py` | Connected hardware status presentation panel |
 | `hardware/factory.py` | Lazy composition of real and future hardware adapters |
 | `power_meter.py` | Compatibility facade for the hardware power-meter adapters |
-| `osx150_driver.py` | Compatibility facade for the OSX-150 hardware adapter |
+| `osx150_driver.py` | Compatibility facade for the Santec optical-switch adapter |
 | `red_light_test.py` | Compatibility facade for the Red Light presentation module |
 | `live_il_reading.py` | Compatibility facade for the Live IL presentation module |
 | `app_info.py` | Compatibility facade for application release metadata |
@@ -211,7 +211,8 @@ laser support maintainable.
 
 The vendor-neutral contracts in `hardware/interfaces.py` are the first step
 toward supporting more equipment. The current integrated ILM implements the
-`PowerMeter` contract and the OSX-150 implements the `OpticalSwitch` contract.
+`PowerMeter` contract and the Santec OSX-100/OSX-150 adapter implements the
+`OpticalSwitch` contract.
 A future OPM plus separate laser can implement `PowerMeter` and `LaserSource`
 independently without requiring the application workflow to know the vendor
 or connection protocol. Existing top-level driver modules remain in place for
@@ -227,7 +228,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.13.1**; an existing executable keeps its prior
+current source version is **1.14.0**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
@@ -753,7 +754,7 @@ Place `OP815M.dll` beside `op815_driver.py`. Do not rename the DLL.
 If multiple OP815 devices are found, the application lists their descriptions
 and USB serial numbers and asks which index to use.
 
-### `No Santec OSX-150 was detected over USB VISA`
+### `No supported Santec OSX switch was detected over USB VISA`
 
 - Confirm that the switch is powered on and connected through USB.
 - Close or disconnect Santec Terminal so it releases the VISA session.

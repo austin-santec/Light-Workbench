@@ -9,6 +9,7 @@ from hardware.optical_switch import (
     SANTEC_USB_RESOURCE_QUERY,
     SwitchConnectionError,
     detect_santec_switch_model,
+    resolve_santec_switch_profile,
 )
 from osx150_driver import OSX150
 
@@ -44,6 +45,21 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
             "OSX-100",
         )
         self.assertIsNone(detect_santec_switch_model("SANTEC,UNKNOWN,SW-3,1.0"))
+        self.assertEqual(
+            detect_santec_switch_model("SANTEC,OSX,19107,02.12.67"),
+            None,
+        )
+
+        generic = resolve_santec_switch_profile("SANTEC,OSX,19107,02.12.67")
+        self.assertEqual(generic.model, "OSX-100")
+        self.assertEqual(generic.detection_method, "legacy_generic_osx")
+        self.assertIsNotNone(generic.profile)
+        for raw_model in ("OSX-100", "OSX100", "OSX 100"):
+            resolution = resolve_santec_switch_profile(
+                "SANTEC,%s,SW-100,02.12.67" % raw_model
+            )
+            self.assertEqual(resolution.model, "OSX-100")
+            self.assertEqual(resolution.detection_method, "explicit_model")
 
     def test_switch_identity_reports_model_and_connection_state(self):
         switch = HardwareOSX150()
@@ -51,7 +67,7 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         info = switch.get_device_info(state=ConnectionState.CONNECTED)
 
         self.assertEqual(info.category, DeviceCategory.OPTICAL_SWITCH)
-        self.assertEqual(info.model, "OSX-150")
+        self.assertEqual(info.model, "Santec optical switch")
         self.assertEqual(info.state, ConnectionState.CONNECTED)
 
     def test_supported_profile_connects_and_preserves_identity(self):
@@ -308,10 +324,19 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         self.assertEqual(switch.address, found)
         switch.close()
 
-    def test_recognized_future_profile_is_rejected_with_identity(self):
+    def test_explicit_osx_100_profile_connects_and_reports_legacy_metadata(self):
         class Instrument:
-            def query(self, _command):
-                return "SANTEC,OSX-100,SW-100,1.0"
+            def query(self, command):
+                if command == "*IDN?":
+                    return "SANTEC,OSX-100,SW-100,02.12.67"
+                if command == "CFG:SWT:END?":
+                    return "100"
+                if command == "CLOSe?":
+                    return "3"
+                raise AssertionError(command)
+
+            def write(self, command):
+                self.last_write = command
 
             def close(self):
                 pass
@@ -328,7 +353,87 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
 
         switch = HardwareOSX150()
         with patch("hardware.optical_switch.pyvisa.ResourceManager", ResourceManager):
-            with self.assertRaisesRegex(RuntimeError, "OSX-100.*does not yet"):
+            switch.connect()
+
+        info = switch.get_device_info(state=ConnectionState.CONNECTED)
+        self.assertEqual(info.model, "OSX-100")
+        self.assertEqual(info.serial_number, "SW-100")
+        self.assertEqual(info.configured_channel_count, 100)
+        self.assertEqual(info.model_detection_method, "explicit_model")
+        with patch("hardware.optical_switch.time.sleep"):
+            self.assertEqual(switch.set_channel(3), 3)
+        self.assertEqual(switch.instrument.last_write, "CLOSe 3")
+        switch.close()
+
+    def test_legacy_generic_osx_identity_connects_as_osx_100_with_warning(self):
+        events = []
+
+        class Instrument:
+            def query(self, command):
+                if command == "*IDN?":
+                    return "SANTEC,OSX,19107,02.12.67"
+                if command == "CFG:SWT:END?":
+                    return "100"
+                if command == "CLOSe?":
+                    return "3"
+                raise AssertionError(command)
+
+            def write(self, command):
+                self.last_write = command
+
+            def close(self):
+                pass
+
+        class ResourceManager:
+            def list_resources(self, query):
+                return ("USB0::0x2428::0xD00D::SW-100::INSTR",)
+
+            def open_resource(self, _address):
+                return Instrument()
+
+            def close(self):
+                pass
+
+        switch = HardwareOSX150(trace_callback=events.append)
+        with patch("hardware.optical_switch.pyvisa.ResourceManager", ResourceManager):
+            switch.connect()
+
+        info = switch.get_device_info(state=ConnectionState.CONNECTED)
+        self.assertEqual(info.model, "OSX-100")
+        self.assertEqual(info.serial_number, "19107")
+        self.assertEqual(info.firmware_version, "02.12.67")
+        self.assertEqual(info.configured_channel_count, 100)
+        self.assertEqual(info.model_detection_method, "legacy_generic_osx")
+        self.assertIn("legacy generic", info.connection_warning)
+        self.assertIn("legacy_generic_osx", info.transport_details)
+        connected = next(item for item in events if item["event"] == "switch_connected")
+        self.assertEqual(connected["model"], "OSX-100")
+        self.assertEqual(connected["model_detection_method"], "legacy_generic_osx")
+        switch.close()
+
+    def test_unsupported_explicit_osx_model_is_rejected(self):
+        class Instrument:
+            def query(self, command):
+                if command == "*IDN?":
+                    return "SANTEC,OSX-200,SW-200,1.0"
+                raise AssertionError(command)
+
+            def close(self):
+                pass
+
+        class ResourceManager:
+            def list_resources(self, query):
+                return ("USB0::0x2428::0xD00D::SW-200::INSTR",)
+
+            def open_resource(self, _address):
+                return Instrument()
+
+            def close(self):
+                pass
+
+        switch = HardwareOSX150()
+        with patch("hardware.optical_switch.pyvisa.ResourceManager", ResourceManager):
+            with self.assertRaisesRegex(RuntimeError, "OSX-200.*does not yet"):
                 switch.connect()
 
     def test_zero_channel_configuration_preserves_identity_and_blocks_connection(self):

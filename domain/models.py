@@ -94,6 +94,7 @@ class DeviceInfo:
     failed_command: str = ""
     raw_response: str = ""
     connection_warning: str = ""
+    model_detection_method: str = ""
 
     def with_state(self, state: ConnectionState, error: str = "") -> "DeviceInfo":
         """Return this identity with an updated transient connection state."""

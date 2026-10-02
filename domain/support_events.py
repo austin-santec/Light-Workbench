@@ -50,6 +50,7 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "device_serial",
         "firmware",
         "resource_address",
+        "raw_identity",
         "discovery_method",
         "connection_state",
         "lease_owner",
@@ -107,6 +108,8 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "live_write_mode",
         "configured_channel_count",
         "write_termination",
+        "model_detection_method",
+        "connection_warning",
         "partial_success",
     }
 )
