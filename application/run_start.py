@@ -66,6 +66,8 @@ def build_hardware_run_request(
     resume_existing: bool,
     live_write_mode: bool,
     live_write_interval: float = LIVE_WRITE_INTERVAL_SECONDS,
+    support_logger=None,
+    workflow_id: str = "",
 ) -> HardwareRunRequest:
     """Create a controller request for already-created hardware adapters."""
     return HardwareRunRequest(
@@ -82,6 +84,8 @@ def build_hardware_run_request(
         and not preparation.manual_channel_order,
         live_write_mode=live_write_mode,
         live_write_interval=live_write_interval,
+        support_logger=support_logger,
+        workflow_id=workflow_id,
     )
 
 

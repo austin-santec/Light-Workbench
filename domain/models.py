@@ -65,6 +65,7 @@ class ConnectionState(str, Enum):
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
     CONNECTED = "connected"
+    IN_USE = "in_use"
     ERROR = "error"
 
 
@@ -85,6 +86,14 @@ class DeviceInfo:
     resource_address: str = ""
     state: ConnectionState = ConnectionState.DISCONNECTED
     error: str = ""
+    transport_details: str = ""
+    firmware_version: str = ""
+    configured_channel_count: int | None = None
+    discovery_method: str = ""
+    failure_stage: str = ""
+    failed_command: str = ""
+    raw_response: str = ""
+    connection_warning: str = ""
 
     def with_state(self, state: ConnectionState, error: str = "") -> "DeviceInfo":
         """Return this identity with an updated transient connection state."""

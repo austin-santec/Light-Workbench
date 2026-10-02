@@ -1,5 +1,11 @@
 # Data Architecture
 
+Always-on engineering support JSONL is intentionally separate from production
+run persistence. It may contain temporary readings, hardware commands, and
+workflow context, but it does not modify CSV/JSON/unit/COC schemas and is not an
+authoritative result or immutable audit record. See `SUPPORT_LOGGING.md` for
+the event schema, redaction, retention, and bundle policy.
+
 ## Unit and run ownership
 
 A unit represents the device being built and may contain multiple tests. A run

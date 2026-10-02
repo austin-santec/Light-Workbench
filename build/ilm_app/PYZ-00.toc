@@ -38,6 +38,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\diagnostic_trace.py',
    'PYMODULE'),
+  ('application.hardware_connection',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\hardware_connection.py',
+   'PYMODULE'),
   ('application.hardware_planning',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\hardware_planning.py',
@@ -281,6 +285,10 @@
   ('domain.diagnostic_trace',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\diagnostic_trace.py',
+   'PYMODULE'),
+  ('domain.hardware_connection',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\hardware_connection.py',
    'PYMODULE'),
   ('domain.measurement',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '

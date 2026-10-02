@@ -25,6 +25,7 @@ imports:
  &#8226;   <a href="#_collections_abc">_collections_abc</a>
  &#8226;   <a href="#_weakrefset">_weakrefset</a>
  &#8226;   <a href="#abc">abc</a>
+ &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
  &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
  &#8226;   <a href="#application.hardware_session">application.hardware_session</a>
  &#8226;   <a href="#application.live_controller">application.live_controller</a>
@@ -37,6 +38,7 @@ imports:
  &#8226;   <a href="#copyreg">copyreg</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain.comparison">domain.comparison</a>
+ &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
@@ -385,6 +387,7 @@ imported by:
     <a href="#PyQt5">PyQt5</a>
  &#8226;   <a href="#PyQt5.QtGui">PyQt5.QtGui</a>
  &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
  &#8226;   <a href="#application.live_controller">application.live_controller</a>
  &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
  &#8226;   <a href="#application.power_diagnostics_controller">application.power_diagnostics_controller</a>
@@ -1503,6 +1506,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#application.diagnostic_trace">application.diagnostic_trace</a>
+ &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
  &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
  &#8226;   <a href="#application.hardware_session">application.hardware_session</a>
  &#8226;   <a href="#application.live_controller">application.live_controller</a>
@@ -1532,6 +1536,30 @@ imports:
   <div class="import">
 imported by:
     <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="application.hardware_connection"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/application/hardware_connection.py" type="text/plain"><tt>application.hardware_connection</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
+ &#8226;   <a href="#application">application</a>
+ &#8226;   <a href="#concurrent.futures">concurrent.futures</a>
+ &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#hardware.device_identity">hardware.device_identity</a>
+ &#8226;   <a href="#hardware.factory">hardware.factory</a>
+ &#8226;   <a href="#threading">threading</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
 
   </div>
 
@@ -3145,6 +3173,7 @@ imported by:
  &#8226;   <a href="#domain.reporting">domain.reporting</a>
  &#8226;   <a href="#hardware.factory">hardware.factory</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
+ &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
  &#8226;   <a href="#hardware.power_meter">hardware.power_meter</a>
  &#8226;   <a href="#hardware.simulated">hardware.simulated</a>
  &#8226;   <a href="#http.client">http.client</a>
@@ -3187,7 +3216,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#asyncio.base_events">asyncio.base_events</a>
+    <a href="#application.hardware_connection">application.hardware_connection</a>
+ &#8226;   <a href="#asyncio.base_events">asyncio.base_events</a>
  &#8226;   <a href="#asyncio.futures">asyncio.futures</a>
  &#8226;   <a href="#asyncio.tasks">asyncio.tasks</a>
  &#8226;   <a href="#concurrent.futures._base">concurrent.futures._base</a>
@@ -3699,6 +3729,7 @@ imported by:
  &#8226;   <a href="#config.app_config">config.app_config</a>
  &#8226;   <a href="#domain.diagnostic_analysis">domain.diagnostic_analysis</a>
  &#8226;   <a href="#domain.diagnostic_trace">domain.diagnostic_trace</a>
+ &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
  &#8226;   <a href="#domain.reporting">domain.reporting</a>
@@ -3831,6 +3862,7 @@ imported by:
     <a href="#domain.comparison">domain.comparison</a>
  &#8226;   <a href="#domain.diagnostic_analysis">domain.diagnostic_analysis</a>
  &#8226;   <a href="#domain.diagnostic_trace">domain.diagnostic_trace</a>
+ &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
@@ -3903,6 +3935,26 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="domain.hardware_connection"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/hardware_connection.py" type="text/plain"><tt>domain.hardware_connection</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#enum">enum</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application.hardware_connection">application.hardware_connection</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="domain.measurement"></a>
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/measurement.py" type="text/plain"><tt>domain.measurement</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -3936,13 +3988,15 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#application.hardware_planning">application.hardware_planning</a>
+    <a href="#application.hardware_connection">application.hardware_connection</a>
+ &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
  &#8226;   <a href="#application.live_controller">application.live_controller</a>
  &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
  &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
  &#8226;   <a href="#application.run_controller">application.run_controller</a>
  &#8226;   <a href="#domain">domain</a>
  &#8226;   <a href="#domain.comparison">domain.comparison</a>
+ &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.reporting">domain.reporting</a>
  &#8226;   <a href="#domain.run_data">domain.run_data</a>
@@ -3956,6 +4010,7 @@ imported by:
  &#8226;   <a href="#run_data">run_data</a>
  &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
+ &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
 
   </div>
 
@@ -7074,7 +7129,9 @@ imported by:
  &#8226;   <a href="#asyncio.runners">asyncio.runners</a>
  &#8226;   <a href="#asyncio.sslproto">asyncio.sslproto</a>
  &#8226;   <a href="#asyncio.timeouts">asyncio.timeouts</a>
+ &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
  &#8226;   <a href="#http">http</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#inspect">inspect</a>
@@ -7510,8 +7567,10 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#application.measurement_worker">application.measurement_worker</a>
+    <a href="#application.hardware_connection">application.hardware_connection</a>
+ &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
+ &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
 
   </div>
 
@@ -7532,7 +7591,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#hardware">hardware</a>
+    <a href="#application.hardware_connection">application.hardware_connection</a>
+ &#8226;   <a href="#hardware">hardware</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
@@ -7576,9 +7636,12 @@ imported by:
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/hardware/optical_switch.py" type="text/plain"><tt>hardware.optical_switch</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#dataclasses">dataclasses</a>
+    <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#enum">enum</a>
  &#8226;   <a href="#hardware">hardware</a>
+ &#8226;   <a href="#logging">logging</a>
  &#8226;   <a href="#pyvisa">pyvisa</a>
  &#8226;   <a href="#re">re</a>
  &#8226;   <a href="#time">time</a>
@@ -8909,6 +8972,7 @@ imported by:
     <a href="#asyncio.futures">asyncio.futures</a>
  &#8226;   <a href="#asyncio.log">asyncio.log</a>
  &#8226;   <a href="#concurrent.futures._base">concurrent.futures._base</a>
+ &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
  &#8226;   <a href="#hashlib">hashlib</a>
  &#8226;   <a href="#http.cookiejar">http.cookiejar</a>
  &#8226;   <a href="#multiprocessing.util">multiprocessing.util</a>
@@ -16945,6 +17009,7 @@ imports:
 imported by:
     <a href="#_threading_local">_threading_local</a>
  &#8226;   <a href="#application.diagnostic_trace">application.diagnostic_trace</a>
+ &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
  &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
  &#8226;   <a href="#asyncio.base_events">asyncio.base_events</a>
  &#8226;   <a href="#asyncio.events">asyncio.events</a>
@@ -17249,6 +17314,7 @@ imported by:
  &#8226;   <a href="#PyQt5.QtGui">PyQt5.QtGui</a>
  &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
  &#8226;   <a href="#PyQt5.sip">PyQt5.sip</a>
+ &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
  &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
  &#8226;   <a href="#application.run_controller">application.run_controller</a>
  &#8226;   <a href="#asyncio.staggered">asyncio.staggered</a>
@@ -17418,6 +17484,8 @@ imports:
     <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
  &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
  &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#hardware.device_identity">hardware.device_identity</a>
  &#8226;   <a href="#hardware.factory">hardware.factory</a>
  &#8226;   <a href="#ui">ui</a>
 

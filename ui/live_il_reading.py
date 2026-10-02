@@ -62,6 +62,13 @@ class LiveILReadingWorker(QObject):
         if self._finished:
             return
         try:
+            setter = getattr(self.meter, "set_trace_context", None)
+            if setter is not None:
+                setter(
+                    reference_1310_dbm=float(reference_1310),
+                    reference_1550_dbm=float(reference_1550),
+                    method="live_il",
+                )
             measurements = self.meter.measure_both_wavelengths()
             losses = calculate_insertion_loss(
                 {1310: reference_1310, 1550: reference_1550},
@@ -115,6 +122,8 @@ class LiveILReadingDialog(QDialog):
         reference_1550=0.00,
         meter_factory=None,
         auto_calculate_reference=False,
+        support_logger=None,
+        workflow_id="",
     ):
         super().__init__(parent)
         self.hardware_factory = HardwareFactory()
@@ -125,6 +134,8 @@ class LiveILReadingDialog(QDialog):
         )
         self.thread = None
         self.worker = None
+        self.support_logger = support_logger
+        self.workflow_id = str(workflow_id or "")
         self.live_controller = LiveILReadingController(
             self,
             worker_factory=LiveILReadingWorker,
@@ -137,6 +148,7 @@ class LiveILReadingDialog(QDialog):
         self.read_requested.connect(self.live_controller.read_requested)
         self.reference_requested.connect(self.live_controller.reference_requested)
         self.connected = False
+        self.uses_persistent_connection = False
         self.auto_calculate_reference = auto_calculate_reference
         self.repeatability_active = False
         self.repeatability_read_pending = False
@@ -322,6 +334,10 @@ class LiveILReadingDialog(QDialog):
 
     def meter_connected(self, description):
         self.connected = True
+        self.uses_persistent_connection = bool(
+            self.worker is not None
+            and getattr(self.worker.meter, "persistent_connection", False)
+        )
         self.read_button.setEnabled(
             self.connected
             and not self.repeatability_active
@@ -542,6 +558,14 @@ class LiveILReadingDialog(QDialog):
         )
 
     def reference_ready(self, reference_1310, reference_1550):
+        self._record_support(
+            "reference.completed",
+            category="measurement",
+            reference_1310_dbm=reference_1310,
+            reference_1550_dbm=reference_1550,
+            both_wavelengths_complete=True,
+            status="success",
+        )
         self.set_reference_values(reference_1310, reference_1550)
         self.references_changed.emit(reference_1310, reference_1550)
         self._close_reference_progress()
@@ -587,6 +611,24 @@ class LiveILReadingDialog(QDialog):
 
     def reading_ready(self, loss_1310, loss_1550):
         self.read_pending = False
+        method = (
+            "repeatability"
+            if self.repeatability_read_pending
+            else "live_monitoring"
+            if self.live_updates_active
+            else "manual"
+        )
+        self._record_support(
+            "measurement.two_wavelength_completed",
+            reference_1310_dbm=self.reference_1310_spin.value(),
+            reference_1550_dbm=self.reference_1550_spin.value(),
+            loss_1310_db=loss_1310,
+            loss_1550_db=loss_1550,
+            acquisition_method=method,
+            reading_state="temporary",
+            both_wavelengths_complete=True,
+            status="success",
+        )
         self.reading_1310_label.setText("1310 nm IL: %.4f dB" % loss_1310)
         self.reading_1550_label.setText("1550 nm IL: %.4f dB" % loss_1550)
         if self.repeatability_read_pending:
@@ -612,6 +654,21 @@ class LiveILReadingDialog(QDialog):
                 self.connected and not self.repeatability_active
             )
             self.status_label.setText("Reading complete. No data was saved.")
+
+    def _record_support(self, event, *, category="measurement", level="info", **fields):
+        if self.support_logger is None:
+            return
+        try:
+            self.support_logger.record(
+                category,
+                event,
+                level=level,
+                workflow_id=self.workflow_id,
+                workflow_type="live_il",
+                **fields,
+            )
+        except Exception:
+            pass
 
     def reading_failed(self, message):
         self.read_pending = False
@@ -646,7 +703,11 @@ class LiveILReadingDialog(QDialog):
         self._close_reference_progress()
         self._reset_after_shutdown()
         if self.isVisible():
-            self.status_label.setText("Meter disconnected.")
+            self.status_label.setText(
+                "Meter released and still connected to Light Workbench."
+                if self.uses_persistent_connection
+                else "Meter disconnected."
+            )
 
     def closeEvent(self, event):
         if not self._shutdown_worker():

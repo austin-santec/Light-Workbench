@@ -63,8 +63,9 @@ instructions. It is a self-contained guide and does not require internet access.
 
 No Python installation is needed.
 
-Use Help > About inside the application to view the current
-version and project capabilities. The current release is Light Workbench 1.11.2.
+Use Help > About inside the application to view the running
+version and project capabilities. The current source version is Light Workbench
+1.13.0; an existing executable keeps its prior version until rebuilt.
 
 
 3. VERIFY VISA
@@ -87,14 +88,16 @@ folder; install VISA through the approved vendor installer.
 
   1. Close Santec Terminal completely before starting the tester. It must not
      be holding the OSX-150 VISA connection. Check Task Manager if necessary.
-  2. Connect and power on the ILM/OP815 and OSX-150. During a run, the compact
+  2. Connect and power on the ILM/OP815 and OSX-150. The compact
      Connected hardware panel in the top header shows each device's connection
      state, model, and serial number. Unknown or unverified switch models are rejected instead
      of being treated as OSX-150 compatible.
-  3. Start LightWorkbench.exe.
+  3. Start LightWorkbench.exe, then click Connect Hardware... to connect the
+     measurement hardware and switch. Use the arrow menu when only one device
+     should be connected. Successful connections remain available between runs.
   4. Select Single channel and choose one channel for the first test.
-  5. Enter the serial numbers. References start at 0.00 dBm until you click
-     Calculate Reference, which reads both wavelengths from the ILM/OP815 and
+  5. Enter the serial numbers. References start at 0.00 dBm. After measurement
+     hardware is connected, click Calculate Reference, which reads both wavelengths from the ILM/OP815 and
      applies the measured offsets automatically; the values remain manually
      editable.
  6. Enter the numbered Run number for this test. Use 1 for the first test on
@@ -105,7 +108,8 @@ OPTIONAL RED-LIGHT PRE-TEST
 
 Before a measurement pass, use Tools > Red Light Test... to open the VFL
 channel-check window. Opening the menu does not connect to the switch. Click
-Start Red Light Test when the VFL and switch are ready, then select channels
+Start Red Light Test when the VFL and switch are ready. It borrows an existing
+switch connection or connects only the switch, then select channels
 with the number box, Up/Down keys, or Previous/Next buttons. This check does
 not record IL readings or create run/COC data.
   7. Follow the prompt to move the cable, then click Read IL.
@@ -137,8 +141,9 @@ Red Light Test are not included in this timing.
 OPTIONAL POWER MEASUREMENT DIAGNOSTICS
 
 Use Tools > Power Measurement Diagnostics... when you need to investigate the
-raw ILM/OP815 power values without creating or changing a run. Connect the
-meter, optionally connect the switch and route a logical channel, then click
+raw ILM/OP815 power values without creating or changing a run. Its meter and
+switch controls borrow existing connections or connect each device independently.
+Route a logical channel if needed, then click
 Read Measured Power. The window shows the measured dBm values, the selected
 references, and the exact calculation `reference - measured = insertion loss`.
 Calculate Reference and Apply to Main Setup are available when a new baseline
@@ -203,6 +208,16 @@ are stored in the shared unit.json record.
 Hardware test setup also provides an editable standard-part-number list and an
 O band/C band operating-band selector.
 
+Engineering support logs are written automatically under:
+
+  %LOCALAPPDATA%\LightWorkbench\logs
+
+Use Help > Support Logs to open the folder, check logging status, copy the
+folder path, or export a dated support bundle for engineering. Support logging
+does not change run files or hardware behavior. A degraded logging warning does
+not block testing. Support bundles stay local until the operator sends or moves
+them through an approved process; no automatic upload occurs.
+
 
 6. COMMON PROBLEMS
 ------------------
@@ -219,6 +234,11 @@ O band/C band operating-band selector.
 "Resource busy" or "device not found"
   Another program is using the switch. Fully close Santec Terminal and any
   other VISA instrument software, then restart the tester.
+
+If the switch is identified but reports 0 configured channels, the USB/VISA
+connection itself succeeded. Restore or load the correct switch configuration;
+Light Workbench intentionally blocks channel routing until the switch reports
+a positive configured channel count.
 
 The program will not start
   Confirm LightWorkbench.exe and the _internal folder are still together and

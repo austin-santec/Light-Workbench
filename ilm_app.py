@@ -29,6 +29,8 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QToolButton,
+    QMenu,
     QKeySequenceEdit,
     QLineEdit,
     QSpinBox,
@@ -49,6 +51,13 @@ from PyQt5.QtWidgets import (
 )
 
 from application.run_controller import HardwareRunController
+from application.hardware_connection import HardwareConnectionManager
+from application.support_logging import (
+    SupportLoggingService,
+    get_support_logging_service,
+    install_exception_hooks,
+    set_support_logging_service,
+)
 from application.live_controller import LiveILReadingController
 from application.hardware_planning import parse_hardware_channels
 from application.hardware_session import HardwareRunSession
@@ -57,6 +66,7 @@ from application.run_start import (
     prepare_hardware_run,
 )
 from domain.measurement import calculate_insertion_loss
+from domain.hardware_connection import HardwareCapability
 from domain.comparison import comparison_values, index_measurements
 from domain.raw_export import format_raw_measurements
 from domain.timing import SwitchTestTimer
@@ -68,6 +78,7 @@ from infrastructure.coc_exporter import (
 )
 from infrastructure.run_repository import DEFAULT_RUN_ROOT, FileRunRepository
 from infrastructure.unit_repository import FileUnitRepository
+from infrastructure.support_bundle import export_support_bundle
 from hardware.optical_switch import OSX150
 from hardware.power_meter import SantecPowerMeter, SimulatedPowerMeter
 from run_data import MeasurementRecord, RunData
@@ -83,6 +94,9 @@ from config.app_info import APP_NAME, APP_TAGLINE, APP_VERSION, about_text
 from ui.live_il_reading import LiveILReadingDialog, LiveILReadingWorker
 from ui.power_measurement_diagnostics import PowerMeasurementDiagnosticsDialog
 from ui.hardware_status import HardwareStatusPanel
+from ui.support_logs import LoggingStatusDialog, SupportBundleDialog
+from domain.support_events import SupportEventCategory, SupportLogLevel
+from config.app_config import DEFAULT_PATHS
 
 
 ACCENT = "#e60013"
@@ -113,6 +127,9 @@ QDialog QLabel, QMessageBox QLabel, QInputDialog QLabel, QProgressDialog QLabel 
 QPushButton { background: #e60013; color: white; border: none; border-radius: 4px; padding: 8px 14px; font-weight: 600; }
 QPushButton:hover { background: #b80010; }
 QPushButton:disabled { background: #8b000b; color: #f3c7ca; }
+QToolButton { background: #e60013; color: white; border: none; border-radius: 4px; padding: 8px 12px; font-weight: 600; }
+QToolButton:hover { background: #b80010; }
+QToolButton:disabled { background: #8b000b; color: #f3c7ca; }
 QPushButton#hardware_primary_control { padding: 11px 20px; font-size: 16px; font-weight: 800; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: white; }
 QDoubleSpinBox { padding: 5px; }
@@ -149,6 +166,9 @@ QDialog QLabel, QMessageBox QLabel, QInputDialog QLabel, QProgressDialog QLabel 
 QPushButton { background: #e60013; color: white; border: none; border-radius: 4px; padding: 8px 14px; font-weight: 600; }
 QPushButton:hover { background: #b80010; }
 QPushButton:disabled { background: #8b000b; color: #f3c7ca; }
+QToolButton { background: #e60013; color: white; border: none; border-radius: 4px; padding: 8px 12px; font-weight: 600; }
+QToolButton:hover { background: #b80010; }
+QToolButton:disabled { background: #8b000b; color: #f3c7ca; }
 QPushButton#hardware_primary_control { padding: 11px 20px; font-size: 16px; font-weight: 800; }
 QPushButton#hardware_primary_control QLabel#button_title { font-size: 16px; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit { background: #373a40; color: #e8eaed; border: 1px solid #5a6069; selection-background-color: #e60013; selection-color: white; }
@@ -453,19 +473,36 @@ class ShortcutButton(QPushButton):
 class MainWindow(QMainWindow):
     reference_values_changed = pyqtSignal(float, float)
 
-    def __init__(self, initial_path: str | None = None):
+    def __init__(self, initial_path: str | None = None, support_logger=None):
         super().__init__()
+        self.support_logger = support_logger or get_support_logging_service()
+        self.current_run_workflow = None
+        self.reference_workflow = None
         self.run_data: RunData | None = None
         # Keep adapter selection in one composition point. Passing the module
         # aliases preserves the existing test seam while allowing future
         # workstation-specific hardware configurations.
         self.hardware_factory = HardwareFactory(
             power_meter_factory=SantecPowerMeter,
-            switch_factory=OSX150,
+            switch_factory=self._create_switch_adapter,
         )
-        self.coc_exporter = FileCocExporter()
-        self.run_repository = FileRunRepository()
-        self.unit_repository = FileUnitRepository()
+        self.hardware_connection_manager = HardwareConnectionManager(
+            self.hardware_factory,
+            self,
+            support_logger=self.support_logger,
+        )
+        self.hardware_connection_manager.device_status_changed.connect(
+            self._hardware_device_status_changed
+        )
+        self.hardware_connection_manager.snapshot_changed.connect(
+            self._hardware_connection_snapshot_changed
+        )
+        self.hardware_connection_manager.operation_finished.connect(
+            self._hardware_connection_operation_finished
+        )
+        self.coc_exporter = FileCocExporter(self.support_logger)
+        self.run_repository = FileRunRepository(self.support_logger)
+        self.unit_repository = FileUnitRepository(self.support_logger)
         self.demo_meter: SimulatedPowerMeter | None = None
         self.demo_channel = 0
         self.demo_measurement = None
@@ -501,6 +538,9 @@ class MainWindow(QMainWindow):
         self.comparison_run_number = None
         self.settings = QSettings("Light Workbench", "LightWorkbench")
         self._migrate_legacy_settings()
+        self.switch_visa_address = str(
+            self.settings.value("switch_visa_address", "") or ""
+        ).strip()
         self.dark_mode_enabled = self.settings.value(
             "dark_mode",
             True,
@@ -513,6 +553,13 @@ class MainWindow(QMainWindow):
         self.resize(1120, 720)
         self._build_ui()
         self._connect_hardware_controller()
+        self._record_support(
+            SupportEventCategory.APPLICATION,
+            "application.main_window_ready",
+            status="success",
+        )
+        if self.support_logger is not None and self.support_logger.status().fallback_active:
+            QTimer.singleShot(0, self._show_degraded_logging_warning)
         if initial_path:
             self.load_path(Path(initial_path))
 
@@ -621,6 +668,150 @@ class MainWindow(QMainWindow):
         """Render transient device identity reported by the run controller."""
         if hasattr(self, "hardware_status_panel"):
             self.hardware_status_panel.set_device_status(device_info)
+        if device_info.connection_warning:
+            self.statusBar().showMessage(device_info.connection_warning, 8000)
+
+    def _hardware_connection_snapshot_changed(self, _snapshot):
+        """Apply capability readiness to only hardware-dependent controls."""
+        self._update_hardware_readiness_controls()
+
+    def _update_hardware_readiness_controls(self):
+        if not hasattr(self, "start_hardware_button"):
+            return
+        run_available = (
+            self.hardware_connection_manager.run_ready
+            and not self.hardware_run_active
+        )
+        self.start_hardware_button.setEnabled(run_available)
+        self.start_hardware_button.setToolTip(
+            "Start a run using the connected measurement hardware and optical switch."
+            if run_available
+            else "Connect the measurement hardware and optical switch before starting a run."
+        )
+        reference_available = (
+            self.hardware_connection_manager.measurement_ready
+            and not self.hardware_run_active
+            and self.reference_thread is None
+        )
+        self.calculate_reference_button.setEnabled(reference_available)
+        self.calculate_reference_button.setToolTip(
+            "Calculate both reference offsets using the connected measurement hardware."
+            if reference_available
+            else "Connect the measurement hardware before calculating a reference."
+        )
+        self.retest_button.setEnabled(
+            bool(self.run_data and self.run_data.measurements)
+            and run_available
+        )
+
+    def _hardware_connection_operation_finished(self, operation_name, results):
+        if hasattr(self, "connect_hardware_button"):
+            self.connect_hardware_button.setEnabled(True)
+        failures = [
+            "%s: %s" % (self._hardware_capability_label(capability), message)
+            for capability, message in results.items()
+            if message
+        ]
+        if failures:
+            QMessageBox.warning(
+                self,
+                operation_name,
+                "The hardware operation completed with the following issue(s):\n\n"
+                + "\n\n".join(failures),
+            )
+        else:
+            self.statusBar().showMessage("%s completed." % operation_name, 5000)
+        self._update_hardware_readiness_controls()
+
+    @staticmethod
+    def _hardware_capability_label(capability):
+        return {
+            HardwareCapability.MEASUREMENT: "Measurement hardware",
+            HardwareCapability.LASER_SOURCE: "Laser source",
+            HardwareCapability.OPTICAL_SWITCH: "Optical switch",
+        }.get(capability, str(capability))
+
+    def _start_hardware_connection_operation(self, operation):
+        if self.hardware_run_active:
+            QMessageBox.warning(
+                self,
+                "Hardware run active",
+                "Stop the current hardware run before changing connections.",
+            )
+            return
+        self.connect_hardware_button.setEnabled(False)
+        operation()
+
+    def _create_switch_adapter(self):
+        """Create a switch using separate manual and remembered addresses."""
+        return OSX150(
+            resource_address=self.switch_visa_address,
+            last_known_address=str(
+                self.settings.value("last_switch_visa_address", "") or ""
+            ).strip(),
+            address_observer=self._remember_automatically_detected_switch,
+        )
+
+    def _record_support(self, category, event, **fields):
+        """Best-effort UI event recording that never changes an operator action."""
+        if self.support_logger is None:
+            return False
+        try:
+            return self.support_logger.record(category, event, **fields)
+        except Exception:
+            return False
+
+    def _new_workflow(self, workflow_type):
+        if self.support_logger is None:
+            return None
+        return self.support_logger.new_workflow(workflow_type)
+
+    def _meter_proxy_for_workflow(
+        self,
+        owner_token,
+        owner_label,
+        workflow,
+        *,
+        connect_if_needed,
+    ):
+        meter = self.hardware_connection_manager.create_power_meter_proxy(
+            owner_token,
+            owner_label,
+            connect_if_needed=connect_if_needed,
+        )
+        if workflow is not None:
+            meter.set_trace_metadata(
+                workflow_id=workflow.workflow_id,
+                workflow_type=workflow.workflow_type,
+            )
+        return meter
+
+    def _switch_proxy_for_workflow(
+        self,
+        owner_token,
+        owner_label,
+        workflow,
+        *,
+        connect_if_needed,
+    ):
+        switch = self.hardware_connection_manager.create_switch_proxy(
+            owner_token,
+            owner_label,
+            connect_if_needed=connect_if_needed,
+        )
+        if workflow is not None:
+            switch.set_trace_metadata(
+                workflow_id=workflow.workflow_id,
+                workflow_type=workflow.workflow_type,
+            )
+        return switch
+
+    @staticmethod
+    def _remember_automatically_detected_switch(address):
+        """Persist successful automatic discovery from the worker thread."""
+        QSettings("Light Workbench", "LightWorkbench").setValue(
+            "last_switch_visa_address", address
+        )
 
     def _build_ui(self):
         self.setStyleSheet(self._theme_stylesheet(self.dark_mode_enabled))
@@ -639,6 +830,9 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(keybinds_action)
 
         tools_menu = self.menuBar().addMenu("Tools")
+        switch_address_action = QAction("Switch VISA Address...", self)
+        switch_address_action.triggered.connect(self.choose_switch_visa_address)
+        tools_menu.addAction(switch_address_action)
         dependency_action = QAction("Check Dependencies...", self)
         dependency_action.triggered.connect(self.show_dependency_check)
         tools_menu.addAction(dependency_action)
@@ -683,6 +877,21 @@ class MainWindow(QMainWindow):
         instructions_action = QAction("IL Instructions", self)
         instructions_action.triggered.connect(self.show_il_instructions)
         help_menu.addAction(instructions_action)
+        self.support_logs_menu = help_menu.addMenu("Support Logs")
+        self.open_logs_action = QAction("Open Logs Folder", self)
+        self.open_logs_action.triggered.connect(self.open_support_logs_folder)
+        self.support_logs_menu.addAction(self.open_logs_action)
+        self.export_support_bundle_action = QAction("Export Support Bundle...", self)
+        self.export_support_bundle_action.triggered.connect(
+            self.export_support_bundle_dialog
+        )
+        self.support_logs_menu.addAction(self.export_support_bundle_action)
+        self.copy_logs_path_action = QAction("Copy Logs Folder Path", self)
+        self.copy_logs_path_action.triggered.connect(self.copy_support_logs_path)
+        self.support_logs_menu.addAction(self.copy_logs_path_action)
+        self.logging_status_action = QAction("Logging Status...", self)
+        self.logging_status_action.triggered.connect(self.show_logging_status)
+        self.support_logs_menu.addAction(self.logging_status_action)
         about_action = QAction("About", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
@@ -723,7 +932,68 @@ class MainWindow(QMainWindow):
         header.addLayout(titles)
         header.addStretch()
         self.hardware_status_panel = HardwareStatusPanel(central)
+        self.hardware_status_panel.set_laser_visible(
+            self.hardware_connection_manager.has_separate_laser
+        )
         header.addWidget(self.hardware_status_panel)
+        self.connect_hardware_button = QToolButton()
+        self.connect_hardware_button.setText("Connect Hardware...")
+        self.connect_hardware_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.connect_hardware_button.setToolTip(
+            "Connect all hardware required for a normal IL run, or use the "
+            "menu to connect one hardware capability."
+        )
+        self.connect_hardware_button.clicked.connect(
+            lambda: self._start_hardware_connection_operation(
+                self.hardware_connection_manager.connect_all
+            )
+        )
+        hardware_menu = QMenu(self.connect_hardware_button)
+        connect_all_action = hardware_menu.addAction("Connect All Required Hardware")
+        connect_all_action.triggered.connect(
+            lambda: self._start_hardware_connection_operation(
+                self.hardware_connection_manager.connect_all
+            )
+        )
+        connect_measurement_action = hardware_menu.addAction(
+            "Connect Measurement Hardware"
+        )
+        connect_measurement_action.triggered.connect(
+            lambda: self._start_hardware_connection_operation(
+                self.hardware_connection_manager.connect_measurement_hardware
+            )
+        )
+        connect_switch_action = hardware_menu.addAction("Connect Optical Switch")
+        connect_switch_action.triggered.connect(
+            lambda: self._start_hardware_connection_operation(
+                self.hardware_connection_manager.connect_switch
+            )
+        )
+        hardware_menu.addSeparator()
+        disconnect_measurement_action = hardware_menu.addAction(
+            "Disconnect Measurement Hardware"
+        )
+        disconnect_measurement_action.triggered.connect(
+            lambda: self._start_hardware_connection_operation(
+                self.hardware_connection_manager.disconnect_measurement_hardware
+            )
+        )
+        disconnect_switch_action = hardware_menu.addAction(
+            "Disconnect Optical Switch"
+        )
+        disconnect_switch_action.triggered.connect(
+            lambda: self._start_hardware_connection_operation(
+                self.hardware_connection_manager.disconnect_switch
+            )
+        )
+        disconnect_all_action = hardware_menu.addAction("Disconnect All Hardware")
+        disconnect_all_action.triggered.connect(
+            lambda: self._start_hardware_connection_operation(
+                self.hardware_connection_manager.disconnect_all
+            )
+        )
+        self.connect_hardware_button.setMenu(hardware_menu)
+        header.addWidget(self.connect_hardware_button)
         self.open_csv_button = QPushButton("Open Existing CSV")
         self.open_csv_button.clicked.connect(self.open_csv)
         header.addWidget(self.open_csv_button)
@@ -1139,6 +1409,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("Ready. Open a saved CSV run to begin.")
+        self._update_hardware_readiness_controls()
 
     def _scale_hardware_setup_fonts(self, setup_box, scale):
         """Scale only the fonts contained in the Hardware test setup box."""
@@ -1265,6 +1536,27 @@ class MainWindow(QMainWindow):
         dialog = DependencyCheckDialog(collect_dependency_report(), self)
         dialog.exec_()
 
+    def choose_switch_visa_address(self):
+        """Save an optional direct VISA address for the next switch connection."""
+        address, accepted = QInputDialog.getText(
+            self,
+            "Switch VISA Address",
+            "Optional manual VISA address for the OSX-150. Leave blank to try "
+            "the last working address and then automatic USB discovery. Changes "
+            "apply to the next switch connection:",
+            text=self.switch_visa_address,
+        )
+        if not accepted:
+            return
+        self.switch_visa_address = address.strip()
+        self.settings.setValue("switch_visa_address", self.switch_visa_address)
+        self.statusBar().showMessage(
+            "Switch VISA address saved for the next connection."
+            if self.switch_visa_address
+            else "Switch VISA address cleared; automatic discovery will be used.",
+            5000,
+        )
+
     def show_about(self):
         """Show the current Light Workbench version and capabilities."""
         AboutDialog(self).exec_()
@@ -1305,10 +1597,31 @@ class MainWindow(QMainWindow):
                 "Stop the current hardware run before opening a Red Light Test.",
             )
             return
+        owner_token = object()
+        workflow = self._new_workflow("red_light_test")
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "tool.red_light_opened",
+            workflow_id=workflow.workflow_id if workflow else "",
+            workflow_type="red_light_test",
+            status="opened",
+        )
         RedLightTestDialog(
             self,
-            switch_factory=self.hardware_factory.create_switch,
+            switch_factory=lambda: self._switch_proxy_for_workflow(
+                owner_token,
+                "Red Light Test",
+                workflow,
+                connect_if_needed=True,
+            ),
         ).exec_()
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "tool.red_light_closed",
+            workflow_id=workflow.workflow_id if workflow else "",
+            workflow_type="red_light_test",
+            status="closed",
+        )
 
     def show_live_il_reading(self):
         """Open the meter-only live IL reader without touching run data."""
@@ -1319,15 +1632,38 @@ class MainWindow(QMainWindow):
                 "Stop the current hardware run before starting a Live IL Reading.",
             )
             return
+        owner_token = object()
+        workflow = self._new_workflow("live_il")
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "tool.live_il_opened",
+            workflow_id=workflow.workflow_id if workflow else "",
+            workflow_type="live_il",
+            status="opened",
+        )
         dialog = LiveILReadingDialog(
             self,
             reference_1310=self.reference_1310_spin.value(),
             reference_1550=self.reference_1550_spin.value(),
-            meter_factory=self.hardware_factory.create_power_meter,
+            meter_factory=lambda: self._meter_proxy_for_workflow(
+                owner_token,
+                "Live IL Reading",
+                workflow,
+                connect_if_needed=True,
+            ),
+            support_logger=self.support_logger,
+            workflow_id=workflow.workflow_id if workflow else "",
         )
         self.reference_values_changed.connect(dialog.set_reference_values)
         dialog.references_changed.connect(self.set_reference_values)
         dialog.exec_()
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "tool.live_il_closed",
+            workflow_id=workflow.workflow_id if workflow else "",
+            workflow_type="live_il",
+            status="closed",
+        )
 
     def show_power_measurement_diagnostics(self):
         """Open the non-recording raw-power diagnostic tool."""
@@ -1339,15 +1675,43 @@ class MainWindow(QMainWindow):
                 "Measurement Diagnostics.",
             )
             return
+        owner_token = object()
+        workflow = self._new_workflow("power_diagnostics")
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "tool.power_diagnostics_opened",
+            workflow_id=workflow.workflow_id if workflow else "",
+            workflow_type="power_diagnostics",
+            status="opened",
+        )
         dialog = PowerMeasurementDiagnosticsDialog(
             self,
             reference_1310=self.reference_1310_spin.value(),
             reference_1550=self.reference_1550_spin.value(),
-            meter_factory=self.hardware_factory.create_power_meter,
-            switch_factory=self.hardware_factory.create_switch,
+            meter_factory=lambda: self._meter_proxy_for_workflow(
+                owner_token,
+                "Power Measurement Diagnostics",
+                workflow,
+                connect_if_needed=True,
+            ),
+            switch_factory=lambda: self._switch_proxy_for_workflow(
+                owner_token,
+                "Power Measurement Diagnostics",
+                workflow,
+                connect_if_needed=True,
+            ),
+            support_logger=self.support_logger,
+            workflow_id=workflow.workflow_id if workflow else "",
         )
         dialog.references_changed.connect(self.set_reference_values)
         dialog.exec_()
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "tool.power_diagnostics_closed",
+            workflow_id=workflow.workflow_id if workflow else "",
+            workflow_type="power_diagnostics",
+            status="closed",
+        )
 
     def emit_reference_values(self):
         self.reference_values_changed.emit(
@@ -1379,31 +1743,32 @@ class MainWindow(QMainWindow):
             return
         if self.reference_thread is not None:
             return
-
-        meter = None
-        try:
-            meter = self.hardware_factory.create_power_meter()
-            if not meter.find_devices():
-                meter.close()
-                QMessageBox.warning(
-                    self,
-                    "ILM/OP815 not detected",
-                    "Connect and power on the ILM/OP815, then try Calculate "
-                    "Reference again.",
-                )
-                return
-        except Exception as error:
-            if meter is not None:
-                try:
-                    meter.close()
-                except Exception:
-                    pass
+        if not self.hardware_connection_manager.measurement_ready:
             QMessageBox.warning(
                 self,
-                "ILM/OP815 unavailable",
-                "Light Workbench could not check the ILM/OP815:\n%s" % error,
+                "Measurement hardware not connected",
+                "Connect the measurement hardware before calculating a reference.",
             )
             return
+        owner_token = object()
+        self.reference_workflow = self._new_workflow("reference_calculation")
+        meter = self._meter_proxy_for_workflow(
+            owner_token,
+            "Reference calculation",
+            self.reference_workflow,
+            connect_if_needed=False,
+        )
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "reference.started",
+            workflow_id=(
+                self.reference_workflow.workflow_id
+                if self.reference_workflow
+                else ""
+            ),
+            workflow_type="reference_calculation",
+            status="started",
+        )
 
         progress = QProgressDialog(
             "Calculating reference offset...",
@@ -1424,8 +1789,21 @@ class MainWindow(QMainWindow):
         try:
             self.reference_controller.start(lambda meter=meter: meter)
         except Exception as error:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "reference.failed",
+                level=SupportLogLevel.ERROR,
+                workflow_id=(
+                    self.reference_workflow.workflow_id
+                    if self.reference_workflow
+                    else ""
+                ),
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
             self._close_reference_progress()
-            self.calculate_reference_button.setEnabled(True)
+            self._update_hardware_readiness_controls()
             QMessageBox.critical(self, "Reference calculation", str(error))
 
     def _reference_meter_connected(self, _description):
@@ -1433,9 +1811,23 @@ class MainWindow(QMainWindow):
         self.reference_controller.calculate_reference()
 
     def _reference_calculation_ready(self, reference_1310, reference_1550):
+        self._record_support(
+            SupportEventCategory.MEASUREMENT,
+            "reference.completed",
+            workflow_id=(
+                self.reference_workflow.workflow_id
+                if self.reference_workflow
+                else ""
+            ),
+            workflow_type="reference_calculation",
+            reference_1310_dbm=reference_1310,
+            reference_1550_dbm=reference_1550,
+            both_wavelengths_complete=True,
+            status="success",
+        )
         self.set_reference_values(reference_1310, reference_1550)
         self.statusBar().showMessage(
-            "Reference calculated. ILM disconnected.",
+            "Reference calculated. Measurement hardware remains connected.",
             5000,
         )
         self._finish_reference_calculation()
@@ -1443,6 +1835,18 @@ class MainWindow(QMainWindow):
     def _reference_calculation_failed(self, message):
         if self.reference_worker is None:
             return
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "reference.failed",
+            level=SupportLogLevel.ERROR,
+            workflow_id=(
+                self.reference_workflow.workflow_id
+                if self.reference_workflow
+                else ""
+            ),
+            error_message=message,
+            status="error",
+        )
         self._finish_reference_calculation()
         QMessageBox.critical(self, "Reference calculation failed", message)
 
@@ -1450,7 +1854,7 @@ class MainWindow(QMainWindow):
         """Stop the temporary meter worker and close its progress popup."""
         self.reference_controller.stop_and_wait()
         self._close_reference_progress()
-        self.calculate_reference_button.setEnabled(True)
+        self._update_hardware_readiness_controls()
 
     def _close_reference_progress(self):
         if self.reference_progress is not None:
@@ -2220,12 +2624,21 @@ class MainWindow(QMainWindow):
     def start_hardware(self, channels=None, retest=False):
         if self.hardware_run_active:
             return
+        if not self.hardware_connection_manager.run_ready:
+            QMessageBox.warning(
+                self,
+                "Hardware not ready",
+                "Connect the measurement hardware and optical switch before "
+                "starting a run.",
+            )
+            return
         if not retest and not self.confirm_hardware_setup_complete():
             return
         confirmation = QMessageBox.question(
             self,
             "Start real hardware run",
-            "This will connect to the OP815 and OSX-150 and move the switch. "
+            "This will use the connected measurement hardware and optical "
+            "switch, and it will move the switch. "
             "Start the hardware run?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
@@ -2290,14 +2703,38 @@ class MainWindow(QMainWindow):
 
         channels = preparation.channels
 
-        # Preserve the previous preflight behavior: driver construction must
-        # succeed before the in-memory run/timing state is initialized.
-        try:
-            meter = self.hardware_factory.create_power_meter()
-            switch = self.hardware_factory.create_switch()
-        except (RuntimeError, OSError) as error:
-            QMessageBox.critical(self, "Hardware unavailable", str(error))
-            return
+        owner_token = object()
+        self.current_run_workflow = self._new_workflow("hardware_run")
+        workflow_id = (
+            self.current_run_workflow.workflow_id
+            if self.current_run_workflow
+            else ""
+        )
+        meter = self._meter_proxy_for_workflow(
+            owner_token,
+            "Hardware run",
+            self.current_run_workflow,
+            connect_if_needed=False,
+        )
+        switch = self._switch_proxy_for_workflow(
+            owner_token,
+            "Hardware run",
+            self.current_run_workflow,
+            connect_if_needed=False,
+        )
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "run.started",
+            workflow_id=workflow_id,
+            workflow_type="hardware_run",
+            run_number=selected_run_number,
+            unit_serial=selected_identity.get("Main board serial"),
+            switch_serial=selected_identity.get("Switch serial"),
+            operator_initials=self.hardware_tested_by.text().strip(),
+            retest=retest,
+            live_write_mode=self.live_write_mode_enabled,
+            status="started",
+        )
 
         self.hardware_session.begin(
             retest=retest,
@@ -2395,10 +2832,21 @@ class MainWindow(QMainWindow):
             ),
             resume_existing=continuing_existing,
             live_write_mode=self.live_write_mode_enabled,
+            support_logger=self.support_logger,
+            workflow_id=workflow_id,
         )
         try:
             self.hardware_controller.start(request)
         except (RuntimeError, OSError) as error:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "run.start_failed",
+                level=SupportLogLevel.ERROR,
+                workflow_id=workflow_id,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
             QMessageBox.critical(self, "Hardware unavailable", str(error))
             return
         self.hardware_thread = self.hardware_controller.thread
@@ -2413,6 +2861,7 @@ class MainWindow(QMainWindow):
         self.retest_button.setEnabled(False)
         self.statusBar().showMessage("Starting hardware run...")
         self.begin_switch_test_session()
+        self._update_hardware_readiness_controls()
 
     def confirm_hardware_setup_complete(self):
         """Validate setup metadata and references before connecting hardware."""
@@ -2453,6 +2902,13 @@ class MainWindow(QMainWindow):
             choice.exec_()
             if choice.clickedButton() != continue_button:
                 return False
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "validation.continued_without_metadata",
+                choice="continue_without_metadata",
+                details=", ".join(missing_metadata),
+                status="accepted",
+            )
 
         if (
             self.reference_1310_spin.value() == 0.00
@@ -2480,6 +2936,14 @@ class MainWindow(QMainWindow):
             choice.exec_()
             if choice.clickedButton() != continue_button:
                 return False
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "validation.continued_with_zero_references",
+                choice="continue_anyways",
+                reference_1310_dbm=0.0,
+                reference_1550_dbm=0.0,
+                status="accepted",
+            )
 
         return True
 
@@ -2633,6 +3097,22 @@ class MainWindow(QMainWindow):
         self.demo_channel_label.setText(
             "Changing to channel %d without stopping the run" % channel
         )
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "run.channel_change_requested",
+            workflow_id=(
+                self.current_run_workflow.workflow_id
+                if self.current_run_workflow
+                else ""
+            ),
+            logical_channel=channel,
+            choice=(
+                "resume_interrupted"
+                if resume_interrupted
+                else "continue_sequentially"
+            ),
+            status="requested",
+        )
         self._hardware_command("change_channel", channel, resume_interrupted)
 
     def hardware_operator_required(self, channel, physical_port):
@@ -2669,8 +3149,31 @@ class MainWindow(QMainWindow):
             self.continue_hardware_button.setEnabled(False)
             self.change_hardware_channel_button.setEnabled(False)
             if self.hardware_pending_reading is None:
+                self._record_support(
+                    SupportEventCategory.OPERATOR,
+                    "measurement.read_requested",
+                    workflow_id=(
+                        self.current_run_workflow.workflow_id
+                        if self.current_run_workflow
+                        else ""
+                    ),
+                    logical_channel=self.hardware_pending_channel,
+                    status="requested",
+                )
                 self._hardware_command("continue_current")
             else:
+                self._record_support(
+                    SupportEventCategory.OPERATOR,
+                    "measurement.repeat_requested",
+                    workflow_id=(
+                        self.current_run_workflow.workflow_id
+                        if self.current_run_workflow
+                        else ""
+                    ),
+                    logical_channel=self.hardware_pending_channel,
+                    repeated_reading=True,
+                    status="requested",
+                )
                 self._hardware_command("read_current")
 
     def write_hardware(self):
@@ -2731,6 +3234,27 @@ class MainWindow(QMainWindow):
         if self.run_recorder is not None:
             self.run_recorder.save(updated_measurements)
         self.run_data.measurements = updated_measurements
+        self._record_support(
+            SupportEventCategory.MEASUREMENT,
+            "measurement.written",
+            workflow_id=(
+                self.current_run_workflow.workflow_id
+                if self.current_run_workflow
+                else ""
+            ),
+            run_number=self.run_data.metadata.get("Run number"),
+            unit_serial=self.run_data.metadata.get("Main board serial"),
+            switch_serial=self.run_data.metadata.get("Switch serial"),
+            operator_initials=self.run_data.metadata.get("Tested by"),
+            logical_channel=channel,
+            physical_port=physical_port,
+            loss_1310_db=loss_1310,
+            loss_1550_db=loss_1550,
+            reading_state="written",
+            both_wavelengths_complete=True,
+            measurement_count=len(updated_measurements),
+            status="success",
+        )
         self.hardware_session.clear_pending()
         self.refresh_analysis()
         self.scroll_to_channel(channel)
@@ -2830,6 +3354,22 @@ class MainWindow(QMainWindow):
             loss_1310,
             loss_1550,
         )
+        self._record_support(
+            SupportEventCategory.MEASUREMENT,
+            "measurement.presented",
+            workflow_id=(
+                self.current_run_workflow.workflow_id
+                if self.current_run_workflow
+                else ""
+            ),
+            logical_channel=channel,
+            physical_port=_physical_port,
+            loss_1310_db=loss_1310,
+            loss_1550_db=loss_1550,
+            reading_state="temporary",
+            both_wavelengths_complete=True,
+            status="success",
+        )
         self.set_current_reading_channel(channel)
         self.current_loss_1310 = loss_1310
         self.current_loss_1550 = loss_1550
@@ -2863,6 +3403,17 @@ class MainWindow(QMainWindow):
             )
 
     def hardware_completed(self):
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "run.completed",
+            workflow_id=(
+                self.current_run_workflow.workflow_id
+                if self.current_run_workflow
+                else ""
+            ),
+            measurement_count=(len(self.run_data.measurements) if self.run_data else 0),
+            status="success",
+        )
         self.finish_switch_test_session()
         self.hardware_live_indicator.setVisible(False)
         self.continue_hardware_button.setEnabled(False)
@@ -2874,6 +3425,17 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.offer_coc_export)
 
     def hardware_stopped(self):
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "run.stopped",
+            workflow_id=(
+                self.current_run_workflow.workflow_id
+                if self.current_run_workflow
+                else ""
+            ),
+            measurement_count=(len(self.run_data.measurements) if self.run_data else 0),
+            status="stopped",
+        )
         self.finish_switch_test_session()
         self.hardware_live_indicator.setVisible(False)
         self.continue_hardware_button.setEnabled(False)
@@ -2885,6 +3447,19 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.offer_coc_export)
 
     def hardware_failed(self, message):
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "run.failed",
+            level=SupportLogLevel.ERROR,
+            workflow_id=(
+                self.current_run_workflow.workflow_id
+                if self.current_run_workflow
+                else ""
+            ),
+            error_message=message,
+            measurement_count=(len(self.run_data.measurements) if self.run_data else 0),
+            status="error",
+        )
         self.finish_switch_test_session()
         self.hardware_live_indicator.setVisible(False)
         self.continue_hardware_button.setEnabled(False)
@@ -2914,7 +3489,7 @@ class MainWindow(QMainWindow):
         self.hardware_worker = None
         if finished_thread is not None:
             finished_thread.deleteLater()
-        self.start_hardware_button.setEnabled(True)
+        self._update_hardware_readiness_controls()
         self.live_write_mode_action.setEnabled(True)
         self.hardware_live_indicator.setVisible(False)
         self.change_hardware_channel_button.setEnabled(False)
@@ -2927,6 +3502,11 @@ class MainWindow(QMainWindow):
         self.load_run_button.setEnabled(available)
 
     def closeEvent(self, event):
+        self._record_support(
+            SupportEventCategory.APPLICATION,
+            "application.close_requested",
+            status="requested",
+        )
         if self.reference_worker is not None and self.reference_thread is not None:
             if not self.reference_controller.stop_and_wait():
                 QMessageBox.warning(
@@ -2938,7 +3518,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self._close_reference_progress()
-            self.calculate_reference_button.setEnabled(True)
+            self._update_hardware_readiness_controls()
         if self.hardware_run_active:
             if self.hardware_controller.is_active:
                 if not self.hardware_controller.stop_and_wait():
@@ -2963,6 +3543,29 @@ class MainWindow(QMainWindow):
                     event.ignore()
                     return
             self.finish_switch_test_session()
+        try:
+            self._record_support(
+                SupportEventCategory.CONNECTION,
+                "connection.application_cleanup_requested",
+                status="requested",
+            )
+            self.hardware_connection_manager.close_all()
+        except Exception as error:
+            QMessageBox.warning(
+                self,
+                "Hardware disconnect",
+                "Light Workbench could not safely disconnect all hardware:\n%s"
+                % error,
+            )
+            event.ignore()
+            return
+        self._record_support(
+            SupportEventCategory.APPLICATION,
+            "application.close_completed",
+            status="success",
+        )
+        if self.support_logger is not None:
+            self.support_logger.flush(0.5)
         event.accept()
 
     def refresh_analysis(self):
@@ -3092,6 +3695,16 @@ class MainWindow(QMainWindow):
         self.designated_spares = list(dialog.designated_spares)
         self.run_data.completed_replacements = list(self.completed_replacements)
         self.persist_unit_record()
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "replacement.records_saved",
+            run_number=self.run_data.metadata.get("Run number"),
+            unit_serial=self.run_data.metadata.get("Main board serial"),
+            measurement_count=len(self.completed_replacements),
+            details="%d replacement(s); %d designated spare(s)."
+            % (len(self.completed_replacements), len(self.designated_spares)),
+            status="success",
+        )
         self.refresh_replacement_summary()
         self.statusBar().showMessage(
             "Completed replacements and designated spares saved to the unit record."
@@ -3128,6 +3741,15 @@ class MainWindow(QMainWindow):
             return
 
         QApplication.clipboard().setText(raw_data)
+        self._record_support(
+            SupportEventCategory.EXPORT,
+            "export.raw_data_copied",
+            file_type="clipboard_tsv",
+            measurement_count=len(self.run_data.measurements),
+            run_number=self.run_data.metadata.get("Run number"),
+            unit_serial=self.run_data.metadata.get("Main board serial"),
+            status="success",
+        )
         self.statusBar().showMessage(
             "%d completed channel reading(s) copied to clipboard."
             % len(self.run_data.measurements)
@@ -3564,8 +4186,154 @@ class MainWindow(QMainWindow):
             "%d over-limit channel(s) selected for retest." % selected
         )
 
+    def _show_degraded_logging_warning(self):
+        if self.support_logger is None:
+            return
+        status = self.support_logger.status()
+        if not status.fallback_active:
+            return
+        self.statusBar().showMessage(
+            "Support logging is degraded. Testing can continue; see Help > "
+            "Support Logs > Logging Status for details.",
+            12000,
+        )
+
+    def _support_log_folder(self):
+        if self.support_logger is None:
+            return DEFAULT_PATHS.support_log_root
+        status = self.support_logger.status()
+        return Path(status.active_folder)
+
+    def open_support_logs_folder(self):
+        folder = self._support_log_folder()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            QMessageBox.warning(
+                self,
+                "Support Logs",
+                "The support log folder could not be created:\n%s" % error,
+            )
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+            QMessageBox.warning(
+                self,
+                "Support Logs",
+                "The support log folder could not be opened:\n%s" % folder,
+            )
+            return
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "support_logs.folder_opened",
+            destination=folder,
+            status="success",
+        )
+
+    def copy_support_logs_path(self):
+        folder = self._support_log_folder()
+        QApplication.clipboard().setText(str(folder))
+        self.statusBar().showMessage("Support logs folder path copied.", 5000)
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "support_logs.path_copied",
+            destination=folder,
+            status="success",
+        )
+
+    def show_logging_status(self):
+        if self.support_logger is None:
+            QMessageBox.information(
+                self,
+                "Support Logging Status",
+                "Support logging was not initialized for this application session.",
+            )
+            return
+        LoggingStatusDialog(self.support_logger.status(), self).exec_()
+
+    def export_support_bundle_dialog(self):
+        if self.support_logger is None:
+            QMessageBox.warning(
+                self,
+                "Export Support Bundle",
+                "Support logging is not available in this session.",
+            )
+            return
+        dialog = SupportBundleDialog(self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        suggested = "LightWorkbench-Support-%s.zip" % datetime.now().strftime(
+            "%Y%m%d-%H%M%S"
+        )
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Support Bundle",
+            str(Path.home() / "Documents" / suggested),
+            "ZIP archives (*.zip)",
+        )
+        if not selected:
+            return
+        self.support_logger.flush(2.0)
+        try:
+            try:
+                dependency_report = collect_dependency_report().as_text()
+            except Exception as error:
+                dependency_report = "Dependency report unavailable: %s" % error
+            status = self.support_logger.status()
+            result = export_support_bundle(
+                selected,
+                log_root=status.active_folder,
+                start_date=dialog.start_date,
+                end_date=dialog.end_date,
+                application_name=APP_NAME,
+                application_version=APP_VERSION,
+                dependency_report=dependency_report,
+                configuration_summary={
+                    "application_version": APP_VERSION,
+                    "dark_mode": bool(self.dark_mode_enabled),
+                    "live_write_mode": bool(self.live_write_mode_enabled),
+                    "run_root": str(DEFAULT_RUN_ROOT),
+                    "support_log_root": status.active_folder,
+                    "support_log_fallback_active": status.fallback_active,
+                },
+            )
+        except Exception as error:
+            self._record_support(
+                SupportEventCategory.EXPORT,
+                "export.support_bundle_failed",
+                level=SupportLogLevel.ERROR,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
+            QMessageBox.critical(self, "Export Support Bundle", str(error))
+            return
+        self._record_support(
+            SupportEventCategory.EXPORT,
+            "export.support_bundle_completed",
+            destination=result.path,
+            selected_start_date=dialog.start_date.isoformat(),
+            selected_end_date=dialog.end_date.isoformat(),
+            file_count=result.included_file_count,
+            status="success",
+        )
+        QMessageBox.information(
+            self,
+            "Support Bundle Exported",
+            "The support bundle was written here:\n%s" % result.path,
+        )
+
 
 def main():
+    support_logger = SupportLoggingService.create_default()
+    set_support_logging_service(support_logger)
+    install_exception_hooks(support_logger)
+    support_logger.record(
+        SupportEventCategory.APPLICATION,
+        "application.started",
+        application_name=APP_NAME,
+        details="Support logging initialized.",
+        status="started",
+    )
     app = QApplication(sys.argv)
     icon_roots = [Path(__file__).resolve().parent]
     if getattr(sys, "_MEIPASS", None):
@@ -3583,10 +4351,21 @@ def main():
     if "--check-dependencies" in sys.argv[1:]:
         dialog = DependencyCheckDialog(collect_dependency_report())
         dialog.show()
-        return app.exec_()
-    window = MainWindow(sys.argv[1] if len(sys.argv) > 1 else None)
+        try:
+            return app.exec_()
+        finally:
+            support_logger.shutdown()
+            set_support_logging_service(None)
+    window = MainWindow(
+        sys.argv[1] if len(sys.argv) > 1 else None,
+        support_logger=support_logger,
+    )
     window.show()
-    return app.exec_()
+    try:
+        return app.exec_()
+    finally:
+        support_logger.shutdown()
+        set_support_logging_service(None)
 
 
 if __name__ == "__main__":

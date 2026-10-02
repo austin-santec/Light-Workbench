@@ -18,6 +18,10 @@ Use for Qt worker lifecycle, controller state transitions, run continuation,
 file persistence, COC export, and dialog behavior. Use fakes rather than real
 hardware.
 
+Persistent-connection tests must verify partial connection success, duplicate
+session prevention, exclusive lease conflicts, release without disconnect,
+single-thread native calls, laser-safe shutdown, and application-close cleanup.
+
 ### Manual hardware smoke tests
 
 Required before a release that changes driver behavior, worker lifecycle, or
@@ -79,6 +83,9 @@ used as the location for architecture decisions.
 ## Release checklist
 
 - Version updated in `config/app_info.py` when appropriate.
+- Support logging tests cover JSONL validity, date/size rollover, compression,
+  retention, total-size cleanup, redaction, bounded queues, fallback writing,
+  trace fan-out, bundles, and UI dialogs without using real hardware.
 - Tests pass.
 - Build succeeds.
 - Packaged executable starts on a clean target machine.

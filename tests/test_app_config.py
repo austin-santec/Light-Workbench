@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app_config import AppPaths
+from app_config import AppPaths, default_support_log_root
 
 
 class AppConfigTests(unittest.TestCase):
@@ -21,6 +21,12 @@ class AppConfigTests(unittest.TestCase):
             )
             self.assertEqual(paths.assets_root, root / "assets")
             self.assertEqual(paths.instructions_path, root / "ILM_READING_GUIDE.html")
+
+    def test_default_support_logs_use_local_app_data_not_project_or_run_root(self):
+        path = default_support_log_root()
+        self.assertEqual(path.name, "logs")
+        self.assertEqual(path.parent.name, "LightWorkbench")
+        self.assertNotIn("ILM-Reads", str(path))
 
 
 if __name__ == "__main__":

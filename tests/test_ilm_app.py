@@ -53,6 +53,28 @@ class ReferenceMeter:
         self.closed = True
 
 
+class ReferenceSwitch:
+    instances = []
+
+    def __init__(self, **_kwargs):
+        self.connected = False
+        self.closed = False
+        self.__class__.instances.append(self)
+
+    def connect(self):
+        self.connected = True
+
+    def configured_channel_count(self):
+        return 48
+
+    def set_channel(self, channel):
+        return channel
+
+    def close(self):
+        self.connected = False
+        self.closed = True
+
+
 class MainWindowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -133,6 +155,7 @@ class MainWindowTests(unittest.TestCase):
             window.hardware_status_panel.geometry().right(),
             window.open_csv_button.geometry().left(),
         )
+        self.assertTrue(window.hardware_status_panel.laser_source_status.isHidden())
         window._hardware_device_status_changed(
             DeviceInfo(
                 category=DeviceCategory.POWER_METER,
@@ -148,6 +171,9 @@ class MainWindowTests(unittest.TestCase):
                 manufacturer="Santec",
                 model="OSX-150",
                 serial_number="SWITCH-456",
+                raw_identity="SANTEC,OSX-150,SWITCH-456,03.01.02",
+                resource_address="USB0::SWITCH::INSTR",
+                transport_details="SCPI write ending: CRLF",
                 state=ConnectionState.CONNECTED,
             )
         )
@@ -156,6 +182,44 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("OP815", window.hardware_status_panel.power_meter_status.text())
         self.assertIn("SWITCH-456", window.hardware_status_panel.optical_switch_status.text())
         self.assertIn("#22c55e", window.hardware_status_panel.optical_switch_status.styleSheet())
+        self.assertIn(
+            "SCPI write ending: CRLF",
+            window.hardware_status_panel.optical_switch_status.toolTip(),
+        )
+        window._hardware_device_status_changed(
+            DeviceInfo(
+                category=DeviceCategory.POWER_METER,
+                manufacturer="Santec",
+                model="OP815",
+                serial_number="METER-123",
+                state=ConnectionState.IN_USE,
+            )
+        )
+        self.assertIn("In use", window.hardware_status_panel.power_meter_status.text())
+        self.assertIn(
+            "#60a5fa",
+            window.hardware_status_panel.power_meter_status.styleSheet(),
+        )
+        window._hardware_device_status_changed(
+            DeviceInfo(
+                category=DeviceCategory.OPTICAL_SWITCH,
+                manufacturer="Santec",
+                model="OSX-150",
+                serial_number="SWITCH-456",
+                firmware_version="03.00.85",
+                configured_channel_count=0,
+                failure_stage="configuration",
+                failed_command="CFG:SWT:END?",
+                raw_response="0",
+                error="The switch has no usable channel configuration.",
+                state=ConnectionState.ERROR,
+            )
+        )
+        switch_status = window.hardware_status_panel.optical_switch_status
+        self.assertIn("Configuration error", switch_status.text())
+        self.assertIn("0 channels", switch_status.text())
+        self.assertIn("CFG:SWT:END?", switch_status.toolTip())
+        self.assertIn("Response: 0", switch_status.toolTip())
         window.close()
 
     def test_completed_replacement_dialog_prefills_recommendations(self):
@@ -222,6 +286,7 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(
             [action.text() for action in menus["Tools"].actions()],
             [
+                "Switch VISA Address...",
                 "Check Dependencies...",
                 "Red Light Test...",
                 "Live IL Reading...",
@@ -232,8 +297,46 @@ class MainWindowTests(unittest.TestCase):
         )
         self.assertEqual(
             [action.text() for action in menus["Help"].actions()],
-            ["IL Instructions", "About"],
+            ["IL Instructions", "Support Logs", "About"],
         )
+        self.assertEqual(
+            [action.text() for action in window.support_logs_menu.actions()],
+            [
+                "Open Logs Folder",
+                "Export Support Bundle...",
+                "Copy Logs Folder Path",
+                "Logging Status...",
+            ],
+        )
+        window.close()
+
+    def test_switch_visa_address_setting_is_used_by_new_switches(self):
+        window = MainWindow()
+
+        class MemorySettings:
+            values = {}
+
+            def setValue(self, key, value):
+                self.values[key] = value
+
+            def value(self, key, default=None):
+                return self.values.get(key, default)
+
+        window.settings = MemorySettings()
+        address = "USB0::0x2428::0xD00D::SWITCH::INSTR"
+        with patch("ilm_app.QInputDialog.getText", return_value=(address, True)):
+            window.choose_switch_visa_address()
+        self.assertEqual(window.settings.values["switch_visa_address"], address)
+        with patch("ilm_app.OSX150") as switch_type:
+            window.hardware_factory.create_switch()
+        switch_type.assert_called_once_with(
+            resource_address=address,
+            last_known_address="",
+            address_observer=window._remember_automatically_detected_switch,
+        )
+        with patch("ilm_app.QInputDialog.getText", return_value=("", True)):
+            window.choose_switch_visa_address()
+        self.assertEqual(window.settings.values["switch_visa_address"], "")
         window.close()
 
     def test_part_number_lookup_folder_opens_fixed_designated_folder(self):
@@ -536,6 +639,10 @@ class MainWindowTests(unittest.TestCase):
         with patch("ilm_app.SantecPowerMeter", ReferenceMeter):
             window = MainWindow()
             try:
+                window.hardware_connection_manager.connect_measurement_hardware().result(
+                    timeout=2
+                )
+                QTest.qWait(25)
                 QTest.mouseClick(window.calculate_reference_button, Qt.LeftButton)
                 QTest.qWait(150)
 
@@ -544,12 +651,15 @@ class MainWindowTests(unittest.TestCase):
                 self.assertIsNone(window.reference_progress)
                 self.assertEqual(len(ReferenceMeter.instances), 1)
                 self.assertEqual(ReferenceMeter.reference_measurements, 1)
-                self.assertTrue(ReferenceMeter.instances[0].closed)
+                self.assertFalse(ReferenceMeter.instances[0].closed)
+                self.assertTrue(window.hardware_connection_manager.measurement_ready)
             finally:
                 window.close()
 
-    def test_setup_reference_calculation_warns_when_no_ilm_is_detected(self):
+    def test_setup_reference_calculation_requires_preconnected_hardware(self):
         class MissingMeter(ReferenceMeter):
+            instances = []
+
             def find_devices(self):
                 return []
 
@@ -558,38 +668,113 @@ class MainWindowTests(unittest.TestCase):
         ) as warning:
             window = MainWindow()
             try:
-                QTest.mouseClick(window.calculate_reference_button, Qt.LeftButton)
+                window.calculate_reference()
 
                 warning.assert_called_once()
-                self.assertIn("Connect and power on", warning.call_args.args[2])
-                self.assertTrue(window.calculate_reference_button.isEnabled())
+                self.assertIn("Connect the measurement hardware", warning.call_args.args[2])
+                self.assertFalse(window.calculate_reference_button.isEnabled())
                 self.assertIsNone(window.reference_progress)
                 self.assertIsNone(window.reference_thread)
-                self.assertTrue(MissingMeter.instances[-1].closed)
+                self.assertFalse(MissingMeter.instances)
             finally:
                 window.close()
 
-    def test_reference_connection_failure_cleans_up_without_crashing(self):
+    def test_measurement_connection_failure_cleans_up_without_crashing(self):
         class DisconnectedMeter(ReferenceMeter):
             def connect(self):
                 raise RuntimeError("No OP815/ILM was detected over USB.")
 
         DisconnectedMeter.instances.clear()
         with patch("ilm_app.SantecPowerMeter", DisconnectedMeter), patch(
-            "ilm_app.QMessageBox.critical"
-        ) as critical:
+            "ilm_app.QMessageBox.warning"
+        ) as warning:
             window = MainWindow()
             try:
-                QTest.mouseClick(window.calculate_reference_button, Qt.LeftButton)
-                QTest.qWait(200)
+                window.hardware_connection_manager.connect_measurement_hardware().result(
+                    timeout=2
+                )
+                QTest.qWait(100)
 
-                critical.assert_called_once()
+                warning.assert_called_once()
+                self.assertIn("No OP815/ILM", warning.call_args.args[2])
                 self.assertIsNone(window.reference_progress)
                 self.assertIsNone(window.reference_thread)
-                self.assertTrue(window.calculate_reference_button.isEnabled())
+                self.assertFalse(window.calculate_reference_button.isEnabled())
                 self.assertTrue(DisconnectedMeter.instances[-1].closed)
             finally:
                 window.close()
+
+    def test_hardware_connection_menu_and_readiness_gating(self):
+        ReferenceMeter.instances.clear()
+        ReferenceSwitch.instances.clear()
+        with patch("ilm_app.SantecPowerMeter", ReferenceMeter), patch(
+            "ilm_app.OSX150", ReferenceSwitch
+        ):
+            window = MainWindow()
+            try:
+                self.assertEqual(window.connect_hardware_button.text(), "Connect Hardware...")
+                action_texts = [
+                    action.text()
+                    for action in window.connect_hardware_button.menu().actions()
+                    if not action.isSeparator()
+                ]
+                self.assertEqual(
+                    action_texts,
+                    [
+                        "Connect All Required Hardware",
+                        "Connect Measurement Hardware",
+                        "Connect Optical Switch",
+                        "Disconnect Measurement Hardware",
+                        "Disconnect Optical Switch",
+                        "Disconnect All Hardware",
+                    ],
+                )
+                self.assertFalse(window.start_hardware_button.isEnabled())
+                self.assertFalse(window.calculate_reference_button.isEnabled())
+
+                window.hardware_connection_manager.connect_measurement_hardware().result(
+                    timeout=2
+                )
+                QTest.qWait(25)
+                self.assertTrue(window.calculate_reference_button.isEnabled())
+                self.assertFalse(window.start_hardware_button.isEnabled())
+
+                window.hardware_connection_manager.connect_switch().result(timeout=2)
+                QTest.qWait(25)
+                self.assertTrue(window.start_hardware_button.isEnabled())
+                window.run_data = RunData(
+                    Path("test-run"),
+                    [MeasurementRecord(1, 1.0, 1.1)],
+                    {},
+                )
+                window._update_hardware_readiness_controls()
+                self.assertTrue(window.retest_button.isEnabled())
+
+                window.hardware_connection_manager.disconnect_switch().result(
+                    timeout=2
+                )
+                QTest.qWait(25)
+                self.assertFalse(window.start_hardware_button.isEnabled())
+                self.assertFalse(window.retest_button.isEnabled())
+                self.assertTrue(window.calculate_reference_button.isEnabled())
+            finally:
+                window.close()
+
+    def test_main_window_close_disconnects_persistent_hardware(self):
+        ReferenceMeter.instances.clear()
+        ReferenceSwitch.instances.clear()
+        with patch("ilm_app.SantecPowerMeter", ReferenceMeter), patch(
+            "ilm_app.OSX150", ReferenceSwitch
+        ):
+            window = MainWindow()
+            window.hardware_connection_manager.connect_all().result(timeout=2)
+            QTest.qWait(25)
+
+            self.assertTrue(window.hardware_connection_manager.run_ready)
+            self.assertTrue(window.close())
+
+            self.assertTrue(ReferenceMeter.instances[-1].closed)
+            self.assertTrue(ReferenceSwitch.instances[-1].closed)
 
     def test_switch_serial_accepts_unrestricted_text(self):
         window = MainWindow()

@@ -108,14 +108,25 @@ class OP815:
         self.description = None
         self.usb_serial = None
         self._trace_callback = trace_callback
+        self._trace_subscribers = []
         self._trace_context = {}
         self._trace_metadata = {}
         self._diagnostic_verification_enabled = False
         self._bind_functions()
 
     def set_trace_callback(self, callback):
-        """Set an optional callback for non-invasive diagnostic events."""
+        """Set the compatibility callback used by one diagnostic tool."""
         self._trace_callback = callback
+
+    def add_trace_callback(self, callback):
+        """Subscribe an independent trace consumer without replacing others."""
+        if callback is not None and callback not in self._trace_subscribers:
+            self._trace_subscribers.append(callback)
+
+    def remove_trace_callback(self, callback):
+        """Remove only the supplied independent trace subscriber."""
+        if callback in self._trace_subscribers:
+            self._trace_subscribers.remove(callback)
 
     def get_device_info(
         self,
@@ -152,7 +163,12 @@ class OP815:
 
     def _trace(self, event, **values):
         """Emit an optional trace event without affecting hardware behavior."""
-        if getattr(self, "_trace_callback", None) is None:
+        callbacks = []
+        compatibility_callback = getattr(self, "_trace_callback", None)
+        if compatibility_callback is not None:
+            callbacks.append(compatibility_callback)
+        callbacks.extend(getattr(self, "_trace_subscribers", ()))
+        if not callbacks:
             return
         payload = dict(getattr(self, "_trace_metadata", {}))
         payload.update(getattr(self, "_trace_context", {}))
@@ -167,13 +183,13 @@ class OP815:
         payload["timestamp"] = datetime.now(timezone.utc).isoformat(
             timespec="milliseconds"
         )
-        try:
-            self._trace_callback(payload)
-        except Exception:
-            # Tracing is investigative instrumentation and must never change a
-            # measurement result or turn a successful hardware command into a
-            # failed one.
-            return
+        for callback in tuple(dict.fromkeys(callbacks)):
+            try:
+                callback(dict(payload))
+            except Exception:
+                # Trace consumers are isolated from both hardware and each
+                # other so instrumentation cannot alter a command result.
+                continue
 
     def _bind(self, name, argument_types):
         """Declare a DLL function's arguments and integer return status."""

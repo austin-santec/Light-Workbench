@@ -1,7 +1,7 @@
 # OSX insertion-loss software requirements: implementation assessment
 
 **Source:** [OSX_IL_Test_Software_Requirements_RevA.xlsx](temp%20docs/OSX_IL_Test_Software_Requirements_RevA.xlsx), `Requirements` worksheet, rows 5–61. The workbook's Document Control sheet identifies it as **version 0.1 Draft**, dated **2026-09-30**, prepared for Santec California engineering, production, software, and quality stakeholders.  
-**Assessment date:** 2026-10-01. **Software baseline:** Light Workbench 1.11.2 (`config/app_info.py`).  
+**Assessment date:** 2026-10-02. **Software baseline:** Light Workbench 1.13.0 (`config/app_info.py`).
 **Assessment method:** Review of source code, existing automated tests, and project documentation. This is a gap analysis, not hardware qualification or formal user acceptance. The workbook's own `Status` column says *Draft* for every item; the implementation status below is a separate assessment.
 
 ## Executive summary
@@ -10,7 +10,7 @@ Light Workbench already supports the core OSX-150/ILM-100 workflow: selecting ch
 
 The highest-impact gaps are product-family and wavelength support; revisioned acceptance criteria; mandatory reference evidence; complete retest and mapping history; measurement validity; report completeness and variable-length templates; and authorization/audit controls. An OSX-100 or multimode release also depends on verified production hardware interfaces and defined limits. No row has been judged intrinsically impossible, but several cannot be demonstrated until those technical details and hardware tests are available.
 
-Of the 57 rows, this review rates **5 implemented**, **31 partial**, and **21 not implemented**. These are engineering assessments of the current source, not approved closure counts.
+Of the 57 rows, this review rates **7 implemented**, **30 partial**, and **20 not implemented**. These are engineering assessments of the current source, not approved closure counts.
 
 ## How to read this register
 
@@ -40,8 +40,8 @@ The workbook has **57 requirement rows: 46 Must and 11 Should; 41 MVP and 16 R1*
 
 | ID | Priority / release | Requirement | Status | Current behavior and remaining work |
 | --- | --- | --- | --- | --- |
-| FUN-009a | Must / MVP | Discover/connect the ILM-100 through its approved legacy OP815 interface and enter remote mode. | Implemented | The OP815 DLL driver discovers the USB instrument and calls `RemoteMode(1)` when connecting. It leaves remote mode on normal driver close; the intended meaning of “stay in remote mode” should be confirmed with the owner. |
-| FUN-009b | Must / MVP | Give the operator a way to leave ILM remote mode on demand. | Not implemented | `RemoteMode(0)` is called during disconnect, but no operator-facing control exits remote mode while the connection remains active. |
+| FUN-009a | Must / MVP | Discover/connect the ILM-100 through its approved legacy OP815 interface and enter remote mode. | Implemented | The persistent hardware manager opens the OP815 through the approved DLL adapter, which calls `RemoteMode(1)`. The connection remains available between workflows until explicitly disconnected or the application closes. |
+| FUN-009b | Must / MVP | Give the operator a way to leave ILM remote mode on demand. | Implemented | The header `Connect Hardware...` menu provides measurement-only and all-hardware disconnect actions. The manager safely turns sources off, calls the adapter cleanup that performs `RemoteMode(0)`, and releases the driver session. |
 | FUN-010 | Must / MVP | Show ILM status/identity and actionable connection errors. | Partial | The header shows connection state, model, and serial when available; errors are surfaced. Corrective guidance is not consistently device-specific. |
 | FUN-012 | Must / MVP | Reference/zero every required wavelength before DUT testing. | Partial | **Calculate Reference** reads both current wavelengths, and values can be entered manually. Testing can proceed with 0.00/0.00 after a warning; no successful-reference gate exists. |
 | FUN-013 | Must / MVP | Record reference time, values, or instrument acknowledgement in the session. | Not implemented | References are transient inputs. `infrastructure/run_persistence.py` deliberately excludes reference values from stored run metadata, and no reference event/time is persisted. |
@@ -50,7 +50,7 @@ The workbook has **57 requirement rows: 46 Must and 11 Should; 41 MVP and 16 R1*
 | FUN-016 | Must / R1 | Check connected switch family against operator selection, or authorize an override. | Not implemented | There is no operator family selection or mismatch/override workflow. Current unsupported models are rejected. |
 | FUN-017 | Must / MVP | Route a logical channel and confirm completion before measurement. | Partial | The driver sends `CLOSe <channel>`, waits 0.25 s, then queries `CLOSe?` for a physical port before measuring. It parses a response but does not verify the reported route against an authoritative expected mapping. |
 | FUN-018 | Should / R1 | Support configurable USB/serial and Ethernet methods where hardware supports them. | Not implemented | The production switch adapter searches a fixed Santec USB VISA resource type. No transport selector or Ethernet/serial adapter is available. |
-| FUN-019 | Should / R1 | Make timeouts, retry counts, and settling delays configurable and logged. | Partial | Constants exist in adapters and optional OP815 diagnostic traces record some timing. Production settings are not operator/engineer configurable; there is no unified switch-command log or retry policy. |
+| FUN-019 | Should / R1 | Make timeouts, retry counts, and settling delays configurable and logged. | Partial | Constants exist in adapters, and always-on OP815/switch support events record command and measurement timing. Production settings are not operator/engineer configurable and there is no configurable retry policy. |
 | FUN-020 | Should / R1 | Reconnect after communication loss without losing completed data; confirm channel before resume. | Partial | Accepted rows survive an interruption and a later run can be continued. Automatic or guided reconnect within the interrupted session, with required route confirmation, is absent. |
 
 ### Controlled criteria and configuration
@@ -95,9 +95,9 @@ The workbook has **57 requirement rows: 46 Must and 11 Should; 41 MVP and 16 R1*
 
 | ID | Priority / release | Requirement | Status | Current behavior and remaining work |
 | --- | --- | --- | --- | --- |
-| FUN-046 | Must / MVP | Trace every measurement with session/product identity, logical/physical channel, wavelength, value/units, time, attempt, instrument, and validity. | Partial | The accepted JSON has logical channel, physical port, and two IL values plus run metadata. It lacks per-attempt timestamp/number, instrument identity, validity, and a stable measurement/session ID. |
+| FUN-046 | Must / MVP | Trace every measurement with session/product identity, logical/physical channel, wavelength, value/units, time, attempt, instrument, and validity. | Partial | Always-on support logs correlate workflows/operations and record complete temporary measurements, raw power, references, IL, channels, hardware identity, and timing. The authoritative run schema still lacks complete attempt history, explicit validity, and final-result linkage. |
 | FUN-047 | Must / MVP | Autosave after each completed channel or retest. | Implemented | **Write IL** commits the accepted row and atomically updates run CSV/JSON. A newly started run is not materialized until its first accepted row. |
-| FUN-048 | Must / R1 | Keep append-only events for connections, references, readings, retests, mappings, overrides, errors, and reports. | Not implemented | Normal run persistence rewrites a current-state snapshot. Optional diagnostics collect a temporary OP815 trace only when that separate tool is used. |
+| FUN-048 | Must / R1 | Keep append-only events for connections, references, readings, retests, mappings, overrides, errors, and reports. | Not implemented | Local JSONL support logs now record these operational events, but they are editable diagnostic evidence rather than an immutable, controlled, authoritative audit history. Normal run persistence still rewrites a current-state snapshot. |
 | FUN-050 | Must / MVP | Validate required metadata and paths at start and report finalization. | Partial | Start shows missing-field and zero-reference warnings, but offers bypass buttons. The exporter checks its template and some identity fields; full required-metadata, criteria, completeness, and path validation is absent. |
 | FUN-051 | Must / MVP | Show unit, devices, reference status, active channel/wavelength, latest reading, progress, and pass/review/fail. | Partial | Identity, device, active-channel, latest 1310/1550, and progress fields appear in the run window. An explicit active-wavelength indicator, persisted reference status, and the required disposition states do not. |
 | FUN-052 | Must / MVP | Make normal operator actions available through the UI. | Partial | Current testing, retest, diagnostic, and export actions have UI controls. Several required actions (family choice, criteria selection, mapping execution, approval, preview) do not yet exist. |
@@ -108,7 +108,7 @@ The workbook has **57 requirement rows: 46 Must and 11 Should; 41 MVP and 16 R1*
 | FUN-057 | Must / R1 | Recover after unexpected termination without losing or duplicating accepted rows. | Partial | Atomic CSV/JSON writes and manual continuation provide a recovery basis. There is no formal crash-recovery/reconciliation flow or forced-termination validation. |
 | FUN-058 | Must / R1 | Capture operator identity and authorize overrides/criteria edits by role. | Partial | The **Tested by** initials field is captured; authentication, role enforcement, and attributable approvals do not exist. |
 | FUN-059 | Should / R1 | Isolate commands, timing, criteria, template mappings, and naming rules in version-controlled configuration. | Partial | The hardware adapter, switch profile, timing constants, and export code are separate modules. Controlled criteria/template/naming configuration and revision governance are missing. |
-| FUN-060 | Should / R1 | Produce support logs without disclosing confidential credentials. | Partial | The Power Measurement Diagnostics tool can export an optional OP815 command trace. There is no unified production-run diagnostic log, switch SCPI trace, or documented redaction policy. |
+| FUN-060 | Should / R1 | Produce support logs without disclosing confidential credentials. | Implemented | Always-on local JSONL covers production/tool workflows, complete measurements, OP815 and switch commands, connection leases, persistence, exports, and errors. It uses an allowlist, path redaction, prohibited-field removal, bounded responses, rotation/retention, degraded fallback, status UI, and explicit local support bundles. `docs/SUPPORT_LOGGING.md` documents the policy and limitations. |
 
 ## Milestone 0: testable software behavior baseline
 

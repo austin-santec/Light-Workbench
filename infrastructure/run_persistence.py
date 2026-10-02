@@ -10,6 +10,7 @@ from pathlib import Path
 from config.app_config import DEFAULT_RUN_ROOT
 from domain.models import MeasurementRecord
 from infrastructure.schema import CURRENT_RUN_SCHEMA_VERSION, migrate_run_payload
+from domain.support_events import SupportEventCategory, SupportLogLevel
 
 
 def _run_metadata(metadata):
@@ -129,8 +130,10 @@ class RunRecorder:
         metadata=None,
         limit=2.0,
         directory: str | Path | None = None,
+        support_logger=None,
     ):
         self.metadata = dict(metadata or {})
+        self.support_logger = support_logger
         self.limit = float(limit)
         self._fixed_directory = directory is not None
         if directory is not None:
@@ -163,6 +166,7 @@ class RunRecorder:
         replacement_analysis=None,
         switch_test_sessions=None,
         completed_replacements=None,
+        support_logger=None,
     ):
         """Create a recorder that updates an already-loaded CSV run."""
         recorder = cls.__new__(cls)
@@ -177,11 +181,44 @@ class RunRecorder:
         recorder.replacement_analysis = replacement_analysis
         recorder.switch_test_sessions = list(switch_test_sessions or [])
         recorder.completed_replacements = list(completed_replacements or [])
+        recorder.support_logger = support_logger
         recorder._directory_created = True
         return recorder
 
     def save(self, measurements: list[MeasurementRecord]):
         """Atomically save the current table and its audit history."""
+        self._record(
+            "persistence.run_save_requested",
+            measurement_count=len(measurements),
+            destination=self.directory,
+            run_number=self.metadata.get("Run number"),
+            status="requested",
+        )
+        started = datetime.now()
+        try:
+            self._save(measurements)
+        except Exception as error:
+            self._record(
+                "persistence.run_save_failed",
+                level=SupportLogLevel.ERROR,
+                measurement_count=len(measurements),
+                destination=self.directory,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
+            raise
+        self._record(
+            "persistence.run_save_completed",
+            measurement_count=len(measurements),
+            destination=self.directory,
+            run_number=self.metadata.get("Run number"),
+            elapsed_ms=(datetime.now() - started).total_seconds() * 1000.0,
+            status="success",
+        )
+
+    def _save(self, measurements: list[MeasurementRecord]):
+        """Perform the existing atomic CSV/JSON save."""
         # A newly started run is allowed to exist only in memory until the
         # first accepted measurement is written. This prevents abandoned runs
         # from leaving empty folders, CSV files, or JSON files behind.
@@ -217,6 +254,15 @@ class RunRecorder:
                 json_file.flush()
                 os.fsync(json_file.fileno())
             os.replace(temporary_path, self.json_path)
+            self._record(
+                "persistence.atomic_replace_completed",
+                file_type="json",
+                destination=self.json_path,
+                temporary_destination=temporary_path,
+                schema_version_written=CURRENT_RUN_SCHEMA_VERSION,
+                measurement_count=len(measurements),
+                status="success",
+            )
         finally:
             if temporary_path.exists():
                 temporary_path.unlink()
@@ -381,9 +427,33 @@ class RunRecorder:
                 csv_file.flush()
                 os.fsync(csv_file.fileno())
             os.replace(temporary_path, self.csv_path)
+            self._record(
+                "persistence.atomic_replace_completed",
+                file_type="csv",
+                destination=self.csv_path,
+                temporary_destination=temporary_path,
+                measurement_count=len(measurements),
+                status="success",
+            )
         finally:
             if temporary_path.exists():
                 temporary_path.unlink()
+
+    def _record(self, event, *, level=SupportLogLevel.INFO, **fields):
+        if self.support_logger is None:
+            return
+        try:
+            self.support_logger.record(
+                SupportEventCategory.PERSISTENCE,
+                event,
+                level=level,
+                unit_serial=self.metadata.get("Main board serial"),
+                switch_serial=self.metadata.get("Switch serial"),
+                operator_initials=self.metadata.get("Tested by"),
+                **fields,
+            )
+        except Exception:
+            pass
 
 
 def load_run_json(path: str | Path) -> dict:

@@ -113,6 +113,12 @@ class PowerDiagnosticsWorker(QObject):
         self._finished = True
         close_error = None
         try:
+            setter = getattr(self.meter, "set_trace_callback", None)
+            if setter is not None:
+                try:
+                    setter(None)
+                except Exception:
+                    pass
             self.hardware_session.close()
         except Exception as error:
             close_error = error

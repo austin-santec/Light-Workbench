@@ -17,6 +17,9 @@ from infrastructure.unit_persistence import (
 class FileUnitRepository:
     """Provide application-facing access to unit JSON and unit run paths."""
 
+    def __init__(self, support_logger=None):
+        self.support_logger = support_logger
+
     def available_run_numbers(self, unit_directory: str | Path) -> list[int]:
         """Return saved numbered runs for a unit."""
         return _available_run_numbers(unit_directory)
@@ -67,15 +70,44 @@ class FileUnitRepository:
         switch_serial: str | None = None,
     ) -> None:
         """Atomically save unit metadata and its run index."""
-        _save_unit_record(
-            unit_directory,
-            unit_metadata,
-            completed_replacements,
-            designated_spares,
-            run_number,
-            run_directory,
-            switch_serial,
+        try:
+            _save_unit_record(
+                unit_directory,
+                unit_metadata,
+                completed_replacements,
+                designated_spares,
+                run_number,
+                run_directory,
+                switch_serial,
+            )
+        except Exception as error:
+            self._record(
+                "persistence.unit_save_failed",
+                level="error",
+                destination=unit_directory,
+                run_number=run_number,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
+            raise
+        self._record(
+            "persistence.unit_save_completed",
+            destination=unit_directory,
+            run_number=run_number,
+            switch_serial=switch_serial,
+            unit_serial=unit_metadata.get("Main board serial"),
+            schema_version_written=1,
+            status="success",
         )
+
+    def _record(self, event, **fields):
+        if self.support_logger is None:
+            return
+        try:
+            self.support_logger.record("persistence", event, **fields)
+        except Exception:
+            pass
 
     def unit_directory_for_metadata(
         self,

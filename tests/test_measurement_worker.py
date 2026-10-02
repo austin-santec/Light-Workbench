@@ -55,6 +55,15 @@ class FakeSwitch:
         self.closed = True
 
 
+class CapturingSupportLogger:
+    def __init__(self):
+        self.events = []
+
+    def record(self, category, event, **fields):
+        self.events.append((str(category), event, fields))
+        return True
+
+
 class MeasurementWorkerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -198,6 +207,43 @@ class MeasurementWorkerTests(unittest.TestCase):
         self.assertEqual(len(readings), 2)
         self.assertAlmostEqual(readings[-1][2], 1.92)
         self.assertAlmostEqual(readings[-1][3], 1.58)
+
+    def test_logging_tracks_complete_temporary_repeat_and_write_events(self):
+        logger = CapturingSupportLogger()
+        worker = MeasurementWorker(
+            SequencePowerMeter(),
+            FakeSwitch(),
+            [1],
+            {1310: 0.72, 1550: 0.28},
+            support_logger=logger,
+            workflow_id="wf-test",
+        )
+        readings = []
+        worker.operator_required.connect(
+            lambda _channel, _port: worker.continue_current()
+        )
+
+        def review_reading(*values):
+            readings.append(values)
+            if len(readings) == 1:
+                worker.read_current()
+            else:
+                worker.write_current()
+
+        worker.reading_ready.connect(review_reading)
+        worker.run()
+
+        completed = [
+            fields
+            for _category, event, fields in logger.events
+            if event == "measurement.two_wavelength_completed"
+        ]
+        self.assertEqual(len(completed), 2)
+        self.assertTrue(all(item["both_wavelengths_complete"] for item in completed))
+        self.assertTrue(all(item["reading_state"] == "temporary" for item in completed))
+        names = [event for _category, event, _fields in logger.events]
+        self.assertIn("measurement.repeat_requested", names)
+        self.assertIn("measurement.write_requested", names)
 
     def test_live_write_mode_updates_until_operator_writes(self):
         meter = SequencePowerMeter()

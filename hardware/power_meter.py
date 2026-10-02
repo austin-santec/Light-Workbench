@@ -46,6 +46,18 @@ class SantecPowerMeter:
         if setter is not None:
             setter(callback)
 
+    def add_trace_callback(self, callback):
+        """Subscribe a trace consumer without replacing diagnostic tracing."""
+        setter = getattr(self._driver, "add_trace_callback", None)
+        if setter is not None:
+            setter(callback)
+
+    def remove_trace_callback(self, callback):
+        """Remove one subscribed trace consumer."""
+        remover = getattr(self._driver, "remove_trace_callback", None)
+        if remover is not None:
+            remover(callback)
+
     def set_trace_context(self, **context):
         """Attach the current diagnostic measurement context to trace events."""
         setter = getattr(self._driver, "set_trace_context", None)

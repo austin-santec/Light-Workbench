@@ -1,7 +1,7 @@
 # Light Workbench — AI Handoff
 
 This document is a working orientation guide for another AI or developer
-continuing this project. It was last reviewed on 2026-09-25. The files on disk
+continuing this project. It was last reviewed on 2026-10-02. The files on disk
 and the Git worktree are the source of truth.
 
 ## Mission
@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current user-facing release is **Light Workbench 1.11.2**. The single
+The current source release is **Light Workbench 1.13.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -40,6 +40,8 @@ blocks the sample and leaves no history row.
 | application/measurement_worker.py | Qt worker/orchestrator. Connects instruments, routes channels, waits for operator cable placement, supports repeated reads, emits readings/progress, and always closes instruments. |
 | measurement_worker.py | Compatibility facade for the application measurement worker. |
 | application/live_controller.py | Shared meter worker lifecycle used by Live IL and the main-window reference calculation. |
+| application/hardware_connection.py | Persistent single-thread hardware ownership, capability proxies, and exclusive workflow leases. |
+| domain/hardware_connection.py | Vendor-neutral connection capabilities, readiness snapshots, and ownership errors. |
 | application/power_diagnostics_controller.py | Non-recording raw-power meter worker lifecycle for Power Measurement Diagnostics. |
 | application/hardware_planning.py | Normalizes channel-mode selections before a hardware run starts. |
 | application/run_start.py | Prepares normalized hardware-run plans and controller requests without UI or hardware access. |
@@ -53,6 +55,11 @@ blocks the sample and leaves no history row.
 | domain/diagnostic_analysis.py | In-memory diagnostic samples and separate repeatability/stability statistics. |
 | domain/diagnostic_trace.py | Typed in-memory diagnostic hardware trace event model. |
 | application/diagnostic_trace.py | Thread-safe recorder for optional diagnostic trace events. |
+| domain/support_events.py | Typed, allowlisted support-event schema and correlation fields. |
+| application/support_logging.py | Bounded background queue, workflow/operation IDs, exception hooks, and hardware trace fan-out. |
+| infrastructure/support_log_writer.py | Daily JSONL writing, redaction, rotation, compression, retention, and degraded fallback. |
+| infrastructure/support_bundle.py | Explicit date-ranged local ZIP export with manifest and SHA-256 hashes. |
+| ui/support_logs.py | Logging status and support-bundle date-range dialogs. |
 | infrastructure/diagnostic_export.py | Explicit CSV/JSON export for diagnostic history and optional companion OP815 hardware trace; no automatic persistence. |
 | hardware/ | Hardware contracts, factories, simulated adapters, and composed sessions. |
 | infrastructure/ | File repositories, schema migration, run queries, reports, and COC adapters. |
@@ -93,6 +100,24 @@ The normal direction for new desktop behavior is ilm_app.py; keep raw
 instrument protocol code in the hardware adapter modules. Treat ILMReadLoss.py
 as a legacy/console path unless a change explicitly needs to preserve or
 improve it.
+
+## Engineering support logging
+
+Version 1.13.0 initializes an always-on support logger before the main window.
+It writes daily JSONL under `%LOCALAPPDATA%\LightWorkbench\logs`, rolls files at
+25 MB and local midnight, compresses inactive files older than seven days,
+retains 30 days, and caps managed logs at 500 MB. A temporary folder and then a
+bounded memory buffer provide degraded fallback. Producers use a bounded
+non-blocking queue so logging cannot change UI or hardware timing.
+
+The persistent hardware manager, OP815 subscriber trace, OSX switch trace,
+measurement worker, reference/tool workflows, run/unit persistence, COC, raw
+copy, and diagnostic export emit allowlisted events. Power Diagnostics keeps
+its independent in-memory callback while the global subscriber remains active.
+`Help > Support Logs` exposes folder, path, status, and explicit support-bundle
+actions. See `docs/SUPPORT_LOGGING.md` for schema, redaction, privacy, and
+limitations. These editable local files are support evidence, not the future
+immutable FUN-048 audit history.
 
 ## Architecture refactor status
 
@@ -160,15 +185,17 @@ short range.
    channels while preserving first-entered order, and rejects malformed or
    non-positive values.
 3. Enter optional main-board serial, unrestricted full switch serial, operating band,
-   and the two reference powers. References default to 0.00 dBm until
-   `Calculate Reference` temporarily connects to the meter, reads both
-   wavelengths with a zero software reference, disconnects, and applies the
+   and the two reference powers. First use the header `Connect Hardware...`
+   menu; references default to 0.00 dBm until calculated or entered.
+   `Calculate Reference` is
+   enabled when measurement hardware is connected; it borrows that connection,
+   reads both wavelengths with a zero software reference, releases its lease, and applies the
    resulting two-decimal offsets back to the setup without opening the Live IL
    window. Reference calibration uses a dedicated stabilized timing profile
    and does not slow normal production measurements.
-4. Choose Start Real Hardware and confirm the warning dialog.
-5. The worker connects to the selected supported switch and OP815, reports its
-   identity and lifecycle state, routes a logical channel, and
+4. Choose `Start Run` and confirm the warning dialog.
+5. The worker leases the already-connected supported switch and OP815, reports
+   their identity and lifecycle state, routes a logical channel, and
    emits operator_required(channel, physical_port).
 6. The operator moves the cable and chooses Read IL Values. The worker
    measures both wavelengths and emits reading_ready(channel, physical_port,
@@ -189,7 +216,8 @@ short range.
     until `Write IL` is pressed; only then is it committed and the worker advances.
     The mode has a red `LIVE` indicator, is disabled while a run is active, and
     defaults on each application session.
-8. On completion, stop, or hardware failure, the instruments are closed. Rows
+8. On completion or stop, the workflow releases its leases and healthy
+   instruments remain connected. A failed device is closed and marked Error. Rows
    accepted before interruption remain persisted.
 9. Existing CSVs can be opened for analysis. The table highlights either
 wavelength over the warning limit and Select Over-Limit selects rows for
@@ -231,10 +259,10 @@ from the application.
 menu item only opens the dialog; `Start Red Light Test` performs the connection
 and selects channel 1. The operator can type a channel number, use the Up/Down
 keys, or use Previous/Next. The dialog displays the selected logical channel,
-configured total, and physical port, and disconnects when stopped or closed.
+configured total, and physical port, and releases its shared switch lease when stopped or closed.
 
 14. `Tools > Live IL Reading...` opens a meter-only dialog. It does not connect
-to the OSX-150. `Start Meter` connects to the OP815, `Read IL` can be pressed
+to the OSX-150. `Start Meter` borrows or connects the OP815, `Read IL` can be pressed
 repeatedly, and `Calculate Reference` derives both shared reference offsets
 from a zero-reference meter reading. Manual reference edits stay synchronized
 with the main setup. It never creates run files, changes the table, or writes
@@ -289,12 +317,19 @@ actual wavelength still blocks `ReadPower`.
 
 ### OSX-150
 
-hardware/optical_switch.py filters VISA resources by Santec USB vendor/product IDs
-0x2428 / 0xD00D, verifies identity using *IDN?, and uses:
+hardware/optical_switch.py tries the operator's manual address, a separately
+remembered automatic address, then a targeted `USB?*::INSTR` enumeration
+filtered by Santec VID/PID 0x2428 / 0xD00D. Each candidate gets a fresh LF and,
+if needed, CRLF `*IDN?` probe. A supported identity is followed by channel-count
+validation; zero or invalid channel counts retain detailed transient diagnostic
+information but block routing and close the session safely. It uses:
 
 - CFG:SWT:END? for the configured logical-channel count;
 - CLOSe <logical channel> to route a test channel;
 - CLOSe? to read the physical port actually selected.
+
+`CLOSe?` must not be used as a connection probe. It is valid only after
+`CLOSe <logical channel>` has routed a channel.
 
 The switch applies its own replacement mapping. Python should request the
 logical test channel and record the reported physical port; it should not
@@ -403,9 +438,9 @@ the application provides a configurable folder and manual part-number fallback.
 
 Completed in the inspected environment:
 
-- python -m unittest discover -s tests -v: 33 tests passed, including replacement
-  selection, bottom-spare ranking, persistence, XLSX cell mapping, template
-  preservation, part-number lookup, and unrestricted switch-serial coverage.
+- python -m unittest discover -s tests: 264 tests passed, including support-log
+  rotation, retention, redaction, fallback, trace fan-out, support bundles,
+  hardware connection safety, persistence, XLSX mapping, and UI coverage.
 - python -m compileall -q -f .: passed.
 - py -3.11-32 -m unittest discover -v: could not start because the Python
   launcher did not recognize the installed interpreter, despite the direct

@@ -16,6 +16,43 @@ from infrastructure.run_persistence import RunRecorder as InfrastructureRunRecor
 
 
 class RunPersistenceTests(unittest.TestCase):
+    def test_save_records_csv_json_and_atomic_events_without_changing_data(self):
+        class Logger:
+            def __init__(self):
+                self.events = []
+
+            def record(self, category, event, **fields):
+                self.events.append((str(category), event, fields))
+
+        with tempfile.TemporaryDirectory() as directory:
+            logger = Logger()
+            recorder = RunRecorder(
+                root=directory,
+                metadata={"Run number": "3", "Main board serial": "UNIT-1"},
+                support_logger=logger,
+            )
+            rows = [MeasurementRecord(1, 0.5, 0.6, 1)]
+            recorder.save(rows)
+            names = [item[1] for item in logger.events]
+            self.assertEqual(names.count("persistence.atomic_replace_completed"), 2)
+            self.assertIn("persistence.run_save_completed", names)
+            self.assertEqual(load_run_json(recorder.json_path)["measurements"][0]["channel"], 1)
+
+    def test_broken_logger_does_not_change_saved_run_data(self):
+        class BrokenLogger:
+            def record(self, *_args, **_fields):
+                raise RuntimeError("logger failed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            recorder = RunRecorder(
+                root=directory,
+                metadata={"Run number": "1"},
+                support_logger=BrokenLogger(),
+            )
+            recorder.save([MeasurementRecord(4, 0.7, 0.8, 4)])
+            self.assertTrue(recorder.csv_path.is_file())
+            self.assertEqual(load_run_json(recorder.json_path)["measurements"][0]["channel"], 4)
+
     def test_legacy_module_reexports_infrastructure_recorder(self):
         self.assertIs(RunRecorder, InfrastructureRunRecorder)
 

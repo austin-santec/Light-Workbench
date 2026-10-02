@@ -42,10 +42,13 @@ For every channel, it can:
 The application does **not** change the references saved in the ILM or edit the
 replacement-channel configuration saved in the OSX-150.
 
-During a hardware run, the **Connected hardware** panel appears in the top
-header beside **Open Existing CSV** and shows the detected ILM/power-meter and
-optical-switch state, model, and serial number. It updates
-through Connecting, Connected, Disconnected, and Error states. If a switch
+The **Connected hardware** panel appears in the top header beside the
+**Connect Hardware...** menu and shows the ILM/power-meter and optical-switch
+state, model, and serial number. Use the button itself to connect everything
+needed for a normal run, or its menu to connect/disconnect measurement hardware
+and the switch independently. Connections persist between runs and tools until
+the operator disconnects them or closes Light Workbench. The panel updates
+through Connecting, Connected, In use, Disconnected, and Error states. If a switch
 reports a recognized model that has not been verified for this application,
 the run is refused with an explicit unsupported-device message; unknown device
 identities are not silently treated as compatible.
@@ -55,17 +58,18 @@ window for checking a switch with a VFL. Opening the menu item does not connect
 to the switch. Click `Start Red Light Test` to connect and select channel 1;
 then use the channel number, Up/Down keys, Previous/Next buttons, or a typed
 channel number to route the switch. The dialog reports the physical port
-returned by the switch and disconnects when stopped or closed. It does not
+returned by the switch and releases it when stopped or closed. The switch
+remains connected to Light Workbench for later use. It does not
 measure IL, create run files, or affect COC data.
 
-From `Tools > Live IL Reading...`, the operator can connect only to the
+From `Tools > Live IL Reading...`, the operator can connect or borrow only the
 ILM/OP815 and read the current insertion loss at 1310 nm and 1550 nm. It uses
 editable reference powers initialized from Hardware test setup, supports
 repeated reads, and never connects to the switch or saves run data. `Start Live
 Updates` automatically refreshes both values without saving data and changes to
 `Stop Live Updates` while active.
 
-From `Tools > Power Measurement Diagnostics...`, the operator can connect to
+From `Tools > Power Measurement Diagnostics...`, the operator can connect or borrow
 the meter without starting a run and view raw absolute power at both
 wavelengths alongside the exact insertion-loss calculation. The tool can also
 connect to the switch independently so a logical channel can be routed before
@@ -107,6 +111,16 @@ areas can also be resized.
 When results are displayed, `Copy Analysis` copies the formatted variation
 summary to the system clipboard for pasting into notes or another document.
 
+Light Workbench also keeps always-on engineering support logs under
+`%LOCALAPPDATA%\LightWorkbench\logs`. Use `Help > Support Logs` to open the
+folder, copy its path, inspect logging health, or explicitly export a dated
+support bundle. These JSONL logs include workflow, hardware, temporary
+measurement, calculation, persistence, and export evidence. They exclude
+clipboard contents, free-form notes, credentials, and complete run/COC files.
+They do not change production data and are not a tamper-proof audit record.
+See [`docs/SUPPORT_LOGGING.md`](docs/SUPPORT_LOGGING.md) for retention,
+redaction, and support-bundle details.
+
 ## Folder contents
 
 | File or folder | Purpose |
@@ -119,13 +133,16 @@ summary to the system clipboard for pasting into notes or another document.
 | `domain/raw_export.py` | Pure tab-separated formatting for copying accepted readings to Excel |
 | `domain/diagnostic_analysis.py` | In-memory diagnostic samples and variation statistics |
 | `domain/diagnostic_trace.py` | Typed in-memory hardware trace event model |
+| `domain/support_events.py` | Typed allowlisted engineering support-event schema |
 | `config/app_config.py` | Centralized default paths and injectable application path configuration |
 | `config/app_info.py` | Single source for application name, version, tagline, and About text |
 | `application/run_controller.py` | Hardware-run lifecycle controller and queued worker command boundary |
+| `application/hardware_connection.py` | Persistent serialized hardware ownership, capability leases, and managed device proxies |
 | `application/live_controller.py` | Live IL meter worker lifecycle controller |
 | `application/red_light_controller.py` | Red Light Test switch worker lifecycle controller |
 | `application/power_diagnostics_controller.py` | Non-recording raw-power diagnostic lifecycle controller |
 | `application/diagnostic_trace.py` | Thread-safe in-memory recorder for optional diagnostic trace events |
+| `application/support_logging.py` | Bounded support-log queue, correlation IDs, trace fan-out, and exception hooks |
 | `application/timing.py` | Shared pacing defaults for automatic live readings |
 | `infrastructure/csv_run_loader.py` | CSV parsing adapter for current and legacy run files |
 | `infrastructure/run_persistence.py` | Atomic CSV/JSON run recorder and filename rules |
@@ -134,6 +151,8 @@ summary to the system clipboard for pasting into notes or another document.
 | `infrastructure/run_query.py` | Read-only queries over indexed unit runs |
 | `infrastructure/run_reports.py` | File-backed multi-run reporting service |
 | `infrastructure/diagnostic_export.py` | Explicit CSV/JSON export for diagnostic history and optional hardware trace |
+| `infrastructure/support_log_writer.py` | JSONL redaction, daily/size rotation, compression, retention, and fallback writing |
+| `infrastructure/support_bundle.py` | Explicit dated support-bundle ZIP and SHA-256 manifest export |
 | `infrastructure/schema.py` | Run and unit schema versions and migrations |
 | `run_persistence.py` | Compatibility facade for infrastructure run persistence |
 | `unit_persistence.py` | Compatibility facade for infrastructure unit persistence |
@@ -152,8 +171,10 @@ summary to the system clipboard for pasting into notes or another document.
 | `ui/live_il_reading.py` | Meter-only Live IL dialog and worker presentation module |
 | `ui/power_measurement_diagnostics.py` | Raw-power diagnostics dialog with optional switch routing |
 | `ui/red_light_test.py` | Separate VFL pre-test dialog presentation module |
+| `ui/support_logs.py` | Support logging status and bundle date-range dialogs |
 | `tools/dependency_check.py` | Non-destructive prerequisite and connection diagnostics |
 | `hardware/interfaces.py` | Vendor-neutral power-meter, laser-source, and optical-switch contracts |
+| `domain/hardware_connection.py` | Vendor-neutral hardware capabilities, readiness snapshots, and connection errors |
 | `hardware/device_identity.py` | Compatibility-safe identity reporting for hardware adapters |
 | `hardware/power_meter.py` | Integrated OP815 adapter and simulated meter implementations |
 | `hardware/optical_switch.py` | Extensible Santec switch identity registry and OSX-150 adapter |
@@ -204,9 +225,10 @@ The Light Workbench desktop application can be started with:
 py -3.11-32 ilm_app.py
 ```
 
-Use `Help > About` to view the current release version, a
+Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current Light Workbench release is version **1.11.2**.
+current source version is **1.13.0**; an existing executable keeps its prior
+version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
 the [`docs/README.md`](docs/README.md) documentation index.
@@ -273,10 +295,11 @@ then the latest complete reading is committed and the run advances. The red
 Live Write Mode is enabled by default on startup, lasts only for the current
 application session, and cannot be changed during an active run.
 
-The same panel includes a guarded `Start Real Hardware` path. It runs the
-existing OP815 DLL and OSX-150 VISA calls in a background worker, asks the
-operator to move the cable before each reading, and provides a stop control
-that releases both instruments. Hardware-run results are currently displayed
+The same panel includes a guarded `Start Run` path. It is disabled until the
+measurement hardware and switch are connected and available. The run borrows
+those persistent connections, asks the operator to move the cable before each
+reading, and releases exclusive access without disconnecting the instruments.
+Hardware-run results are currently displayed
 and saved incrementally to the same CSV/JSON pair, including results accepted
 before a stop or hardware error.
 
@@ -294,7 +317,9 @@ pass, one channel, or specific channels and inclusive ranges. It also captures
 the main-board serial, switch serial, operating band, and operator initials in
 the run metadata.
 
-When `Start Run` is clicked, Light Workbench separately checks for missing
+Before `Start Run` can be clicked, use **Connect Hardware...** to connect all
+required hardware. `Calculate Reference` requires only connected measurement
+hardware. When `Start Run` is clicked, Light Workbench separately checks for missing
 setup metadata and warns when both reference values are `0.00`. Each warning
 allows the operator to return to setup or continue without metadata/with the
 entered reference values.
@@ -734,6 +759,17 @@ and USB serial numbers and asks which index to use.
 - Close or disconnect Santec Terminal so it releases the VISA session.
 - Confirm that PyVISA and a compatible VISA implementation are installed.
 - Verify that Santec Terminal can still identify the switch when used by itself.
+- If VISA enumeration misses a switch whose address is known, enter that exact
+  address under **Tools > Switch VISA Address...** and reconnect. Clearing the
+  field restores automatic discovery. The setting applies to the next switch
+  connection and does not replace a missing or incompatible VISA driver.
+
+The switch connection tries a manual address, a separately remembered working
+address, and then a USB-only VISA discovery query. It automatically tries LF
+and then CRLF for `*IDN?`, retains the working ending, and validates the
+configured channel count before routing. A detected switch that reports zero
+channels is identified by model, serial, firmware, and address, but channel
+commands remain blocked until its configuration is restored.
 
 ### The displayed loss does not match the ILM screen
 

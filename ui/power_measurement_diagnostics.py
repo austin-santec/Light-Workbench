@@ -103,11 +103,15 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         reference_1550=0.00,
         meter_factory=None,
         switch_factory=None,
+        support_logger=None,
+        workflow_id="",
     ):
         super().__init__(parent)
         self.hardware_factory = HardwareFactory()
         self.meter_factory = meter_factory or self.hardware_factory.create_power_meter
         self.switch_factory = switch_factory or self.hardware_factory.create_switch
+        self.support_logger = support_logger
+        self.workflow_id = str(workflow_id or "")
 
         self.trace_recorder = DiagnosticTraceRecorder(APP_VERSION)
         self.meter_controller = PowerDiagnosticsController(
@@ -127,7 +131,9 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self.switch_controller.thread_finished.connect(self._switch_finished)
 
         self.meter_connected = False
+        self.meter_uses_persistent_connection = False
         self.switch_connected = False
+        self.switch_uses_persistent_connection = False
         self.read_pending = False
         self.pending_method = None
         self.pending_trace_id = None
@@ -467,6 +473,9 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self.meter_connected = True
         self.trace_recorder.update_metadata(meter_description=description)
         meter = getattr(self.meter_controller.worker, "meter", None)
+        self.meter_uses_persistent_connection = bool(
+            getattr(meter, "persistent_connection", False)
+        )
         if meter is not None:
             self._record_trace_device_identity(
                 device_info_for(
@@ -497,7 +506,11 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
     def _meter_finished(self):
         self._reset_meter_state()
         if self.isVisible():
-            self.status_label.setText("Meter disconnected.")
+            self.status_label.setText(
+                "Meter released and still connected to Light Workbench."
+                if self.meter_uses_persistent_connection
+                else "Meter disconnected."
+            )
 
     def _reset_meter_state(self):
         self.meter_connected = False
@@ -556,6 +569,20 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
             loss_1310,
             loss_1550,
             method,
+        )
+        self._record_support(
+            "measurement.two_wavelength_completed",
+            measured_power_dbm={"1310": measured[1310], "1550": measured[1550]},
+            reference_1310_dbm=reference_1310,
+            reference_1550_dbm=reference_1550,
+            loss_1310_db=loss_1310,
+            loss_1550_db=loss_1550,
+            logical_channel=(self.channel_spin.value() if self.switch_connected else None),
+            physical_port=(self.last_physical_port if self.switch_connected else None),
+            acquisition_method=method,
+            reading_state="diagnostic_in_memory",
+            both_wavelengths_complete=True,
+            status="success",
         )
         if self.monitoring_active:
             self.status_label.setText(
@@ -747,17 +774,37 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self.switch_connected = True
         self.channel_count = channel_count
         switch = self.switch_controller.switch
+        self.switch_uses_persistent_connection = bool(
+            getattr(switch, "persistent_connection", False)
+        )
+        info = None
         if switch is not None:
-            self._record_trace_device_identity(
-                device_info_for(
-                    switch,
-                    DeviceCategory.OPTICAL_SWITCH,
-                    state=ConnectionState.CONNECTED,
-                )
+            info = device_info_for(
+                switch,
+                DeviceCategory.OPTICAL_SWITCH,
+                state=ConnectionState.CONNECTED,
             )
+            self._record_trace_device_identity(info)
         self.channel_spin.setRange(1, channel_count)
+        identity = ""
+        if info is not None:
+            identity = " %s, S/N %s, FW %s, %d channels." % (
+                info.model or "Optical switch",
+                info.serial_number or "unknown",
+                info.firmware_version or "unknown",
+                channel_count,
+            )
+            self.switch_status_label.setToolTip("\n".join(
+                detail for detail in (
+                    info.raw_identity,
+                    info.resource_address,
+                    info.transport_details,
+                    info.connection_warning,
+                ) if detail
+            ))
         self.switch_status_label.setText(
-            "Connected. Select a logical channel and click Set Channel."
+            "Connected.%s Select a logical channel and click Set Channel."
+            % identity
         )
         self._update_controls()
 
@@ -823,6 +870,10 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
 
     def _switch_finished(self):
         self._reset_switch_state()
+        if self.isVisible() and self.switch_uses_persistent_connection:
+            self.switch_status_label.setText(
+                "Switch released and still connected to Light Workbench."
+            )
 
     def _reset_switch_state(self):
         self.switch_connected = False
@@ -902,6 +953,15 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
                 trace_metadata=self.trace_recorder.metadata(),
             )
         except (OSError, ValueError) as error:
+            self._record_support(
+                "export.diagnostic_history_failed",
+                category="export",
+                level="error",
+                destination=destination,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
             QMessageBox.critical(
                 self,
                 "Export Diagnostic History",
@@ -909,11 +969,36 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
             )
             return
 
+        self._record_support(
+            "export.diagnostic_history_completed",
+            category="export",
+            destination=destination,
+            file_type=destination.suffix.lower().lstrip("."),
+            measurement_count=len(self.history),
+            details="Hardware trace included." if include_trace else "History only.",
+            status="success",
+        )
+
         trace_note = " and hardware trace" if include_trace else ""
         self.status_label.setText(
             "Diagnostic history%s exported to %s. No run data was changed."
             % (trace_note, destination)
         )
+
+    def _record_support(self, event, *, category="measurement", level="info", **fields):
+        if self.support_logger is None:
+            return
+        try:
+            self.support_logger.record(
+                category,
+                event,
+                level=level,
+                workflow_id=self.workflow_id,
+                workflow_type="power_diagnostics",
+                **fields,
+            )
+        except Exception:
+            pass
 
     def _ask_trace_export(self):
         """Return the trace choice, or ``None`` when the export is cancelled."""

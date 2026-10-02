@@ -1,6 +1,8 @@
 """Background measurement orchestration for the desktop application."""
 
 import threading
+import time
+import uuid
 from collections.abc import Mapping, Sequence
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
@@ -8,6 +10,7 @@ from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from domain.measurement import calculate_insertion_loss
 from domain.models import ConnectionState, DeviceCategory
+from domain.support_events import SupportEventCategory, SupportLogLevel
 from hardware.device_identity import device_info_for
 from hardware.interfaces import OpticalSwitch, PowerMeter
 from hardware.session import OpticalTestSession
@@ -44,6 +47,8 @@ class MeasurementWorker(QObject):
         resume_full_pass=False,
         live_write_mode=False,
         live_write_interval=LIVE_WRITE_INTERVAL_SECONDS,
+        support_logger=None,
+        workflow_id="",
     ):
         super().__init__()
         self.power_meter = power_meter
@@ -57,6 +62,8 @@ class MeasurementWorker(QObject):
         self.resume_full_pass = bool(resume_full_pass)
         self.live_write_mode = bool(live_write_mode)
         self.live_write_interval = max(0.1, float(live_write_interval))
+        self.support_logger = support_logger
+        self.workflow_id = str(workflow_id or "")
         self._stop_event = threading.Event()
         self._operator_ready = threading.Event()
         self._channel_selection_event = threading.Event()
@@ -76,6 +83,12 @@ class MeasurementWorker(QObject):
         terminal_state = None
         terminal_message = None
         try:
+            self._record(
+                SupportEventCategory.WORKFLOW,
+                "run.worker_started",
+                live_write_mode=self.live_write_mode,
+                status="started",
+            )
             self._emit_device_status(ConnectionState.CONNECTING)
             self.hardware_session.connect()
             self._emit_device_status(ConnectionState.CONNECTED)
@@ -136,6 +149,14 @@ class MeasurementWorker(QObject):
         except Exception as error:
             terminal_state = "failed"
             terminal_message = str(error)
+            self._record(
+                SupportEventCategory.WORKFLOW,
+                "run.worker_failed",
+                level=SupportLogLevel.ERROR,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
         finally:
             # Do not notify the UI that the worker has completed until both
             # instruments have been released. The previous ordering emitted
@@ -167,8 +188,18 @@ class MeasurementWorker(QObject):
         # so the UI never starts thread shutdown while a device close is still
         # executing in the worker thread.
         if terminal_state == "completed":
+            self._record(
+                SupportEventCategory.WORKFLOW,
+                "run.worker_completed",
+                status="success",
+            )
             self.completed.emit()
         elif terminal_state == "stopped":
+            self._record(
+                SupportEventCategory.WORKFLOW,
+                "run.worker_stopped",
+                status="stopped",
+            )
             self.stopped.emit()
         elif terminal_state == "failed":
             self.failed.emit(terminal_message or "Hardware worker failed.")
@@ -282,7 +313,16 @@ class MeasurementWorker(QObject):
     def _measure_channel(self, channel, index=None, total=None, emit_progress=True):
         """Route, read, and accept one channel, including repeat reads."""
         self._raise_if_stopped()
+        route_started = time.perf_counter()
         physical_port = self.switch.set_channel(channel)
+        self._record(
+            SupportEventCategory.HARDWARE,
+            "switch.channel_routed",
+            logical_channel=channel,
+            physical_port=physical_port,
+            elapsed_ms=(time.perf_counter() - route_started) * 1000.0,
+            status="success",
+        )
         self._operator_ready.clear()
         self.operator_required.emit(channel, physical_port)
         if not self.live_write_mode:
@@ -292,8 +332,40 @@ class MeasurementWorker(QObject):
         self._raise_if_stopped()
 
         while True:
+            measurement_id = "measurement-" + uuid.uuid4().hex
+            self._set_meter_trace_context(
+                workflow_id=self.workflow_id,
+                operation_id=measurement_id,
+                measurement_id=measurement_id,
+                method="live_write" if self.live_write_mode else "normal_run",
+                channel=channel,
+                physical_port=physical_port,
+                reference_1310_dbm=self.reference_powers.get(1310),
+                reference_1550_dbm=self.reference_powers.get(1550),
+            )
+            started = time.perf_counter()
             measurements = self.power_meter.measure_both_wavelengths()
             losses = calculate_insertion_loss(self.reference_powers, measurements)
+            self._record(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.two_wavelength_completed",
+                operation_id=measurement_id,
+                logical_channel=channel,
+                physical_port=physical_port,
+                measured_power_dbm={
+                    "1310": measurements[1310],
+                    "1550": measurements[1550],
+                },
+                reference_1310_dbm=self.reference_powers.get(1310),
+                reference_1550_dbm=self.reference_powers.get(1550),
+                loss_1310_db=losses[1310],
+                loss_1550_db=losses[1550],
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+                reading_state="temporary",
+                both_wavelengths_complete=True,
+                acquisition_method=("live_write" if self.live_write_mode else "normal_run"),
+                status="success",
+            )
             self.reading_ready.emit(
                 channel,
                 physical_port,
@@ -309,9 +381,54 @@ class MeasurementWorker(QObject):
             if decision == "live_update":
                 continue
             if decision == "write":
+                self._record(
+                    SupportEventCategory.OPERATOR,
+                    "measurement.write_requested",
+                    operation_id=measurement_id,
+                    logical_channel=channel,
+                    physical_port=physical_port,
+                    reading_state="accepted_pending_persistence",
+                    status="requested",
+                )
                 if emit_progress:
                     self.progress_changed.emit(index, total)
                 return
+
+            self._record(
+                SupportEventCategory.OPERATOR,
+                "measurement.repeat_requested",
+                operation_id=measurement_id,
+                logical_channel=channel,
+                physical_port=physical_port,
+                reading_state="overwritten",
+                repeated_reading=True,
+                status="requested",
+            )
+
+    def _set_meter_trace_context(self, **context):
+        setter = getattr(self.power_meter, "set_trace_context", None)
+        if setter is None:
+            return
+        try:
+            setter(**context)
+        except Exception:
+            pass
+
+    def _record(self, category, event, *, level=SupportLogLevel.INFO, operation_id="", **fields):
+        if self.support_logger is None:
+            return
+        try:
+            self.support_logger.record(
+                category,
+                event,
+                level=level,
+                workflow_id=self.workflow_id,
+                operation_id=operation_id,
+                workflow_type="hardware_run",
+                **fields,
+            )
+        except Exception:
+            pass
 
     def _wait_for_channel_selection(self):
         while not self._channel_selection_event.wait(0.1):

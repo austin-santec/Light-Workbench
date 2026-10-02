@@ -14,6 +14,9 @@ from infrastructure.coc_export import (
 class FileCocExporter:
     """Provide the current file-backed COC and part lookup operations."""
 
+    def __init__(self, support_logger=None):
+        self.support_logger = support_logger
+
     def find_part_number(
         self,
         main_board_serial: str,
@@ -37,15 +40,46 @@ class FileCocExporter:
         tested_by: str = "",
     ) -> Path:
         """Create a COC workbook from the template without altering it."""
-        return _export_coc(
-            template_path,
-            output_directory,
-            measurements,
-            part_number,
-            main_board_serial,
-            export_date=export_date,
-            tested_by=tested_by,
+        try:
+            result = _export_coc(
+                template_path,
+                output_directory,
+                measurements,
+                part_number,
+                main_board_serial,
+                export_date=export_date,
+                tested_by=tested_by,
+            )
+        except Exception as error:
+            self._record(
+                "export.coc_failed",
+                level="error",
+                destination=output_directory,
+                measurement_count=len(measurements),
+                unit_serial=main_board_serial,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
+            raise
+        self._record(
+            "export.coc_completed",
+            destination=result,
+            file_type="xlsx",
+            measurement_count=len(measurements),
+            unit_serial=main_board_serial,
+            operator_initials=tested_by,
+            status="success",
         )
+        return result
+
+    def _record(self, event, **fields):
+        if self.support_logger is None:
+            return
+        try:
+            self.support_logger.record("export", event, **fields)
+        except Exception:
+            pass
 
 
 __all__ = [

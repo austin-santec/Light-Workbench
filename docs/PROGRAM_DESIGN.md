@@ -43,6 +43,15 @@ for the non-recording Power Measurement Diagnostics tool. Its dialog can own a
 meter controller and an optional independent switch controller; raw readings,
 reference math, and history remain in memory and never enter run persistence.
 
+`application/support_logging.py` owns the always-on support-event queue,
+application/workflow/operation correlation, exception hooks, and trace fan-out.
+Typed event envelopes live in `domain/support_events.py`; JSONL writing,
+redaction, daily/size rotation, compression, retention, and support bundles
+live in `infrastructure/`. Hardware adapters publish structured events but do
+not know where logs are stored. UI code starts semantic events and exposes
+status/export actions. Logging is best effort and may never become a hardware,
+measurement, or persistence dependency.
+
 `application/hardware_planning.py` contains the pure channel-selection rules
 for hardware runs. It converts UI selections into a `HardwareRunPlan` before
 hardware is created, while preserving the worker's existing full-pass and
@@ -131,6 +140,21 @@ root `coc_export.py` module remains a compatibility facade, while
 and switch adapters. The current default remains the integrated Santec ILM and
 OSX-150, while a future OPM-plus-laser setup can be introduced without
 spreading vendor selection through the UI.
+
+`application/hardware_connection.py` owns persistent application hardware.
+It serializes every native adapter call on one long-lived executor thread and
+provides managed capability proxies to existing workflow workers. A proxy
+acquires an exclusive lease when its session connects and releases that lease
+when the workflow closes; it never closes the manager-owned DLL or VISA
+session. This allows normal runs, reference calculation, Live IL, Red Light,
+and Power Diagnostics to reuse one connection without exposing native handles
+across worker threads or allowing simultaneous control.
+
+`domain/hardware_connection.py` defines capability, readiness, snapshot, and
+ownership errors without importing Qt or vendor drivers. Normal-run readiness
+requires available measurement hardware (plus a separate laser when configured)
+and an available optical switch. Data viewing and analysis do not depend on
+hardware readiness.
 
 `domain/models.py` defines transient vendor-neutral `DeviceInfo`,
 `DeviceCategory`, and `ConnectionState` values. Hardware adapters report those

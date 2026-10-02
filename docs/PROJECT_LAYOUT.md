@@ -9,13 +9,13 @@ packages.
 
 ```text
 ilm_app.py, ILMReadLoss.py       Application entry points
-application/                     Workflow controllers, measurement worker, reference lifecycle, run-start boundaries, and diagnostic trace recording
+application/                     Workflow controllers, persistent hardware ownership/leases, measurement workers, support logging, run-start boundaries, and diagnostic tracing
 config/                          Application paths and user-facing release metadata
 ui/                              Qt dialogs, status panels, and presentation workers
 tools/                           Optional dependency and environment diagnostics
 domain/                          Vendor-neutral models and business rules
 hardware/                        Hardware contracts, identity, adapters, factories, and sessions
-infrastructure/                  File repositories, CSV/unit persistence, loaders, COC/diagnostic export, queries, and reports
+infrastructure/                  File repositories, CSV/unit persistence, support-log writing/bundles, loaders, COC/diagnostic export, queries, and reports
 tests/                            Hardware-free automated tests
 ```
 
@@ -45,12 +45,18 @@ be used as source locations. The release scripts keep deployment output in
 
 - UI display, dialogs, and Qt signal wiring: `ilm_app.py` or `ui/`.
 - Workflow state and worker ownership: `application/`.
+- Persistent connection serialization and exclusive hardware leases:
+  `application/hardware_connection.py` and `domain/hardware_connection.py`.
 - Calculations, validation, and rules that do not need Qt or hardware:
   `domain/`.
 - Vendor-neutral contracts and composed hardware lifecycle: `hardware/`.
 - Hardware identity/status presentation: `hardware/device_identity.py` and
   `ui/hardware_status.py`.
 - CSV/JSON/XLSX/filesystem and future storage adapters: `infrastructure/`.
+- Typed support events: `domain/support_events.py`; queue/correlation ownership:
+  `application/support_logging.py`; rotation/redaction/bundles:
+  `infrastructure/support_log_writer.py` and `infrastructure/support_bundle.py`;
+  support dialogs: `ui/support_logs.py`.
 - Compatibility behavior for older callers: existing root-level facades.
 - Packaging and deployment behavior: `ilm_app.spec` and the PowerShell release
   scripts, not application runtime modules.

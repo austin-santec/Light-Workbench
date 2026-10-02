@@ -14,6 +14,8 @@ from PyQt5.QtWidgets import (
 )
 
 from application.red_light_controller import RedLightTestController
+from domain.models import ConnectionState, DeviceCategory
+from hardware.device_identity import device_info_for
 from hardware.factory import HardwareFactory
 
 
@@ -41,6 +43,7 @@ class RedLightTestDialog(QDialog):
         self.red_controller.thread_finished.connect(self._controller_finished)
         self.channel_count = 0
         self.started = False
+        self.uses_persistent_connection = False
         self._last_routed_channel = None
         self._last_requested_channel = None
 
@@ -129,6 +132,30 @@ class RedLightTestDialog(QDialog):
 
     def _switch_connected(self, channel_count):
         self.channel_count = channel_count
+        switch = self.red_controller.switch
+        self.uses_persistent_connection = bool(
+            getattr(switch, "persistent_connection", False)
+        )
+        if switch is not None:
+            info = device_info_for(
+                switch,
+                DeviceCategory.OPTICAL_SWITCH,
+                state=ConnectionState.CONNECTED,
+            )
+            self.status_label.setToolTip("\n".join(
+                detail for detail in (
+                    "%s S/N %s FW %s; %d configured channels"
+                    % (
+                        info.model or "Optical switch",
+                        info.serial_number or "unknown",
+                        info.firmware_version or "unknown",
+                        channel_count,
+                    ),
+                    info.resource_address,
+                    info.transport_details,
+                    info.connection_warning,
+                ) if detail
+            ))
         self.channel_spin.setRange(1, self.channel_count)
         self.channel_spin.setEnabled(True)
         self.previous_button.setEnabled(True)
@@ -196,7 +223,12 @@ class RedLightTestDialog(QDialog):
         self.stop_button.setEnabled(False)
         self.start_button.setEnabled(True)
         self.selected_channel_label.setText("Selected channel: -")
-        self.status_label.setText("Disconnected. Click Start Red Light Test to reconnect.")
+        self.status_label.setText(
+            "Switch released and still connected to Light Workbench. "
+            "Click Start Red Light Test to use it again."
+            if self.uses_persistent_connection
+            else "Disconnected. Click Start Red Light Test to reconnect."
+        )
 
     def _close_switch(self):
         if self.red_controller.worker is None and self.red_controller.thread is None:

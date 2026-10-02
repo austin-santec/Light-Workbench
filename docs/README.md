@@ -11,6 +11,9 @@ how to choose the other documents in this folder.
 The root [`Requirements.md`](../Requirements.md) maps the draft OSX insertion-loss
 requirements workbook to the current implementation, known gaps, decisions,
 and proposed delivery milestones.
+For a shorter personal task list, use
+[`REQUIREMENTS_CHECKLIST.md`](REQUIREMENTS_CHECKLIST.md), which groups every
+requirement into completed, partial, and not-yet-implemented work.
 
 ## Documentation map
 
@@ -34,6 +37,10 @@ and proposed delivery milestones.
 - [`REFACTOR_ROADMAP.md`](REFACTOR_ROADMAP.md) — incremental refactor history
   and remaining architecture work.
 
+- [`SUPPORT_LOGGING.md`](SUPPORT_LOGGING.md) documents always-on local
+  engineering logs, redaction, rotation, support bundles, and audit-trail
+  limitations.
+
 The current release version is maintained in `config/app_info.py`; do not
 duplicate it in this index. The current desktop entry point is `ilm_app.py`,
 while `ILMReadLoss.py` remains a supported legacy console workflow.
@@ -53,13 +60,21 @@ performs a final wavelength verification immediately before `ReadPower`; an
 unsupported or actual-wavelength mismatch blocks the diagnostic sample. Raw
 index/count convention differences are retained as trace warnings.
 
-The normal hardware-run window includes a compact Connected hardware panel in
-the top header, beside Open Existing CSV, for the ILM/power meter and optical
-switch. It displays each device's transient
-connection state, manufacturer/model, and serial when available. Hardware
+The normal window includes a compact Connected hardware panel and a
+`Connect Hardware...` split/menu button in the top header. The main action
+connects everything required for a run; menu actions connect or disconnect
+measurement hardware and the optical switch independently. Connections persist
+between workflows and exclusive leases prevent simultaneous control. The panel
+displays each device's transient connection state, manufacturer/model, and serial
+when available. Hardware
 identity is represented by vendor-neutral `DeviceInfo` models and selected by
 an adapter-owned capability registry; an unverified or unknown switch model is
 reported clearly and is not treated as an OSX-150-compatible device.
+
+`Help > Support Logs` exposes the always-on local engineering log folder,
+status, path copy, and explicit support-bundle export. Support logging uses a
+bounded background queue and is isolated from measurement and persistence
+behavior. Read `SUPPORT_LOGGING.md` before changing event fields or retention.
 
 ## Required reading before code changes
 

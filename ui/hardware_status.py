@@ -10,6 +10,7 @@ class HardwareStatusPanel(QGroupBox):
 
     _STATE_COLORS = {
         ConnectionState.CONNECTED: "#22c55e",
+        ConnectionState.IN_USE: "#60a5fa",
         ConnectionState.CONNECTING: "#f59e0b",
         ConnectionState.ERROR: "#ef4444",
         ConnectionState.DISCONNECTED: "#9aa0a6",
@@ -27,7 +28,14 @@ class HardwareStatusPanel(QGroupBox):
         self.power_meter_status.setObjectName("power_meter_status")
         self.optical_switch_status = QLabel()
         self.optical_switch_status.setObjectName("optical_switch_status")
-        for label in (self.power_meter_status, self.optical_switch_status):
+        self.laser_source_status = QLabel()
+        self.laser_source_status.setObjectName("laser_source_status")
+        self.laser_source_status.hide()
+        for label in (
+            self.power_meter_status,
+            self.laser_source_status,
+            self.optical_switch_status,
+        ):
             label.setWordWrap(True)
             label.setMinimumWidth(205)
             layout.addWidget(label)
@@ -38,6 +46,12 @@ class HardwareStatusPanel(QGroupBox):
 
     def clear(self):
         """Reset both entries to the initial disconnected state."""
+        self.set_device_status(
+            DeviceInfo(
+                category=DeviceCategory.LASER_SOURCE,
+                state=ConnectionState.DISCONNECTED,
+            )
+        )
         self.set_device_status(
             DeviceInfo(
                 category=DeviceCategory.POWER_METER,
@@ -55,6 +69,7 @@ class HardwareStatusPanel(QGroupBox):
         """Render one status update from the application controller."""
         label = {
             DeviceCategory.POWER_METER: self.power_meter_status,
+            DeviceCategory.LASER_SOURCE: self.laser_source_status,
             DeviceCategory.OPTICAL_SWITCH: self.optical_switch_status,
         }.get(info.category)
         if label is None:
@@ -62,6 +77,7 @@ class HardwareStatusPanel(QGroupBox):
 
         state_text = {
             ConnectionState.CONNECTED: "Connected",
+            ConnectionState.IN_USE: "In use",
             ConnectionState.CONNECTING: "Connecting",
             ConnectionState.ERROR: "Error",
             ConnectionState.DISCONNECTED: "Disconnected",
@@ -69,10 +85,21 @@ class HardwareStatusPanel(QGroupBox):
         device_name = " ".join(
             part for part in (info.manufacturer.strip(), info.model.strip()) if part
         ) or "Unknown device"
-        if info.state == ConnectionState.ERROR and info.error:
-            details = info.error
-        elif info.serial_number:
-            details = "S/N %s" % info.serial_number
+        if info.state == ConnectionState.ERROR:
+            state_text = (
+                "Configuration error"
+                if info.failure_stage == "configuration"
+                else "Connection error"
+            )
+        identity_details = []
+        if info.serial_number:
+            identity_details.append("S/N %s" % info.serial_number)
+        if info.firmware_version:
+            identity_details.append("FW %s" % info.firmware_version)
+        if info.configured_channel_count is not None:
+            identity_details.append("%d channels" % info.configured_channel_count)
+        if identity_details:
+            details = ", ".join(identity_details)
         elif info.state == ConnectionState.DISCONNECTED:
             details = "Not connected"
         elif info.state == ConnectionState.CONNECTING:
@@ -85,7 +112,28 @@ class HardwareStatusPanel(QGroupBox):
             device_name,
             details,
         ))
-        label.setToolTip(label.text())
+        connection_details = "\n".join(
+            detail
+            for detail in (
+                info.raw_identity,
+                info.resource_address,
+                info.transport_details,
+                "Discovery: %s" % info.discovery_method
+                if info.discovery_method else "",
+                "Failure stage: %s" % info.failure_stage
+                if info.failure_stage else "",
+                "Failed command: %s" % info.failed_command
+                if info.failed_command else "",
+                "Response: %s" % info.raw_response if info.raw_response else "",
+                info.connection_warning,
+                info.error,
+            )
+            if detail
+        )
+        label.setToolTip(
+            "%s\n%s" % (label.text(), connection_details)
+            if connection_details else label.text()
+        )
         color = self._STATE_COLORS.get(
             info.state,
             self._STATE_COLORS[ConnectionState.DISCONNECTED],
@@ -103,8 +151,13 @@ class HardwareStatusPanel(QGroupBox):
     def _category_label(category):
         return {
             DeviceCategory.POWER_METER: "ILM / Power meter",
+            DeviceCategory.LASER_SOURCE: "Laser source",
             DeviceCategory.OPTICAL_SWITCH: "Optical switch",
         }.get(category, "Device")
+
+    def set_laser_visible(self, visible):
+        """Show the laser entry only for separately composed source systems."""
+        self.laser_source_status.setVisible(bool(visible))
 
 
 __all__ = ["HardwareStatusPanel"]

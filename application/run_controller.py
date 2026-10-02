@@ -31,6 +31,8 @@ class HardwareRunRequest:
     resume_full_pass: bool = False
     live_write_mode: bool = False
     live_write_interval: float = LIVE_WRITE_INTERVAL_SECONDS
+    support_logger: object | None = None
+    workflow_id: str = ""
 
 
 class HardwareRunController(QObject):
@@ -105,6 +107,8 @@ class HardwareRunController(QObject):
                 resume_full_pass=request.resume_full_pass,
                 live_write_mode=request.live_write_mode,
                 live_write_interval=request.live_write_interval,
+                support_logger=request.support_logger,
+                workflow_id=request.workflow_id,
             )
             thread = QThread(self)
             worker.moveToThread(thread)

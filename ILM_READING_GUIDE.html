@@ -197,6 +197,7 @@
     <ol class="steps">
       <li><strong>Connect the equipment.</strong> Connect the ILM/OP815, the switch, and the fiber/cable arrangement required for the test. Make sure the approved USB driver and VISA setup are installed on the computer. If needed, use <strong>Tools &gt; Check Dependencies...</strong> before starting.</li>
       <li><strong>Open Light Workbench.</strong> Confirm that no other hardware run is active. The program normally opens in dark mode, but the appearance does not change the test process.</li>
+      <li><strong>Connect the hardware.</strong> Click <span class="button">Connect Hardware...</span> in the header to connect both the measurement hardware and optical switch. The Connected hardware panel shows each device independently. If only one device is needed, use the button's menu to connect it separately.</li>
       <li><strong>Enter identifying information.</strong> Enter the part number, main board serial, and switch serial when available. The part number may be typed, selected from the list, or found with <strong>Lookup Part Number</strong> after entering the main board serial.</li>
       <li><strong>Select the operating band.</strong> Choose <code>O band</code> or <code>C band</code>. This is recorded with the run.</li>
       <li><strong>Set the warning limit.</strong> The Analysis panel defaults to <code>2.0000 dB</code>. Change it if your test standard requires another limit. This limit flags and filters results; it does not prevent a reading from being written.</li>
@@ -209,8 +210,8 @@
     <ol class="steps">
       <li>Connect the reference path/cable used by your test procedure. Make sure the reference condition is stable before starting.</li>
       <li>Confirm the 1310 nm and 1550 nm reference fields are at the intended starting values, normally <code>0.00 dBm</code>.</li>
-      <li>Click <span class="button">Calculate Reference</span>. A progress window appears while Light Workbench connects to the ILM and takes the reference measurement.</li>
-      <li>Wait for the calculation to finish. The two reference fields are updated automatically, the progress window closes, and the ILM remote connection is released.</li>
+      <li>Click <span class="button">Calculate Reference</span>. This button becomes available after the measurement hardware is connected. A progress window appears while Light Workbench takes the reference measurement.</li>
+      <li>Wait for the calculation to finish. The two reference fields are updated automatically and the progress window closes. The tool releases exclusive use of the ILM, but the application keeps the hardware connected for the run.</li>
       <li>Do not calculate a reference while a hardware run is active. If the reference must be changed, stop the run first.</li>
     </ol>
     <div class="warning"><strong>Important:</strong> If the calculated values look unreasonable, stop and verify the reference connection, fiber seating, wavelength setup, and ILM state before testing the switch.</div>
@@ -228,7 +229,7 @@
 
     <h2>5. Run the IL test</h2>
     <ol class="steps">
-      <li><strong>Click Start Run.</strong> Confirm the hardware warning. Light Workbench connects to the OP815 and switch. In a full pass, it routes the first channel and displays a prompt such as <code>Move cable, then read values</code>.</li>
+      <li><strong>Click Start Run.</strong> The button is available after both required devices are connected. Confirm that Light Workbench may use the connected OP815 and move the switch. In a full pass, it routes the first channel and displays a prompt such as <code>Move cable, then read values</code>.</li>
       <li><strong>Move the physical cable.</strong> Connect the cable to the channel/port shown in Current readings. Confirm the channel number before measuring.</li>
       <li><strong>Click Read IL.</strong> The button reads both wavelengths and displays them in Current readings. The keyboard shortcut is shown under the button; by default it is <kbd>Return</kbd>.</li>
       <li><strong>Review the values.</strong> Confirm the channel, 1310 nm value, and 1550 nm value. Reading again is safe and does not write to the table. Use this if the cable was not seated correctly or you want to verify a result.</li>
@@ -285,19 +286,20 @@
 
     <h2>Quick operator checklist</h2>
     <div class="cheat-sheet">1. Connect ILM/OP815, switch, and test cable.
-2. Enter part number and serial information.
-3. Select O band or C band.
-4. Calculate Reference with the normal reference connection.
-5. Choose the channel mode.
-6. Click Start Run and confirm the hardware prompt.
-7. Move cable to the displayed channel.
-8. Read IL (Return) and review both wavelengths.
-9. Read again if needed; nothing is saved yet.
-10. Write IL (+) to save and advance.
-11. Repeat until finished.
-12. Use Change Channel or Retest selected when necessary.
-13. Check the table filters and Analysis panel.
-14. Stop/finish the run and confirm the CSV/JSON output.</div>
+2. Click Connect Hardware... and confirm both devices show Connected.
+3. Enter part number and serial information.
+4. Select O band or C band.
+5. Calculate Reference with the normal reference connection.
+6. Choose the channel mode.
+7. Click Start Run and confirm the hardware prompt.
+8. Move cable to the displayed channel.
+9. Read IL (Return) and review both wavelengths.
+10. Read again if needed; nothing is saved yet.
+11. Write IL (+) to save and advance.
+12. Repeat until finished.
+13. Use Change Channel or Retest selected when necessary.
+14. Check the table filters and Analysis panel.
+15. Stop/finish the run and confirm the CSV/JSON output.</div>
 
     <footer>
       Light Workbench IL Reading Guide · Use the software's current on-screen prompts if they differ from this document.

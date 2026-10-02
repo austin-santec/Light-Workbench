@@ -6,6 +6,28 @@ from op815_driver import OP815
 
 
 class OP815CleanupTests(unittest.TestCase):
+    def test_trace_callback_and_subscriber_receive_same_event_independently(self):
+        driver = OP815.__new__(OP815)
+        diagnostic_events = []
+        support_events = []
+        driver._trace_callback = diagnostic_events.append
+        driver._trace_subscribers = []
+        driver._trace_context = {}
+        driver._trace_metadata = {}
+        driver.description = "OP815"
+        driver.usb_serial = "ILM-1"
+        driver.add_trace_callback(support_events.append)
+
+        driver._trace("read_power", raw_power_dbm=-0.5, status="success")
+        driver.set_trace_callback(None)
+        driver._trace("source_state", source_enabled=False, status="success")
+
+        self.assertEqual([item["event"] for item in diagnostic_events], ["read_power"])
+        self.assertEqual(
+            [item["event"] for item in support_events],
+            ["read_power", "source_state"],
+        )
+
     def test_identity_exposes_detected_description_and_serial(self):
         driver = OP815.__new__(OP815)
         driver.description = "OP815"

@@ -21,6 +21,9 @@ from infrastructure.unit_persistence import (
 class FileRunRepository:
     """Provide application-facing access to the current file-based run store."""
 
+    def __init__(self, support_logger=None):
+        self.support_logger = support_logger
+
     def load_csv(self, path: str | Path) -> RunData:
         """Load a CSV run using the compatibility-aware CSV reader."""
         return _load_run_csv(path)
@@ -57,10 +60,12 @@ class FileRunRepository:
 
     def new_recorder(self, *args: Any, **kwargs: Any) -> RunRecorder:
         """Create a recorder for a new or explicitly selected run directory."""
+        kwargs.setdefault("support_logger", self.support_logger)
         return RunRecorder(*args, **kwargs)
 
     def recorder_from_existing(self, *args: Any, **kwargs: Any) -> RunRecorder:
         """Create a recorder that updates an existing run."""
+        kwargs.setdefault("support_logger", self.support_logger)
         return RunRecorder.from_existing(*args, **kwargs)
 
 

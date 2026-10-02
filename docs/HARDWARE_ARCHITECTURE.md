@@ -31,6 +31,24 @@ currently supplies the PyVISA/SCPI commands; future models such as OSX-100 can
 be added only after their identity and command compatibility are verified. The
 root `power_meter.py` and `osx150_driver.py` modules are compatibility facades.
 
+The OSX-150 adapter tries addresses in a bounded order: the optional manual
+address, a separately stored last-known automatic address, then resources from
+`list_resources("USB?*::INSTR")` filtered to Santec's USB VID/PID. This avoids
+the backend failure seen with broad, all-interface VISA enumeration. Automatic
+success updates only the last-known setting; it never overwrites the operator's
+manual address.
+
+For each candidate, the adapter opens a fresh session and probes only `*IDN?`
+with LF, then CRLF if needed. A supported identity selects the session ending.
+It then queries `CFG:SWT:END?` and requires a positive configured channel count
+before the switch is considered ready. `CLOSe?` is not used during connection;
+it is only used to verify the physical port after a `CLOSe <channel>` routing
+command. A zero count, SCPI error, timeout, or nonnumeric response retains the
+known model, serial, firmware, address, ending, command, and response in
+transient diagnostics while safely closing the session and blocking routing.
+These details are hardware status only and do not alter run CSV/JSON data or
+measurement timing.
+
 `domain/models.py` owns the vendor-neutral `DeviceInfo`, `DeviceCategory`, and
 `ConnectionState` models. `hardware/device_identity.py` provides a fallback
 for older adapters and test doubles. The normal run worker reports Connecting,
@@ -42,13 +60,19 @@ are transient status values and are not added to the existing run file formats.
 implementations for hardware-free workflow tests. They are not used by the
 production hardware path unless explicitly selected in a factory.
 
-`hardware/session.py` owns lifecycle for a composed meter, optional laser, and
-optional switch. It connects in dependency order and closes already-connected
-devices if a later connection fails.
+`application/hardware_connection.py` owns persistent device instances and
+serializes all native calls on a single long-lived executor thread. Workflow
+workers receive capability proxies rather than raw devices. Their existing
+`hardware/session.py` lifecycle acquires and releases exclusive leases through
+those proxies; closing a workflow releases access but leaves the real device
+connected. Explicit header disconnect actions and application shutdown close
+the manager-owned devices.
 
-The normal measurement worker uses this session boundary for its meter and
-switch. Live IL and Red Light retain their separate controller-owned sessions
-because those tools intentionally operate independently.
+Normal runs require available measurement hardware and a switch. Main-window
+reference calculation requires measurement hardware only. Live IL, Red Light,
+and Power Diagnostics may connect only their required capability and update the
+same global status. Partial connection success is retained, and a lease conflict
+is rejected in the application layer rather than relying on disabled buttons.
 
 `PowerMeasurementDiagnosticsDialog` is also an independent, non-recording
 workflow. `application/power_diagnostics_controller.py` owns the OP815/meter
@@ -77,6 +101,14 @@ The trace session also includes detected meter and switch manufacturer, model,
 serial, raw identification string, and VISA resource address when available.
 Trace callback failures are swallowed by the adapter so optional diagnostics
 cannot change measurement behavior.
+
+The OP815 adapter supports independent trace subscribers. The always-on
+support logger receives production and tool hardware events while Power
+Diagnostics can simultaneously attach its in-memory recorder; removing the
+tool callback cannot remove the global subscriber. The switch adapter emits
+the corresponding discovery, LF/CRLF identity, channel-count, route, response,
+timing, failure, and cleanup events. Subscribers are failure-isolated and no
+trace path may add hardware calls or change settling delays.
 
 For each diagnostic wavelength, the OP815 sequence remains SetWavelength,
 wavelength settling, source enable, source settling, and ReadPower. The
@@ -119,14 +151,14 @@ model.
 
 ## Hardware ownership
 
-- The controller or worker that opens an instrument owns its lifetime.
+- The persistent connection manager owns every real instrument it opens.
+- Workflow workers own leases, not native sessions.
 - Connect and close must be paired even when a measurement fails.
 - Partial startup must also be cleaned up: if USB opens but driver or remote
   initialization fails, release the vendor session before reporting the error.
-- A hardware object must not be shared between simultaneous workflows unless a
-  dedicated session manager explicitly serializes access.
-- Live IL, red light, and switch-test workflows should not silently reuse an
-  active session owned by another workflow.
+- Native calls are serialized on the manager's hardware executor thread.
+- Live IL, Red Light, Power Diagnostics, reference calculation, and switch-test
+  workflows reuse available connections only through exclusive managed leases.
 - Device discovery should be separate from an active measurement session.
 - The Live IL and Red Light dialogs must communicate with their hardware
   through application controllers; dialogs should not call vendor hardware
@@ -134,7 +166,8 @@ model.
 
 ## Shutdown and close behavior
 
-Hardware-owning dialogs and the main window must complete instrument cleanup
+Hardware-using dialogs must release their leases before closing. The main
+window must complete persistent instrument cleanup
 before releasing worker references or accepting a close event. Controllers
 disconnect queued UI commands after the worker thread has stopped and do not
 schedule worker deletion from the main thread after the worker event loop has
