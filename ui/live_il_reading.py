@@ -24,7 +24,12 @@ from PyQt5.QtWidgets import (
 
 from application.live_controller import LiveILReadingController
 from application.timing import LIVE_UPDATE_PAUSE_MS
-from domain.measurement import calculate_insertion_loss
+from domain.measurement import (
+    calculate_insertion_loss,
+    format_dark_reference_error,
+    validate_insertion_loss,
+    validate_reference_measurements,
+)
 from domain.reference import calculate_reference_offsets
 from hardware.factory import HardwareFactory
 from hardware.session import OpticalTestSession
@@ -84,6 +89,10 @@ class LiveILReadingWorker(QObject):
             return
         try:
             measurements = self.meter.measure_reference_wavelengths()
+            validation = validate_reference_measurements(measurements)
+            if not validation.valid:
+                self.failed.emit(format_dark_reference_error(measurements))
+                return
             reference_1310, reference_1550 = calculate_reference_offsets(measurements)
             self.reference_ready.emit(reference_1310, reference_1550)
         except Exception as error:
@@ -611,6 +620,7 @@ class LiveILReadingDialog(QDialog):
 
     def reading_ready(self, loss_1310, loss_1550):
         self.read_pending = False
+        validation = validate_insertion_loss({1310: loss_1310, 1550: loss_1550})
         method = (
             "repeatability"
             if self.repeatability_read_pending
@@ -627,7 +637,11 @@ class LiveILReadingDialog(QDialog):
             acquisition_method=method,
             reading_state="temporary",
             both_wavelengths_complete=True,
-            status="success",
+            validation_reason=validation.reason,
+            invalid_wavelength=",".join(
+                str(value) for value in validation.invalid_wavelengths
+            ),
+            status="success" if validation.valid else "warning",
         )
         self.reading_1310_label.setText("1310 nm IL: %.4f dB" % loss_1310)
         self.reading_1550_label.setText("1550 nm IL: %.4f dB" % loss_1550)
@@ -654,6 +668,10 @@ class LiveILReadingDialog(QDialog):
                 self.connected and not self.repeatability_active
             )
             self.status_label.setText("Reading complete. No data was saved.")
+        if not validation.valid:
+            self.status_label.setText(
+                "Invalid negative loss - check the reference or current connection."
+            )
 
     def _record_support(self, event, *, category="measurement", level="info", **fields):
         if self.support_logger is None:
@@ -672,6 +690,16 @@ class LiveILReadingDialog(QDialog):
 
     def reading_failed(self, message):
         self.read_pending = False
+        if "below the expected signal level" in str(message):
+            self._record_support(
+                "reference.failed",
+                category="workflow",
+                level="error",
+                validation_reason="dark_reference",
+                threshold_dbm=-40.0,
+                error_message=message,
+                status="error",
+            )
         self._close_reference_progress()
         if self.live_updates_active:
             self.stop_live_updates(update_status=False)

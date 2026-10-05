@@ -15,7 +15,11 @@ a = Analysis(
             "Templates",
         ),
         (
-            str(project_root / "assets" / "Lulu - CandC.png"),
+            str(project_root / "assets" / "C&C lulu.png"),
+            "assets",
+        ),
+        (
+            str(project_root / "assets" / "C&C lulu white eyes.png"),
             "assets",
         ),
         (

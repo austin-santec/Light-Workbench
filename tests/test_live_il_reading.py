@@ -79,7 +79,7 @@ class LiveILReadingDialogTests(unittest.TestCase):
         QTest.qWait(100)
         self.assertEqual(dialog.reading_1310_label.text(), "1310 nm IL: -0.2800 dB")
         self.assertEqual(dialog.reading_1550_label.text(), "1550 nm IL: -0.8200 dB")
-        self.assertIn("No data was saved", dialog.status_label.text())
+        self.assertIn("Invalid negative loss", dialog.status_label.text())
 
         QTest.mouseClick(dialog.calculate_reference_button, Qt.LeftButton)
         QTest.qWait(100)

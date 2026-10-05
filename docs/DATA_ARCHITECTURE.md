@@ -90,6 +90,19 @@ displayed for audit context but never authorize new hardware acquisition.
 - Write files atomically where possible.
 - Validate serials and path components before using them in filenames.
 - Preserve older run layouts while loading them.
+
+## Rejected measurement evidence
+
+Calculated reference readings below **-40.0 dBm** are rejected before a
+production reference snapshot is authorized; exactly -40.0 dBm is not rejected
+by this rule. Negative insertion loss is evaluated after rounding to the
+application's four-decimal display precision. Such samples remain temporary
+screen/support evidence only: they do not replace an accepted channel or alter
+CSV, JSON, COC, unit, comparison, or replacement-analysis data. The active
+reference is not automatically invalidated by one negative sample.
+
+Support logs may retain the raw evidence and a coalesced negative-reading
+episode, including its start, invalid-sample count, and cleared/ended outcome.
 - Avoid modifying the original COC template; create a copy for each export.
 - Preserve template graphics and unrelated cell content during COC export.
 - Keep clipboard exports read-only with respect to run and unit persistence.

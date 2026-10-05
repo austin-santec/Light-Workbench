@@ -256,3 +256,13 @@ Use an incremental migration. Move one responsibility behind a stable
 interface, add regression tests, and then update callers. Avoid a complete
 rewrite because the current behavior has been tested in the field and includes
 many important operator workflows.
+
+## Measurement validation boundary
+
+The domain measurement module owns two hardware-independent production rules:
+calculated reference power below -40.0 dBm is a dark-reference failure, and
+insertion loss is invalid when either wavelength is negative after rounding to
+four decimal places. The application presents these results and gates controls;
+the worker repeats the write guard so a disabled button or keybind bypass cannot
+commit invalid data. Invalid readings remain temporary and are never sent to
+run persistence. Live Write Mode keeps sampling without repeated modal dialogs.

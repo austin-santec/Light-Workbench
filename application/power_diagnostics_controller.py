@@ -4,7 +4,11 @@ from collections.abc import Callable
 
 from PyQt5.QtCore import QMetaObject, QObject, QThread, Qt, pyqtSignal, pyqtSlot
 
-from domain.measurement import calculate_insertion_loss
+from domain.measurement import (
+    calculate_insertion_loss,
+    format_dark_reference_error,
+    validate_reference_measurements,
+)
 from domain.reference import calculate_reference_offsets
 from hardware.interfaces import PowerMeter
 from hardware.session import OpticalTestSession
@@ -84,6 +88,10 @@ class PowerDiagnosticsWorker(QObject):
                 method="Reference",
             )
             measured = dict(self.meter.measure_reference_wavelengths())
+            validation = validate_reference_measurements(measured)
+            if not validation.valid:
+                self.failed.emit(format_dark_reference_error(measured))
+                return
             reference_1310, reference_1550 = calculate_reference_offsets(measured)
             self.reference_ready.emit(
                 measured,

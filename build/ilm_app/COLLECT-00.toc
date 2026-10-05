@@ -394,13 +394,17 @@
   ('_uuid.pyd',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\DLLs\\_uuid.pyd',
    'EXTENSION'),
+  ('assets\\C&C lulu white eyes.png',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\assets\\C&C lulu white eyes.png',
+   'DATA'),
+  ('assets\\C&C lulu.png',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\assets\\C&C lulu.png',
+   'DATA'),
   ('assets\\Lulu - C&C-white_square.ico',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\assets\\Lulu - C&C-white_square.ico',
-   'DATA'),
-  ('assets\\Lulu - CandC.png',
-   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
-   'Testing\\assets\\Lulu - CandC.png',
    'DATA'),
   ('base_library.zip',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '

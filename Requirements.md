@@ -1,8 +1,14 @@
 # OSX insertion-loss software requirements: implementation assessment
 
 **Source:** [OSX_IL_Test_Software_Requirements_RevA.xlsx](temp%20docs/OSX_IL_Test_Software_Requirements_RevA.xlsx), `Requirements` worksheet, rows 5–61. The workbook's Document Control sheet identifies it as **version 0.1 Draft**, dated **2026-09-30**, prepared for Santec California engineering, production, software, and quality stakeholders.  
-**Assessment date:** 2026-10-05. **Software baseline:** Light Workbench 1.16.0 (`config/app_info.py`).
+**Assessment date:** 2026-10-05. **Software baseline:** Light Workbench 1.16.4 (`config/app_info.py`).
 **Assessment method:** Review of source code, existing automated tests, and project documentation. This is a gap analysis, not hardware qualification or formal user acceptance. The workbook's own `Status` column says *Draft* for every item; the implementation status below is a separate assessment.
+
+**Validation implementation note (1.16.1):** Measurement-based references
+below -40.0 dBm are rejected before production authorization, while negative
+insertion-loss samples are retained only as visible/support evidence and cannot
+be written to production run data. This safety behavior does not change the
+requirements status classifications below.
 
 ## Executive summary
 

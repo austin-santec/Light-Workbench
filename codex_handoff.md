@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.16.0**. The single
+The current source release is **Light Workbench 1.16.4**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -33,6 +33,13 @@ names receive deterministic numeric collision suffixes. The OP815 diagnostic
 sequence performs a final `GetWavelength` verification after source settling
 and immediately before `ReadPower`. A mismatch or invalid wavelength report
 blocks the sample and leaves no history row.
+
+Calculated production references are rejected when a measured wavelength is
+strictly below -40.0 dBm; exactly -40.0 dBm is allowed. Insertion-loss samples
+are rejected when either wavelength is negative after four-decimal rounding.
+The negative values remain visible for troubleshooting, but cannot be written
+to a run. Live Write Mode keeps monitoring without repeated modal dialogs, and
+support logs coalesce consecutive invalid samples into start/end episodes.
 
 | File | Responsibility |
 | --- | --- |
@@ -89,7 +96,8 @@ blocks the sample and leaves no history row.
 | coc_export.py | Compatibility facade for the infrastructure COC exporter. |
 | ILMReadLoss.py | Older, still functional console workflow. Owns prompts, validation, calculations, legacy CSV naming/output, retests, and legacy replacement-port metadata. |
 | ilm_app.spec | PyInstaller one-folder build for ilm_app.py, including OP815M.dll. |
-| assets/Lulu - CandC.png | Bundled header logo displayed at a capped size so it does not increase the window layout height. |
+| assets/C&C lulu.png | Normal title-bar/taskbar and capped header icon. |
+| assets/C&C lulu white eyes.png | White-eyes icon displayed while Admin Mode is active. |
 | assets/Lulu - C&C-white_square.ico | Windows application and taskbar icon generated from the square logo. |
 | README_INSTALL.txt | Plain-text deployment guide intended to ship beside the packaged executable in the ZIP. |
 | Check Dependencies.cmd | Optional launcher for `LightWorkbench.exe --check-dependencies`. |
@@ -103,7 +111,7 @@ improve it.
 
 ## Engineering support logging
 
-Version 1.13.1 initializes an always-on support logger before the main window.
+Version 1.16.1 initializes an always-on support logger before the main window.
 It writes daily JSONL under `%LOCALAPPDATA%\LightWorkbench\logs`, rolls files at
 25 MB and local midnight, compresses inactive files older than seven days,
 retains them indefinitely, and warns the operator when managed logs exceed

@@ -8,7 +8,11 @@ from collections.abc import Mapping, Sequence
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
-from domain.measurement import calculate_insertion_loss
+from domain.measurement import (
+    NON_NEGATIVE_LOSS_THRESHOLD_DB,
+    calculate_insertion_loss,
+    validate_insertion_loss,
+)
 from domain.models import ConnectionState, DeviceCategory
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from hardware.device_identity import device_info_for
@@ -77,6 +81,9 @@ class MeasurementWorker(QObject):
         self._continuation_channel = None
         self._channel_change_request = None
         self._decision = None
+        self._negative_episode_active = False
+        self._negative_episode_count = 0
+        self._negative_episode_context = {}
 
     @pyqtSlot()
     def run(self):
@@ -158,6 +165,7 @@ class MeasurementWorker(QObject):
                 status="error",
             )
         finally:
+            self._finish_negative_episode("run_finished")
             # Do not notify the UI that the worker has completed until both
             # instruments have been released. The previous ordering emitted
             # the terminal signal first, allowing QThread cleanup and queued
@@ -313,6 +321,7 @@ class MeasurementWorker(QObject):
     def _measure_channel(self, channel, index=None, total=None, emit_progress=True):
         """Route, read, and accept one channel, including repeat reads."""
         self._raise_if_stopped()
+        self._finish_negative_episode("channel_changed")
         route_started = time.perf_counter()
         physical_port = self.switch.set_channel(channel)
         self._record(
@@ -346,6 +355,55 @@ class MeasurementWorker(QObject):
             started = time.perf_counter()
             measurements = self.power_meter.measure_both_wavelengths()
             losses = calculate_insertion_loss(self.reference_powers, measurements)
+            validation = validate_insertion_loss(losses)
+            if validation.valid:
+                self._finish_negative_episode("valid_sample")
+            else:
+                if not self._negative_episode_active:
+                    self._negative_episode_active = True
+                    self._negative_episode_count = 0
+                    self._negative_episode_context = {
+                        "logical_channel": channel,
+                        "physical_port": physical_port,
+                        "reference_1310_dbm": self.reference_powers.get(1310),
+                        "reference_1550_dbm": self.reference_powers.get(1550),
+                        "measured_power_dbm": {
+                            "1310": measurements[1310],
+                            "1550": measurements[1550],
+                        },
+                        "loss_1310_db": losses[1310],
+                        "loss_1550_db": losses[1550],
+                        "rounded_loss_1310_db": validation.rounded_losses[1310],
+                        "rounded_loss_1550_db": validation.rounded_losses[1550],
+                        "threshold_db": NON_NEGATIVE_LOSS_THRESHOLD_DB,
+                        "validation_reason": validation.reason,
+                        "invalid_wavelength": ",".join(
+                            str(value) for value in validation.invalid_wavelengths
+                        ),
+                    }
+                    self._record(
+                        SupportEventCategory.MEASUREMENT,
+                        "measurement.negative_loss_episode_started",
+                        operation_id=measurement_id,
+                        logical_channel=channel,
+                        physical_port=physical_port,
+                        reference_1310_dbm=self.reference_powers.get(1310),
+                        reference_1550_dbm=self.reference_powers.get(1550),
+                        measured_power_dbm={
+                            "1310": measurements[1310],
+                            "1550": measurements[1550],
+                        },
+                        loss_1310_db=losses[1310],
+                        loss_1550_db=losses[1550],
+                        rounded_loss_1310_db=validation.rounded_losses[1310],
+                        rounded_loss_1550_db=validation.rounded_losses[1550],
+                        threshold_db=NON_NEGATIVE_LOSS_THRESHOLD_DB,
+                        validation_reason=validation.reason,
+                        invalid_wavelength=",".join(
+                            str(value) for value in validation.invalid_wavelengths
+                        ),
+                    )
+                self._negative_episode_count += 1
             self._record(
                 SupportEventCategory.MEASUREMENT,
                 "measurement.two_wavelength_completed",
@@ -364,7 +422,11 @@ class MeasurementWorker(QObject):
                 reading_state="temporary",
                 both_wavelengths_complete=True,
                 acquisition_method=("live_write" if self.live_write_mode else "normal_run"),
-                status="success",
+                validation_reason=validation.reason,
+                invalid_wavelength=",".join(
+                    str(value) for value in validation.invalid_wavelengths
+                ),
+                status="success" if validation.valid else "warning",
             )
             self.reading_ready.emit(
                 channel,
@@ -381,6 +443,22 @@ class MeasurementWorker(QObject):
             if decision == "live_update":
                 continue
             if decision == "write":
+                if not validation.valid:
+                    self._record(
+                        SupportEventCategory.OPERATOR,
+                        "measurement.write_rejected_negative_loss",
+                        operation_id=measurement_id,
+                        logical_channel=channel,
+                        physical_port=physical_port,
+                        validation_reason=validation.reason,
+                        invalid_wavelength=",".join(
+                            str(value) for value in validation.invalid_wavelengths
+                        ),
+                        invalid_sample_count=self._negative_episode_count,
+                        reading_state="rejected",
+                        status="rejected",
+                    )
+                    continue
                 self._record(
                     SupportEventCategory.OPERATOR,
                     "measurement.write_requested",
@@ -413,6 +491,22 @@ class MeasurementWorker(QObject):
             setter(**context)
         except Exception:
             pass
+
+    def _finish_negative_episode(self, reason):
+        """Coalesce repeated negative live samples into one support episode."""
+        if not self._negative_episode_active:
+            return
+        self._record(
+            SupportEventCategory.MEASUREMENT,
+            "measurement.negative_loss_episode_ended",
+            **self._negative_episode_context,
+            invalid_sample_count=self._negative_episode_count,
+            details=reason,
+            status="cleared" if reason == "valid_sample" else "ended",
+        )
+        self._negative_episode_active = False
+        self._negative_episode_count = 0
+        self._negative_episode_context = {}
 
     def _record(self, category, event, *, level=SupportLogLevel.INFO, operation_id="", **fields):
         if self.support_logger is None:

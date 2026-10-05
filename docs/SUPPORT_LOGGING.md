@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-Light Workbench 1.13.1 adds always-on, local engineering support logs. Their
+Light Workbench 1.16.1 includes always-on, local engineering support logs. Their
 purpose is to help engineering reconstruct operator workflows, hardware
 communication, two-wavelength measurements, insertion-loss calculations,
 connection ownership, persistence, exports, and failures.
@@ -146,6 +146,15 @@ exceptions are captured through preserving main- and worker-thread hooks.
 Events still in memory cannot be guaranteed to survive power loss, forced
 termination, native DLL abort, or operating-system process termination.
 
+Validation events include dark-reference failures and negative insertion-loss
+episodes. A dark-reference event records the affected wavelength, measured
+power, strict -40.0 dBm threshold, and validation reason where available. A
+negative episode records one start event, counts consecutive invalid live
+samples in memory, and records one cleared/ended event; each explicit invalid
+Write IL attempt is also recorded. This avoids flooding the daily log while
+preserving enough raw evidence for engineering support. Logging failures never
+change the validation or persistence decision.
+
 ## Relationship to other records
 
 - **Run CSV/JSON**: authoritative accepted production results; changed only by
@@ -158,5 +167,5 @@ termination, native DLL abort, or operating-system process termination.
   has not yet been implemented.
 
 A future release may add controlled central collection, authentication,
-authorization, and database ingestion. Version 1.13.1 performs no upload and
+authorization, and database ingestion. Version 1.16.1 performs no upload and
 has no graphical log viewer.

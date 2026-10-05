@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtGui import QCloseEvent
-from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtWidgets import QApplication, QDialog, QMessageBox
 from PyQt5.QtCore import QEventLoop, QTimer, Qt
 from PyQt5.QtTest import QTest
 
@@ -51,6 +51,14 @@ class ReferenceMeter:
     def close(self):
         self.connected = False
         self.closed = True
+
+
+class DarkReferenceMeter(ReferenceMeter):
+    instances = []
+
+    def measure_reference_wavelengths(self):
+        self.__class__.reference_measurements += 1
+        return {1310: -45.23, 1550: -41.0}
 
 
 class ReferenceSwitch:
@@ -315,6 +323,37 @@ class MainWindowTests(unittest.TestCase):
         window = MainWindow()
         self.assertFalse(window.admin_config_action.isEnabled())
         self.assertFalse(window.admin_session.is_active)
+        window.close()
+
+    def test_admin_mode_switches_lulu_icon_and_restores_it_on_exit(self):
+        class AcceptedAdminDialog:
+            password = "lwb"
+
+            def __init__(self, _parent=None):
+                pass
+
+            def exec_(self):
+                return QDialog.Accepted
+
+        window = MainWindow()
+        normal_window_icon = window.windowIcon().pixmap(32, 32).toImage()
+        normal_header_icon = window.logo_label.pixmap().toImage()
+
+        with patch("ilm_app.AdminPasswordDialog", AcceptedAdminDialog):
+            window.toggle_admin_mode()
+
+        self.assertTrue(window.admin_session.is_active)
+        self.assertNotEqual(
+            window.windowIcon().pixmap(32, 32).toImage(), normal_window_icon
+        )
+        self.assertNotEqual(window.logo_label.pixmap().toImage(), normal_header_icon)
+
+        window.toggle_admin_mode()
+        self.assertFalse(window.admin_session.is_active)
+        self.assertEqual(
+            window.windowIcon().pixmap(32, 32).toImage(), normal_window_icon
+        )
+        self.assertEqual(window.logo_label.pixmap().toImage(), normal_header_icon)
         window.close()
 
     def test_model_criteria_only_make_formal_failures_red(self):
@@ -682,6 +721,31 @@ class MainWindowTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_dark_reference_does_not_authorize_a_production_run(self):
+        DarkReferenceMeter.instances.clear()
+        DarkReferenceMeter.reference_measurements = 0
+        with patch("ilm_app.SantecPowerMeter", DarkReferenceMeter), patch(
+            "ilm_app.QMessageBox.critical"
+        ) as critical:
+            window = MainWindow()
+            try:
+                window.hardware_connection_manager.connect_measurement_hardware().result(
+                    timeout=2
+                )
+                QTest.qWait(25)
+                QTest.mouseClick(window.calculate_reference_button, Qt.LeftButton)
+                QTest.qWait(150)
+
+                critical.assert_called_once()
+                message = critical.call_args.args[2]
+                self.assertIn("1310 nm measured -45.2300 dBm", message)
+                self.assertIn("1550 nm measured -41.0000 dBm", message)
+                self.assertFalse(window.reference_session.is_valid)
+                self.assertFalse(window.start_hardware_button.isEnabled())
+                self.assertIsNone(window.reference_progress)
+            finally:
+                window.close()
+
     def test_setup_reference_calculation_requires_preconnected_hardware(self):
         class MissingMeter(ReferenceMeter):
             instances = []
@@ -847,6 +911,20 @@ class MainWindowTests(unittest.TestCase):
             window.apply_manual_reference()
             self.assertTrue(window.reference_session.is_valid)
             self.assertEqual(window.reference_session.snapshot.method, "manual_admin")
+        finally:
+            window.close()
+
+    def test_reference_status_hides_snapshot_id_from_operator(self):
+        window = MainWindow()
+        try:
+            snapshot = window.apply_calculated_reference(-0.04, 0.14)
+
+            self.assertEqual(
+                window.reference_status_label.text(),
+                "Reference status: Calculated",
+            )
+            self.assertTrue(snapshot.snapshot_id)
+            self.assertNotIn(snapshot.snapshot_id[:8], window.reference_status_label.text())
         finally:
             window.close()
 
@@ -1136,6 +1214,32 @@ class MainWindowTests(unittest.TestCase):
             recorder.save.assert_called()
             self.assertEqual(worker_calls, ["write"])
             window.scroll_to_channel.assert_called_once_with(7)
+        finally:
+            window.close()
+
+    def test_negative_reading_stays_visible_but_cannot_be_written(self):
+        window = MainWindow()
+        try:
+            window.run_data = RunData(Path("test-run"), [], {})
+            recorder = MagicMock()
+            recorder.attempts = []
+            window.run_recorder = recorder
+            worker_calls = []
+            worker = type("FakeWorker", (), {})()
+            worker.write_current = lambda: worker_calls.append("write")
+            window.hardware_worker = worker
+
+            window.hardware_operator_required(7, 49)
+            window.hardware_reading_ready(7, 49, -0.0001, 1.3)
+
+            self.assertIn("Invalid negative loss", window.reading_status_label.text())
+            self.assertFalse(window.write_hardware_button.isEnabled())
+            with patch("ilm_app.QMessageBox.warning") as warning:
+                self.assertFalse(window.write_hardware())
+
+            warning.assert_called_once()
+            self.assertEqual(window.run_data.measurements, [])
+            self.assertEqual(worker_calls, [])
         finally:
             window.close()
 

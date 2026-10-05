@@ -40,6 +40,15 @@ class SequencePowerMeter(FakePowerMeter):
         return next(self.readings)
 
 
+class InvalidThenValidPowerMeter(SequencePowerMeter):
+    def __init__(self):
+        FakePowerMeter.__init__(self)
+        self.readings = iter([
+            {1310: 0.8, 1550: -1.1},
+            {1310: -1.0, 1550: -1.1},
+        ])
+
+
 class FakeSwitch:
     def __init__(self):
         self.connected = False
@@ -244,6 +253,45 @@ class MeasurementWorkerTests(unittest.TestCase):
         names = [event for _category, event, _fields in logger.events]
         self.assertIn("measurement.repeat_requested", names)
         self.assertIn("measurement.write_requested", names)
+
+    def test_negative_write_is_rejected_and_episode_is_coalesced(self):
+        logger = CapturingSupportLogger()
+        worker = MeasurementWorker(
+            InvalidThenValidPowerMeter(),
+            FakeSwitch(),
+            [1],
+            {1310: 0.72, 1550: 0.28},
+            support_logger=logger,
+        )
+        readings = []
+        worker.operator_required.connect(lambda _channel, _port: worker.continue_current())
+
+        def review_reading(*values):
+            readings.append(values)
+            worker.write_current()
+
+        worker.reading_ready.connect(review_reading)
+        worker.run()
+
+        self.assertEqual(len(readings), 2)
+        names = [event for _category, event, _fields in logger.events]
+        self.assertEqual(
+            names.count("measurement.negative_loss_episode_started"), 1
+        )
+        ended = [
+            fields
+            for _category, event, fields in logger.events
+            if event == "measurement.negative_loss_episode_ended"
+        ]
+        self.assertEqual(len(ended), 1)
+        self.assertEqual(ended[0]["invalid_sample_count"], 1)
+        rejected = [
+            fields
+            for _category, event, fields in logger.events
+            if event == "measurement.write_rejected_negative_loss"
+        ]
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(rejected[0]["invalid_wavelength"], "1310")
 
     def test_live_write_mode_updates_until_operator_writes(self):
         meter = SequencePowerMeter()

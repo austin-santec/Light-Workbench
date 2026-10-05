@@ -68,7 +68,12 @@ from application.run_start import (
 )
 from application.admin_session import AdminSession
 from application.reference_session import ReferenceSession
-from domain.measurement import calculate_insertion_loss
+from domain.measurement import (
+    calculate_insertion_loss,
+    format_dark_reference_error,
+    validate_insertion_loss,
+    validate_reference_measurements,
+)
 from domain.reference import ReferenceMethod, new_reference_snapshot
 from domain.hardware_connection import HardwareCapability
 from domain.limit_profiles import (
@@ -118,6 +123,25 @@ KEYPAD_ENTER_SHORTCUT = "Enter"
 FILTER_ALL = 0
 FILTER_WITHIN_LIMIT = 1
 FILTER_ANY_OVER_LIMIT = 2
+NORMAL_BRANDING_ASSET = "C&C lulu.png"
+ADMIN_BRANDING_ASSET = "C&C lulu white eyes.png"
+
+
+def bundled_asset_path(filename):
+    """Return an asset path in source or a packaged PyInstaller build."""
+    roots = [Path(__file__).resolve().parent]
+    if getattr(sys, "_MEIPASS", None):
+        roots.insert(0, Path(sys._MEIPASS))
+    return next(
+        (
+            root_path / "assets" / filename
+            for root_path in roots
+            if (root_path / "assets" / filename).is_file()
+        ),
+        None,
+    )
+
+
 FILTER_1310_OVER_LIMIT = 3
 FILTER_1550_OVER_LIMIT = 4
 FILTER_BOTH_OVER_LIMIT = 5
@@ -496,6 +520,7 @@ class MainWindow(QMainWindow):
         self.reference_session = ReferenceSession()
         self._last_applied_reference_snapshot = None
         self.active_run_reference_snapshot = None
+        self.pending_reading_validation = None
         self._syncing_reference_widgets = False
         self.limit_profile_repository = LimitProfileRepository()
         self.limit_profiles = default_limit_profiles()
@@ -578,6 +603,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1120, 720)
         self._build_ui()
+        self._refresh_admin_branding()
         self._connect_hardware_controller()
         self._record_support(
             SupportEventCategory.APPLICATION,
@@ -959,27 +985,9 @@ class MainWindow(QMainWindow):
         self.logo_label = QLabel()
         self.logo_label.setObjectName("company_logo")
         self.logo_label.setAlignment(Qt.AlignCenter)
-        self.logo_label.setToolTip("Lulu - CandC")
-        logo_roots = [Path(__file__).resolve().parent]
-        if getattr(sys, "_MEIPASS", None):
-            logo_roots.insert(0, Path(sys._MEIPASS))
-        logo_path = next(
-            (
-                root_path / "assets" / "Lulu - CandC.png"
-                for root_path in logo_roots
-                if (root_path / "assets" / "Lulu - CandC.png").is_file()
-            ),
-            None,
-        )
-        if logo_path:
-            logo = QPixmap(str(logo_path))
-            self.logo_label.setPixmap(
-                logo.scaled(132, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            )
-            self.logo_label.setMaximumSize(140, 56)
-            header.addWidget(self.logo_label)
-        else:
-            self.logo_label.hide()
+        self.logo_label.setToolTip("C&C Lulu")
+        self.logo_label.setMaximumSize(140, 56)
+        header.addWidget(self.logo_label)
         header.addLayout(titles)
         header.addStretch()
         self.hardware_status_panel = HardwareStatusPanel(central)
@@ -1383,7 +1391,8 @@ class MainWindow(QMainWindow):
         analysis_layout = QGridLayout(analysis_box)
         analysis_layout.setVerticalSpacing(7)
         analysis_layout.setColumnStretch(1, 1)
-        analysis_layout.addWidget(QLabel("Active criteria:"), 0, 0)
+        # Keep the compatibility criteria widgets available to existing logic,
+        # but keep implementation details out of the operator-facing panel.
         self.limit_spin = QDoubleSpinBox()
         self.limit_spin.setRange(-100.0, 100.0)
         self.limit_spin.setDecimals(4)
@@ -1393,13 +1402,13 @@ class MainWindow(QMainWindow):
         self.limit_spin.setReadOnly(True)
         self.limit_spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
         self.limit_spin.setToolTip("Read-only compatibility display; edit criteria in Admin Config.")
-        analysis_layout.addWidget(self.limit_spin, 0, 1)
         self.criteria_profile_label = QLabel("Connect hardware to load model criteria")
         self.criteria_profile_label.setWordWrap(True)
-        analysis_layout.addWidget(self.criteria_profile_label, 0, 2)
         self.select_over_limit_button = QPushButton("Select Failures")
         self.select_over_limit_button.clicked.connect(self.select_over_limit)
-        analysis_layout.addWidget(self.select_over_limit_button, 0, 3)
+        self.limit_spin.hide()
+        self.criteria_profile_label.hide()
+        self.select_over_limit_button.hide()
         self.metric_labels = {}
         for row, (key, display) in enumerate(
             (
@@ -1411,7 +1420,7 @@ class MainWindow(QMainWindow):
                 ("too_good", "Too-good channels"),
                 ("optimization", "Optimization warnings"),
             ),
-            start=1,
+            start=0,
         ):
             label = QLabel("-")
             label.setObjectName("metric")
@@ -1578,9 +1587,10 @@ class MainWindow(QMainWindow):
         self.apply_manual_reference_button.setEnabled(editable)
         snapshot = self.reference_session.snapshot
         if self.reference_session.is_valid and snapshot is not None:
-            label = "Reference status: %s (%s)" % (
-                "Calculated" if snapshot.method == ReferenceMethod.CALCULATED.value else "Admin manual",
-                snapshot.snapshot_id[:8],
+            label = "Reference status: %s" % (
+                "Calculated"
+                if snapshot.method == ReferenceMethod.CALCULATED.value
+                else "Admin manual"
             )
         else:
             label = "Reference status: %s" % self.reference_session.reason
@@ -1639,6 +1649,34 @@ class MainWindow(QMainWindow):
         )
         self._update_hardware_readiness_controls()
         return snapshot
+
+    def apply_diagnostic_calculated_reference(
+        self, measured_powers, reference_1310, reference_1550
+    ):
+        """Apply a diagnostic baseline only after validating its raw power."""
+        validation = validate_reference_measurements(measured_powers)
+        if not validation.valid:
+            message = format_dark_reference_error(measured_powers)
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "reference.failed",
+                level=SupportLogLevel.ERROR,
+                validation_reason=validation.reason,
+                invalid_wavelength=",".join(
+                    str(value) for value in validation.invalid_wavelengths
+                ),
+                measured_power_dbm={
+                    str(wavelength): measured_powers[wavelength]
+                    for wavelength in validation.invalid_wavelengths
+                },
+                threshold_dbm=-40.0,
+                error_message=message,
+                status="error",
+            )
+            QMessageBox.critical(self, "Reference calculation failed", message)
+            return False
+        self.apply_calculated_reference(reference_1310, reference_1550)
+        return True
 
     def apply_manual_reference(self):
         """Authorize manually entered references only from Admin Mode."""
@@ -1730,6 +1768,7 @@ class MainWindow(QMainWindow):
             self.admin_mode_action.setChecked(False)
             self.admin_mode_indicator.setText("")
             self.admin_config_action.setEnabled(False)
+            self._refresh_admin_branding()
             self.statusBar().showMessage("Admin mode disabled.")
             self._record_support(
                 SupportEventCategory.OPERATOR,
@@ -1755,6 +1794,7 @@ class MainWindow(QMainWindow):
         self.admin_mode_action.setChecked(True)
         self.admin_mode_indicator.setText("ADMIN MODE")
         self.admin_config_action.setEnabled(True)
+        self._refresh_admin_branding()
         self.statusBar().showMessage("ADMIN MODE active for this session.")
         self._record_support(
             SupportEventCategory.OPERATOR,
@@ -1763,6 +1803,33 @@ class MainWindow(QMainWindow):
             status="success",
         )
         self._refresh_reference_controls()
+
+    def _refresh_admin_branding(self):
+        """Show the white-eyes Lulu variant only during Admin Mode."""
+        filename = (
+            ADMIN_BRANDING_ASSET
+            if self.admin_session.is_active
+            else NORMAL_BRANDING_ASSET
+        )
+        asset_path = bundled_asset_path(filename)
+        if asset_path is None and self.admin_session.is_active:
+            asset_path = bundled_asset_path(NORMAL_BRANDING_ASSET)
+        if asset_path is None:
+            if hasattr(self, "logo_label"):
+                self.logo_label.hide()
+            return
+
+        icon = QIcon(str(asset_path))
+        self.setWindowIcon(icon)
+        application = QApplication.instance()
+        if application is not None:
+            application.setWindowIcon(icon)
+        if hasattr(self, "logo_label"):
+            logo = QPixmap(str(asset_path))
+            self.logo_label.setPixmap(
+                logo.scaled(132, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+            self.logo_label.show()
 
     def show_admin_config(self):
         """Open model criteria configuration after admin authentication."""
@@ -2087,7 +2154,9 @@ class MainWindow(QMainWindow):
             workflow_id=workflow.workflow_id if workflow else "",
         )
         dialog.references_changed.connect(self.set_reference_values)
-        dialog.references_applied.connect(self.apply_calculated_reference)
+        dialog.calculated_references_applied.connect(
+            self.apply_diagnostic_calculated_reference
+        )
         dialog.exec_()
         self._record_support(
             SupportEventCategory.WORKFLOW,
@@ -2222,6 +2291,11 @@ class MainWindow(QMainWindow):
     def _reference_calculation_failed(self, message):
         if self.reference_worker is None:
             return
+        validation_reason = (
+            "dark_reference"
+            if "below the expected signal level" in str(message)
+            else ""
+        )
         self._record_support(
             SupportEventCategory.WORKFLOW,
             "reference.failed",
@@ -2232,6 +2306,8 @@ class MainWindow(QMainWindow):
                 else ""
             ),
             error_message=message,
+            validation_reason=validation_reason,
+            **({"threshold_dbm": -40.0} if validation_reason else {}),
             status="error",
         )
         self._finish_reference_calculation()
@@ -3565,6 +3641,7 @@ class MainWindow(QMainWindow):
 
     def hardware_operator_required(self, channel, physical_port):
         self.hardware_session.set_pending_channel(channel, physical_port)
+        self.pending_reading_validation = None
         self.hardware_live_indicator.setVisible(self.live_write_mode_enabled)
         self.clear_current_reading(
             channel,
@@ -3625,7 +3702,23 @@ class MainWindow(QMainWindow):
                 self._hardware_command("read_current")
 
     def write_hardware(self):
-        self._commit_and_advance_hardware()
+        if self.hardware_pending_reading is not None:
+            validation = validate_insertion_loss(
+                {
+                    1310: self.hardware_pending_reading[2],
+                    1550: self.hardware_pending_reading[3],
+                }
+            )
+            if not validation.valid:
+                self._record_negative_loss_write_attempt(validation)
+                QMessageBox.warning(
+                    self,
+                    "Invalid insertion-loss reading",
+                    self._negative_loss_message(validation),
+                )
+                self.write_hardware_button.setEnabled(False)
+                return False
+        return self._commit_and_advance_hardware()
 
     def _commit_and_advance_hardware(self):
         """Save a pending reading and let the worker continue to the next step."""
@@ -3665,6 +3758,12 @@ class MainWindow(QMainWindow):
     def commit_hardware_reading(self):
         channel, physical_port, loss_1310, loss_1550 = self.hardware_pending_reading
         if self.run_data is None:
+            return False
+        validation = validate_insertion_loss(
+            {1310: loss_1310, 1550: loss_1550}
+        )
+        if not validation.valid:
+            self._record_negative_loss_write_attempt(validation)
             return False
         record = MeasurementRecord(
             channel,
@@ -3805,6 +3904,8 @@ class MainWindow(QMainWindow):
             loss_1310,
             loss_1550,
         )
+        validation = validate_insertion_loss({1310: loss_1310, 1550: loss_1550})
+        self.pending_reading_validation = validation
         self._record_support(
             SupportEventCategory.MEASUREMENT,
             "measurement.presented",
@@ -3819,29 +3920,77 @@ class MainWindow(QMainWindow):
             loss_1550_db=loss_1550,
             reading_state="temporary",
             both_wavelengths_complete=True,
-            status="success",
+            validation_reason=validation.reason,
+            invalid_wavelength=",".join(
+                str(value) for value in validation.invalid_wavelengths
+            ),
+            status="success" if validation.valid else "warning",
         )
         self.set_current_reading_channel(channel)
         self.current_loss_1310 = loss_1310
         self.current_loss_1550 = loss_1550
         self.refresh_current_reading()
+        if not validation.valid:
+            self.reading_status_label.setText(
+                "Invalid negative loss - check the reference or current connection"
+            )
+            self._refresh_reading_status_color()
         self.demo_1310_label.setText("1310 nm: %.4f dB" % loss_1310)
         self.demo_1550_label.setText("1550 nm: %.4f dB" % loss_1550)
         self.continue_hardware_button.setEnabled(not self.live_write_mode_enabled)
-        self.write_hardware_button.setEnabled(True)
+        self.write_hardware_button.setEnabled(validation.valid)
         self.change_hardware_channel_button.setEnabled(True)
         self.hardware_live_indicator.setVisible(self.live_write_mode_enabled)
-        self.demo_channel_label.setText(
-            "Channel %d live reading - write when ready" % channel
-            if self.live_write_mode_enabled
-            else "Channel %d measured - read again or write values" % channel
-        )
+        if validation.valid:
+            self.demo_channel_label.setText(
+                "Channel %d live reading - write when ready" % channel
+                if self.live_write_mode_enabled
+                else "Channel %d measured - read again or write values" % channel
+            )
+        else:
+            self.demo_channel_label.setText(
+                "Invalid negative loss - check the reference or current connection"
+            )
         self.refresh_table()
         # In Live Write Mode the table may receive many readings before the
         # operator accepts one. Keep the operator's current scroll position
         # until Write IL commits the pending reading.
         if not self.live_write_mode_enabled:
             self.scroll_to_channel(channel)
+
+    @staticmethod
+    def _negative_loss_message(validation):
+        details = []
+        if validation.rounded_losses:
+            for wavelength in validation.invalid_wavelengths:
+                details.append(
+                    "%d nm insertion loss: %.4f dB"
+                    % (wavelength, validation.rounded_losses[wavelength])
+                )
+        return (
+            "Negative insertion loss was detected. This indicates that the "
+            "reference or the current measurement may be incorrect.\n\n%s\n\n"
+            "Check the cable connection and reference, then retest."
+            % ("\n".join(details) or "Check both wavelength values.")
+        )
+
+    def _record_negative_loss_write_attempt(self, validation):
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "measurement.write_rejected_negative_loss",
+            workflow_id=(
+                self.current_run_workflow.workflow_id
+                if self.current_run_workflow
+                else ""
+            ),
+            logical_channel=self.hardware_pending_channel,
+            physical_port=self.hardware_pending_physical_port,
+            validation_reason=validation.reason,
+            invalid_wavelength=",".join(
+                str(value) for value in validation.invalid_wavelengths
+            ),
+            status="rejected",
+        )
     def hardware_progress_changed(self, current, total):
         if self.hardware_manual_channel_order:
             self.demo_channel_label.setText(
@@ -4477,6 +4626,8 @@ class MainWindow(QMainWindow):
         """Keep the live-reading status readable in either theme."""
         if self.current_loss_1310 is None or self.current_loss_1550 is None:
             color = "#b3bbc5" if self.dark_mode_enabled else "#587073"
+        elif self.pending_reading_validation is not None and not self.pending_reading_validation.valid:
+            color = "#ff8f86" if self.dark_mode_enabled else "#a33b2f"
         else:
             assessment = self._profile_for_current_run().classify(
                 self.current_loss_1310, self.current_loss_1550
@@ -4492,6 +4643,7 @@ class MainWindow(QMainWindow):
         self.set_current_reading_channel(channel)
         self.current_loss_1310 = None
         self.current_loss_1550 = None
+        self.pending_reading_validation = None
         self.demo_1310_label.setText("1310 nm: -")
         self.demo_1550_label.setText("1550 nm: -")
         self.reading_status_label.setText(status)
@@ -4829,17 +4981,7 @@ def main():
         status="started",
     )
     app = QApplication(sys.argv)
-    icon_roots = [Path(__file__).resolve().parent]
-    if getattr(sys, "_MEIPASS", None):
-        icon_roots.insert(0, Path(sys._MEIPASS))
-    icon_path = next(
-        (
-            root_path / "assets" / "Lulu - C&C-white_square.ico"
-            for root_path in icon_roots
-            if (root_path / "assets" / "Lulu - C&C-white_square.ico").is_file()
-        ),
-        None,
-    )
+    icon_path = bundled_asset_path(NORMAL_BRANDING_ASSET)
     if icon_path:
         app.setWindowIcon(QIcon(str(icon_path)))
     if "--check-dependencies" in sys.argv[1:]:

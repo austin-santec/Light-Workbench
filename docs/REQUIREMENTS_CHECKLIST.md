@@ -8,10 +8,15 @@ implementation evidence, or technical details.
 Last synchronized with the requirements assessment: **2026-10-05**.
 
 Reference enforcement update: FUN-012 and FUN-013 are complete in version
-1.16.0. Production runs require a valid calculated or explicitly
+1.16.1. Production runs require a valid calculated or explicitly
 Admin-authorized manual reference. Each accepted reading stores the immutable
 reference snapshot used for its calculation, and legacy loaded references are
 review-only until a new reference is established.
+
+Validation update: calculated references below -40.0 dBm are rejected, while
+negative insertion-loss samples remain visible but cannot be written. Live
+negative samples use coalesced support-log episodes rather than repeated modal
+warnings.
 
 Implementation note: model-specific controlled criteria and session-only Admin
 Mode are now implemented. The detailed requirement counts above should be

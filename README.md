@@ -197,7 +197,8 @@ redaction, and support-bundle details.
 | `dependency_check.py` | Compatibility facade for dependency diagnostics |
 | `OP815M.dll` | Vendor library used to communicate with the ILM |
 | `Templates/OSX-100 Single Mode COC Template 1.xlsx` | XLSX COC template bundled with the desktop application |
-| `assets/Lulu - CandC.png` | Compact header logo bundled with the desktop application |
+| `assets/C&C lulu.png` | Normal application and header icon |
+| `assets/C&C lulu white eyes.png` | Admin Mode application and header icon |
 | `README_INSTALL.txt` | Light Workbench ZIP deployment, prerequisite, and quick-start instructions |
 | `Check Dependencies.cmd` | Optional launcher for the bundled dependency and connection report |
 | `ILM_READING_GUIDE.html` | Browser-based operator guide for the hardware IL-reading workflow |
@@ -237,7 +238,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.16.0**; an existing executable keeps its prior
+current source version is **1.16.4**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
@@ -740,6 +741,23 @@ During normal cleanup the program:
 
 The program changes the active OSX-150 channel during testing and leaves it on
 the last channel selected.
+
+## Reference and measurement validation
+
+Calculated production references reject a measured wavelength only when it is
+strictly below **-40.0 dBm**. A value of exactly -40.0 dBm is accepted by this
+dark-signal rule. A rejected reference cannot authorize a run; the warning
+identifies the affected wavelength values and recommends checking the cable,
+source, and optical connection.
+
+Insertion loss remains `reference power - measured power`. A completed sample
+is invalid when either wavelength is negative after rounding to four decimal
+places. The values remain visible for troubleshooting, but Write IL is
+disabled and the worker also rejects direct write requests. Live Write Mode
+continues monitoring without showing a modal warning on every refresh; a later
+valid sample clears the status. One negative sample does not invalidate the
+active reference. Check and reseat the cable, retest, recalculate the
+reference if needed, and write only after both values are valid.
 
 ## Troubleshooting
 

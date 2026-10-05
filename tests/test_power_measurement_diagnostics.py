@@ -77,6 +77,11 @@ class IncompleteFakeMeter(FakeMeter):
         return {1310: -0.9400}
 
 
+class DarkReferenceMeter(FakeMeter):
+    def measure_reference_wavelengths(self):
+        return {1310: -45.23, 1550: -41.0}
+
+
 class BlockedMeasurementMeter(FakeMeter):
     def measure_both_wavelengths(self):
         raise RuntimeError("Requested 1310 nm, but the ILM selected 1550 nm.")
@@ -305,6 +310,26 @@ class PowerMeasurementDiagnosticsDialogTests(unittest.TestCase):
 
         QTest.mouseClick(dialog.apply_reference_button, Qt.LeftButton)
         self.assertEqual(applied, [(-0.04, 0.14)])
+        dialog.close()
+
+    def test_dark_reference_is_not_available_for_application(self):
+        dialog = PowerMeasurementDiagnosticsDialog(
+            meter_factory=DarkReferenceMeter,
+            switch_factory=FakeSwitch,
+        )
+        QTest.mouseClick(dialog.connect_meter_button, Qt.LeftButton)
+        self.assertTrue(self.wait_for(lambda: dialog.meter_connected))
+
+        QTest.mouseClick(dialog.calculate_reference_button, Qt.LeftButton)
+        self.assertTrue(self.wait_for(lambda: not dialog.reference_pending))
+        self.assertIn("below the expected signal level", dialog.status_label.text())
+
+        dialog.last_reference_measurements = {1310: -45.23, 1550: -41.0}
+        with patch("ui.power_measurement_diagnostics.QMessageBox.warning") as warning:
+            dialog.apply_references()
+
+        warning.assert_called_once()
+        self.assertEqual(dialog.last_reference_measurements[1310], -45.23)
         dialog.close()
 
     def test_optional_switch_routes_channel_without_being_required_for_meter_reading(self):

@@ -36,6 +36,10 @@ from application.red_light_controller import RedLightTestController
 from application.timing import LIVE_UPDATE_PAUSE_MS
 from config.app_info import APP_VERSION
 from domain.models import ConnectionState, DeviceCategory
+from domain.measurement import (
+    format_dark_reference_error,
+    validate_reference_measurements,
+)
 from domain.diagnostic_analysis import (
     DiagnosticAnalysis,
     DiagnosticReading,
@@ -96,6 +100,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
 
     references_changed = pyqtSignal(float, float)
     references_applied = pyqtSignal(float, float)
+    calculated_references_applied = pyqtSignal(object, float, float)
 
     def __init__(
         self,
@@ -147,6 +152,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self.reference_progress = None
         self.channel_count = 0
         self.last_physical_port = None
+        self.last_reference_measurements = None
 
         self.monitor_timer = QTimer(self)
         self.monitor_timer.setSingleShot(True)
@@ -702,6 +708,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
 
     def _reference_ready(self, measured, reference_1310, reference_1550):
         self.reference_pending = False
+        self.last_reference_measurements = dict(measured)
         self.reference_1310_spin.setValue(reference_1310)
         self.reference_1550_spin.setValue(reference_1550)
         self.last_reference_label.setText(
@@ -716,6 +723,39 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self._update_controls()
 
     def apply_references(self):
+        if self.last_reference_measurements is None:
+            message = (
+                "Calculate a reference in this diagnostic tool before applying "
+                "values to the main setup."
+            )
+            QMessageBox.warning(self, "Reference not applied", message)
+            self.status_label.setText(message)
+            return
+        if self.last_reference_measurements is not None:
+            validation = validate_reference_measurements(
+                self.last_reference_measurements
+            )
+            if not validation.valid:
+                message = format_dark_reference_error(
+                    self.last_reference_measurements
+                )
+                self._record_support(
+                    "reference.apply_rejected_dark",
+                    category="workflow",
+                    level="error",
+                    validation_reason=validation.reason,
+                    invalid_wavelength=",".join(
+                        str(value) for value in validation.invalid_wavelengths
+                    ),
+                    measured_power_dbm={
+                        str(wavelength): self.last_reference_measurements[wavelength]
+                        for wavelength in validation.invalid_wavelengths
+                    },
+                    threshold_dbm=-40.0,
+                    status="rejected",
+                )
+                QMessageBox.warning(self, "Reference not applied", message)
+                return
         self.references_changed.emit(
             self.reference_1310_spin.value(),
             self.reference_1550_spin.value(),
@@ -726,6 +766,12 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
             self.reference_1310_spin.value(),
             self.reference_1550_spin.value(),
         )
+        if self.last_reference_measurements is not None:
+            self.calculated_references_applied.emit(
+                dict(self.last_reference_measurements),
+                self.reference_1310_spin.value(),
+                self.reference_1550_spin.value(),
+            )
         self.status_label.setText("Diagnostic references applied to main setup.")
 
     def start_monitoring(self):
@@ -754,6 +800,16 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self.pending_method = None
         self.pending_trace_id = None
         self.reference_pending = False
+        if "below the expected signal level" in str(message):
+            self._record_support(
+                "reference.failed",
+                category="workflow",
+                level="error",
+                validation_reason="dark_reference",
+                threshold_dbm=-40.0,
+                error_message=message,
+                status="error",
+            )
         self.stop_monitoring(update_status=False)
         self._close_reference_progress()
         self.status_label.setText("Meter operation failed: %s" % message)

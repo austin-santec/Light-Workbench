@@ -68,8 +68,12 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "reference_power_dbm",
         "reference_1310_dbm",
         "reference_1550_dbm",
+        "threshold_dbm",
+        "threshold_db",
         "loss_1310_db",
         "loss_1550_db",
+        "rounded_loss_1310_db",
+        "rounded_loss_1550_db",
         "insertion_loss_db",
         "elapsed_ms",
         "status",
@@ -132,6 +136,9 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "reference_established_at",
         "meter_model",
         "meter_serial",
+        "validation_reason",
+        "invalid_wavelength",
+        "invalid_sample_count",
     }
 )
 

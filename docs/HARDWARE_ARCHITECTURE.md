@@ -184,6 +184,13 @@ delay after each complete two-wavelength measurement. This delay is separate
 from wavelength, source, and source-off settling times; it controls when the
 next measurement request begins and does not change instrument timing.
 
+Reference and insertion-loss safety checks are performed after both wavelength
+measurements complete. A calculated reference below -40.0 dBm is treated as a
+dark or disconnected setup and cannot authorize production testing. A negative
+insertion-loss value after four-decimal rounding remains visible for
+troubleshooting but cannot be written. These checks do not change laser order,
+settling delays, wavelength order, reference math, or native hardware commands.
+
 ## Measurement pipeline
 
 The intended future pipeline is:
