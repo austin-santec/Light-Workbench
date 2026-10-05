@@ -48,8 +48,25 @@ def load_run_csv(path: str | Path) -> RunData:
             except ValueError:
                 continue
 
+            reference = None
+            if len(row) >= 12 and row[7].strip() and row[8].strip():
+                try:
+                    reference = {
+                        "reference_1310_dbm": float(row[7].strip()),
+                        "reference_1550_dbm": float(row[8].strip()),
+                        "method": row[9].strip(),
+                        "established_at": row[10].strip(),
+                        "snapshot_id": row[11].strip(),
+                    }
+                except ValueError:
+                    reference = None
             measurements.append(
-                MeasurementRecord(channel, loss_1310, loss_1550)
+                MeasurementRecord(
+                    channel,
+                    loss_1310,
+                    loss_1550,
+                    reference_snapshot=reference,
+                )
             )
 
     if not measurements:

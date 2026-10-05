@@ -88,9 +88,13 @@ actual-wavelength mismatch blocks that sample. Index/count convention
 differences are retained as diagnostic warnings and do not stop a normal
 production run when the actual wavelength is correct.
 
-`domain/reference.py` owns the zero-reference-to-offset conversion. Live IL,
-reference calculation, simulation, and hardware workflows can therefore share
-the same measurement rules without importing Qt or vendor drivers.
+`domain/reference.py` owns the zero-reference-to-offset conversion and the
+immutable reference snapshot model. `application/reference_session.py` owns
+the session-only authorization state. Live IL and Power Measurement Diagnostics
+may display temporary values, but only the main calculated-reference workflow,
+Admin Mode's explicit manual-apply action, or an explicit diagnostic Apply
+action can authorize a production run. Accepted readings persist the snapshot
+used for their calculation.
 
 `domain/replacements.py` owns replacement recommendations, designated-spare
 selection, and normalization of manually recorded replacements. It is kept
@@ -122,6 +126,15 @@ Qt, filesystem, or hardware dependencies.
 formatting and compatibility parsing live in
 `infrastructure/csv_run_loader.py`; the root `run_data.py` module remains a
 compatibility facade for existing imports.
+
+`domain/limit_profiles.py` owns model-specific quality criteria. OSX-100 and
+OSX-150 profiles classify too-good, optimization-warning, and formal-failure
+conditions using strict comparisons. `infrastructure/limit_profile_repository.py`
+stores administrator-controlled profiles in the per-user INI file, while
+`application/admin_session.py` keeps authorization in memory only and
+`ui/admin_config.py` provides the editing dialog. A new run stores a criteria
+snapshot so later review uses the rules that were active when the run began.
+Older runs remain loadable through a legacy single-warning-limit profile.
 
 `infrastructure/run_persistence.py` owns run folder naming, atomic CSV/JSON
 recording, continuation renaming, and legacy JSON loading. The root

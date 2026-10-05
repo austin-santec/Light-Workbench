@@ -16,6 +16,7 @@ from PyQt5.QtGui import QColor, QDesktopServices, QIcon, QKeySequence, QPixmap
 from PyQt5.QtWidgets import (
     QAction,
     QAbstractItemView,
+    QAbstractSpinBox,
     QApplication,
     QCheckBox,
     QFileDialog,
@@ -65,8 +66,17 @@ from application.run_start import (
     build_hardware_run_request,
     prepare_hardware_run,
 )
+from application.admin_session import AdminSession
+from application.reference_session import ReferenceSession
 from domain.measurement import calculate_insertion_loss
+from domain.reference import ReferenceMethod, new_reference_snapshot
 from domain.hardware_connection import HardwareCapability
+from domain.limit_profiles import (
+    LimitProfile,
+    default_limit_profiles,
+    legacy_limit_profile,
+    normalize_switch_model,
+)
 from domain.comparison import comparison_values, index_measurements
 from domain.raw_export import format_raw_measurements
 from domain.timing import SwitchTestTimer
@@ -78,6 +88,7 @@ from infrastructure.coc_exporter import (
 )
 from infrastructure.run_repository import DEFAULT_RUN_ROOT, FileRunRepository
 from infrastructure.unit_repository import FileUnitRepository
+from infrastructure.limit_profile_repository import LimitProfileRepository
 from infrastructure.support_bundle import export_support_bundle
 from hardware.optical_switch import OSX150
 from hardware.power_meter import SantecPowerMeter, SimulatedPowerMeter
@@ -95,6 +106,7 @@ from ui.live_il_reading import LiveILReadingDialog, LiveILReadingWorker
 from ui.power_measurement_diagnostics import PowerMeasurementDiagnosticsDialog
 from ui.hardware_status import HardwareStatusPanel
 from ui.support_logs import LoggingStatusDialog, SupportBundleDialog
+from ui.admin_config import AdminConfigDialog, AdminPasswordDialog
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
 
@@ -480,6 +492,19 @@ class MainWindow(QMainWindow):
         self.reference_workflow = None
         self._support_log_size_warning_shown = False
         self.run_data: RunData | None = None
+        self.admin_session = AdminSession()
+        self.reference_session = ReferenceSession()
+        self._last_applied_reference_snapshot = None
+        self.active_run_reference_snapshot = None
+        self._syncing_reference_widgets = False
+        self.limit_profile_repository = LimitProfileRepository()
+        self.limit_profiles = default_limit_profiles()
+        self.limit_profile_error = None
+        try:
+            self.limit_profiles = self.limit_profile_repository.load_profiles()
+        except (OSError, ValueError, TypeError) as error:
+            self.limit_profile_error = str(error)
+        self.active_limit_profile = self.limit_profiles["OSX-150"]
         # Keep adapter selection in one composition point. Passing the module
         # aliases preserves the existing test seam while allowing future
         # workstation-specific hardware configurations.
@@ -682,6 +707,13 @@ class MainWindow(QMainWindow):
 
     def _hardware_connection_snapshot_changed(self, _snapshot):
         """Apply capability readiness to only hardware-dependent controls."""
+        if self.reference_session.is_valid and not self._reference_hardware_matches_snapshot():
+            self.invalidate_reference("The measurement hardware connection changed; recalculate the reference.")
+        if self.run_data is None:
+            model = self._connected_switch_model()
+            profile = self.limit_profiles.get(model)
+            if profile is not None and hasattr(self, "criteria_profile_label"):
+                self._set_active_limit_profile(profile)
         self._update_hardware_readiness_controls()
 
     def _update_hardware_readiness_controls(self):
@@ -689,13 +721,14 @@ class MainWindow(QMainWindow):
             return
         run_available = (
             self.hardware_connection_manager.run_ready
+            and self.reference_session.is_valid
             and not self.hardware_run_active
         )
         self.start_hardware_button.setEnabled(run_available)
         self.start_hardware_button.setToolTip(
             "Start a run using the connected measurement hardware and optical switch."
             if run_available
-            else "Connect the measurement hardware and optical switch before starting a run."
+            else "Connect hardware and calculate a valid reference before starting a run."
         )
         reference_available = (
             self.hardware_connection_manager.measurement_ready
@@ -708,6 +741,7 @@ class MainWindow(QMainWindow):
             if reference_available
             else "Connect the measurement hardware before calculating a reference."
         )
+        self._refresh_reference_controls()
         self.retest_button.setEnabled(
             bool(self.run_data and self.run_data.measurements)
             and run_available
@@ -837,6 +871,14 @@ class MainWindow(QMainWindow):
         keybinds_action = QAction("Keybinds...", self)
         keybinds_action.triggered.connect(self.show_keybind_dialog)
         edit_menu.addAction(keybinds_action)
+        self.admin_mode_action = QAction("Admin Mode...", self)
+        self.admin_mode_action.setCheckable(True)
+        self.admin_mode_action.triggered.connect(self.toggle_admin_mode)
+        edit_menu.addAction(self.admin_mode_action)
+        self.admin_config_action = QAction("Admin Config...", self)
+        self.admin_config_action.setEnabled(False)
+        self.admin_config_action.triggered.connect(self.show_admin_config)
+        edit_menu.addAction(self.admin_config_action)
 
         tools_menu = self.menuBar().addMenu("Tools")
         switch_address_action = QAction("Switch VISA Address...", self)
@@ -1103,6 +1145,8 @@ class MainWindow(QMainWindow):
         hardware_setup_layout.addWidget(self.reference_1550_spin, 5, 1)
         self.reference_1310_spin.valueChanged.connect(self.emit_reference_values)
         self.reference_1550_spin.valueChanged.connect(self.emit_reference_values)
+        self.reference_1310_spin.valueChanged.connect(self._reference_values_changed_by_admin)
+        self.reference_1550_spin.valueChanged.connect(self._reference_values_changed_by_admin)
         self.calculate_reference_button = QPushButton("Calculate Reference")
         self.calculate_reference_button.setToolTip(
             "Connect to the ILM/OP815 and calculate both reference offsets."
@@ -1115,6 +1159,18 @@ class MainWindow(QMainWindow):
             1,
             2,
         )
+        self.apply_manual_reference_button = QPushButton("Apply Manual Reference")
+        self.apply_manual_reference_button.setToolTip(
+            "Admin Mode only: authorize the displayed reference values for production runs."
+        )
+        self.apply_manual_reference_button.clicked.connect(self.apply_manual_reference)
+        hardware_setup_layout.addWidget(
+            self.apply_manual_reference_button,
+            6,
+            2,
+            1,
+            2,
+        )
         hardware_setup_layout.addWidget(QLabel("Tested by:"), 6, 0)
         self.hardware_tested_by = QLineEdit()
         self.hardware_tested_by.setPlaceholderText("Initials")
@@ -1123,6 +1179,9 @@ class MainWindow(QMainWindow):
             "Enter the operator's initials. They are saved with the run and COC."
         )
         hardware_setup_layout.addWidget(self.hardware_tested_by, 6, 1)
+        self.reference_status_label = QLabel("Reference status: Not referenced")
+        self.reference_status_label.setWordWrap(True)
+        hardware_setup_layout.addWidget(self.reference_status_label, 8, 0, 1, 4)
         hardware_setup_layout.addWidget(QLabel("Run number:"), 7, 0)
         self.hardware_run_number = QSpinBox()
         self.hardware_run_number.setRange(1, 9999)
@@ -1138,6 +1197,7 @@ class MainWindow(QMainWindow):
         self.load_run_button.clicked.connect(self.load_selected_unit_run)
         hardware_setup_layout.addWidget(self.load_run_button, 7, 2, 1, 2)
         self._scale_hardware_setup_fonts(hardware_setup_box, 1.2)
+        self._refresh_reference_controls()
         self.update_channel_mode_controls(self.hardware_channel_mode.currentIndex())
         setup_row.addWidget(hardware_setup_box, 1)
 
@@ -1323,26 +1383,33 @@ class MainWindow(QMainWindow):
         analysis_layout = QGridLayout(analysis_box)
         analysis_layout.setVerticalSpacing(7)
         analysis_layout.setColumnStretch(1, 1)
-        analysis_layout.addWidget(QLabel("Warning limit:"), 0, 0)
+        analysis_layout.addWidget(QLabel("Active criteria:"), 0, 0)
         self.limit_spin = QDoubleSpinBox()
         self.limit_spin.setRange(-100.0, 100.0)
         self.limit_spin.setDecimals(4)
         self.limit_spin.setSingleStep(0.1)
         self.limit_spin.setValue(2.0)
         self.limit_spin.setSuffix(" dB")
-        self.limit_spin.valueChanged.connect(self.refresh_analysis)
+        self.limit_spin.setReadOnly(True)
+        self.limit_spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        self.limit_spin.setToolTip("Read-only compatibility display; edit criteria in Admin Config.")
         analysis_layout.addWidget(self.limit_spin, 0, 1)
-        self.select_over_limit_button = QPushButton("Select Over-Limit")
+        self.criteria_profile_label = QLabel("Connect hardware to load model criteria")
+        self.criteria_profile_label.setWordWrap(True)
+        analysis_layout.addWidget(self.criteria_profile_label, 0, 2)
+        self.select_over_limit_button = QPushButton("Select Failures")
         self.select_over_limit_button.clicked.connect(self.select_over_limit)
-        analysis_layout.addWidget(self.select_over_limit_button, 0, 2)
+        analysis_layout.addWidget(self.select_over_limit_button, 0, 3)
         self.metric_labels = {}
         for row, (key, display) in enumerate(
             (
                 ("total", "Total channels"),
-                ("over_limit", "Over-limit channels"),
-                ("over_1310", "1310 nm over"),
-                ("over_1550", "1550 nm over"),
-                ("over_both", "Both wavelengths over"),
+                ("over_limit", "Failed channels"),
+                ("over_1310", "1310 nm failed"),
+                ("over_1550", "1550 nm failed"),
+                ("over_both", "Both wavelengths failed"),
+                ("too_good", "Too-good channels"),
+                ("optimization", "Optimization warnings"),
             ),
             start=1,
         ):
@@ -1419,6 +1486,9 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
+        self.admin_mode_indicator = QLabel("")
+        self.admin_mode_indicator.setStyleSheet("color: #e60013; font-weight: 800;")
+        self.statusBar().addPermanentWidget(self.admin_mode_indicator)
         self.statusBar().showMessage("Ready. Open a saved CSV run to begin.")
         self._update_hardware_readiness_controls()
 
@@ -1438,6 +1508,308 @@ class MainWindow(QMainWindow):
     def _theme_stylesheet(self, dark_mode):
         """Return the stylesheet for the selected application appearance."""
         return DARK_STYLESHEET if dark_mode else LIGHT_STYLESHEET
+
+    def _connected_switch_model(self):
+        """Return the detected supported switch model, with test fallback."""
+        try:
+            snapshot = self.hardware_connection_manager.snapshot(
+                HardwareCapability.OPTICAL_SWITCH
+            )
+            device_info = snapshot.device_info
+            model = normalize_switch_model(getattr(device_info, "model", ""))
+            if model in self.limit_profiles:
+                return model
+        except (AttributeError, KeyError, TypeError):
+            pass
+        # Existing fake hardware adapters do not expose identity. Keep their
+        # historical OSX-150-compatible behavior while real devices must match.
+        return "OSX-150"
+
+    def _reference_hardware_identity(self):
+        """Return stable connected-meter identity used to invalidate references."""
+        try:
+            info = self.hardware_connection_manager.snapshot(
+                HardwareCapability.MEASUREMENT
+            ).device_info
+            laser_info = None
+            if self.hardware_connection_manager.has_separate_laser:
+                laser_info = self.hardware_connection_manager.snapshot(
+                    HardwareCapability.LASER_SOURCE
+                ).device_info
+            return (
+                info.model,
+                info.serial_number,
+                info.resource_address,
+                getattr(laser_info, "model", ""),
+                getattr(laser_info, "serial_number", ""),
+            )
+        except (AttributeError, KeyError, TypeError):
+            return ()
+
+    def _reference_hardware_matches_snapshot(self):
+        snapshot = self.reference_session.snapshot
+        if snapshot is None:
+            return False
+        try:
+            measurement = self.hardware_connection_manager.snapshot(
+                HardwareCapability.MEASUREMENT
+            )
+            if not measurement.connected:
+                return False
+        except (AttributeError, KeyError, TypeError):
+            return False
+        identity = self._reference_hardware_identity()
+        return bool(identity) and (
+            not snapshot.meter_model or snapshot.meter_model == identity[0]
+        ) and (
+            not snapshot.meter_serial or snapshot.meter_serial == identity[1]
+        )
+
+    def _refresh_reference_controls(self):
+        """Lock production reference fields except for an authenticated admin."""
+        if not hasattr(self, "reference_1310_spin"):
+            return
+        editable = self.admin_session.is_active and not self.hardware_run_active
+        for widget in (self.reference_1310_spin, self.reference_1550_spin):
+            widget.setReadOnly(not editable)
+            widget.setButtonSymbols(
+                QAbstractSpinBox.UpDownArrows if editable else QAbstractSpinBox.NoButtons
+            )
+        self.apply_manual_reference_button.setEnabled(editable)
+        snapshot = self.reference_session.snapshot
+        if self.reference_session.is_valid and snapshot is not None:
+            label = "Reference status: %s (%s)" % (
+                "Calculated" if snapshot.method == ReferenceMethod.CALCULATED.value else "Admin manual",
+                snapshot.snapshot_id[:8],
+            )
+        else:
+            label = "Reference status: %s" % self.reference_session.reason
+        self.reference_status_label.setText(label)
+
+    def _reference_values_changed_by_admin(self, *_values):
+        if self._syncing_reference_widgets:
+            return
+        if self.admin_session.is_active and not self.hardware_run_active:
+            self.reference_session.invalidate(
+                "Manual values changed; press Apply Manual Reference in Admin Mode."
+            )
+            self._update_hardware_readiness_controls()
+
+    def _reference_snapshot_context(self):
+        identity = self._reference_hardware_identity()
+        return {
+            "meter_model": identity[0] if identity else "",
+            "meter_serial": identity[1] if len(identity) > 1 else "",
+            "meter_resource_address": identity[2] if len(identity) > 2 else "",
+            "laser_model": identity[3] if len(identity) > 3 else "",
+            "laser_serial": identity[4] if len(identity) > 4 else "",
+            "operator_initials": self.hardware_tested_by.text().strip()
+            if hasattr(self, "hardware_tested_by") else "",
+        }
+
+    def _apply_reference_snapshot_to_widgets(self, snapshot):
+        self._syncing_reference_widgets = True
+        try:
+            self.reference_1310_spin.setValue(snapshot.reference_1310_dbm)
+            self.reference_1550_spin.setValue(snapshot.reference_1550_dbm)
+        finally:
+            self._syncing_reference_widgets = False
+
+    def apply_calculated_reference(self, reference_1310, reference_1550):
+        """Authorize a newly completed measurement-based reference."""
+        snapshot = new_reference_snapshot(
+            reference_1310,
+            reference_1550,
+            method=ReferenceMethod.CALCULATED,
+            **self._reference_snapshot_context(),
+        )
+        self.reference_session.apply(snapshot)
+        self._last_applied_reference_snapshot = snapshot
+        self._apply_reference_snapshot_to_widgets(snapshot)
+        self._record_support(
+            SupportEventCategory.MEASUREMENT,
+            "reference.snapshot_applied",
+            reference_snapshot_id=snapshot.snapshot_id,
+            reference_method=snapshot.method,
+            reference_state=self.reference_session.state,
+            reference_established_at=snapshot.established_at,
+            meter_model=snapshot.meter_model,
+            meter_serial=snapshot.meter_serial,
+            status="success",
+        )
+        self._update_hardware_readiness_controls()
+        return snapshot
+
+    def apply_manual_reference(self):
+        """Authorize manually entered references only from Admin Mode."""
+        if not self.admin_session.is_active:
+            return
+        snapshot = new_reference_snapshot(
+            self.reference_1310_spin.value(),
+            self.reference_1550_spin.value(),
+            method=ReferenceMethod.MANUAL_ADMIN,
+            **self._reference_snapshot_context(),
+        )
+        self.reference_session.apply(snapshot)
+        self._last_applied_reference_snapshot = snapshot
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "reference.manual_admin_applied",
+            admin_mode=True,
+            reference_snapshot_id=snapshot.snapshot_id,
+            reference_method=snapshot.method,
+            reference_state=self.reference_session.state,
+            reference_established_at=snapshot.established_at,
+            reference_1310_dbm=snapshot.reference_1310_dbm,
+            reference_1550_dbm=snapshot.reference_1550_dbm,
+            status="success",
+        )
+        self._update_hardware_readiness_controls()
+        self.statusBar().showMessage("Admin manual reference applied.", 5000)
+
+    def invalidate_reference(self, reason):
+        """Invalidate production authorization without deleting historical audit data."""
+        self.reference_session.invalidate(reason)
+        self._record_support(
+            SupportEventCategory.MEASUREMENT,
+            "reference.invalidated",
+            reference_state=self.reference_session.state,
+            reference_invalidation_reason=str(reason),
+            status="invalidated",
+        )
+        if hasattr(self, "reference_status_label"):
+            self._refresh_reference_controls()
+
+    def _profile_for_current_run(self):
+        """Resolve the run snapshot or the current connected-model profile."""
+        if self.run_data is not None and self.run_data.criteria_snapshot:
+            try:
+                return LimitProfile.from_mapping(self.run_data.criteria_snapshot)
+            except (ValueError, TypeError, KeyError):
+                pass
+        if self.run_data is not None:
+            # Unsnapshotted in-memory/legacy callers still use the historical
+            # editable-limit semantics until the run is saved with criteria.
+            return legacy_limit_profile(self.limit_spin.value())
+        return self.active_limit_profile
+
+    def _set_active_limit_profile(self, profile):
+        self.active_limit_profile = profile
+        display_warning = (
+            "not applicable" if not profile.warning_enabled
+            else "%.4f dB" % profile.warning_above_db
+        )
+        self.criteria_profile_label.setText(
+            "%s r%s\nToo-good < %.4f dB; warning > %s; fail > %.4f dB"
+            % (
+                profile.profile_name,
+                profile.revision,
+                profile.too_good_below_db,
+                display_warning,
+                profile.fail_above_db,
+            )
+        )
+        # Retain the old widget value as a compatibility view for old callers.
+        compatibility_limit = (
+            profile.warning_above_db
+            if profile.warning_enabled and profile.warning_above_db is not None
+            else profile.fail_above_db
+        )
+        self.limit_spin.blockSignals(True)
+        self.limit_spin.setValue(compatibility_limit)
+        self.limit_spin.blockSignals(False)
+
+    def toggle_admin_mode(self):
+        """Enter or leave the session-only administrator mode."""
+        if self.admin_session.is_active:
+            if self.reference_session.state == "invalidated" and self._last_applied_reference_snapshot:
+                self._apply_reference_snapshot_to_widgets(self._last_applied_reference_snapshot)
+                self.reference_session.apply(self._last_applied_reference_snapshot)
+            self.admin_session.exit()
+            self.admin_mode_action.setText("Admin Mode...")
+            self.admin_mode_action.setChecked(False)
+            self.admin_mode_indicator.setText("")
+            self.admin_config_action.setEnabled(False)
+            self.statusBar().showMessage("Admin mode disabled.")
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "admin.mode_exited",
+                admin_mode=False,
+                status="success",
+            )
+            self._refresh_reference_controls()
+            return
+        dialog = AdminPasswordDialog(self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        if not self.admin_session.authenticate(dialog.password):
+            QMessageBox.warning(self, "Admin Mode", "The admin password was not accepted.")
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "admin.mode_activation_failed",
+                admin_mode=False,
+                status="failed",
+            )
+            return
+        self.admin_mode_action.setText("Exit Admin Mode")
+        self.admin_mode_action.setChecked(True)
+        self.admin_mode_indicator.setText("ADMIN MODE")
+        self.admin_config_action.setEnabled(True)
+        self.statusBar().showMessage("ADMIN MODE active for this session.")
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "admin.mode_activated",
+            admin_mode=True,
+            status="success",
+        )
+        self._refresh_reference_controls()
+
+    def show_admin_config(self):
+        """Open model criteria configuration after admin authentication."""
+        if not self.admin_session.is_active:
+            return
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "admin.config_opened",
+            admin_mode=True,
+            status="started",
+        )
+        previous_profiles = dict(self.limit_profiles)
+        dialog = AdminConfigDialog(self.limit_profiles, self.limit_profile_repository, self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        try:
+            self.limit_profiles = self.limit_profile_repository.load_profiles()
+            self.limit_profile_error = None
+        except (OSError, ValueError, TypeError) as error:
+            self.limit_profile_error = str(error)
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "admin.config_validation_failed",
+                admin_mode=True,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="failed",
+            )
+            QMessageBox.warning(self, "Invalid admin config", str(error))
+            return
+        if self.run_data is None or not self.run_data.criteria_snapshot:
+            self._set_active_limit_profile(self.limit_profiles.get("OSX-150"))
+        self.refresh_analysis()
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "admin.config_saved",
+            admin_mode=True,
+            criteria_profile="OSX-100/OSX-150",
+            previous_too_good_db=previous_profiles["OSX-150"].too_good_below_db,
+            previous_warning_db=previous_profiles["OSX-150"].warning_above_db,
+            previous_fail_db=previous_profiles["OSX-150"].fail_above_db,
+            new_too_good_db=self.limit_profiles["OSX-150"].too_good_below_db,
+            new_warning_db=self.limit_profiles["OSX-150"].warning_above_db,
+            new_fail_db=self.limit_profiles["OSX-150"].fail_above_db,
+            status="success",
+        )
+        self.statusBar().showMessage("Admin criteria configuration reloaded.")
 
     def toggle_dark_mode(self, enabled):
         """Apply and persist the operator's light/dark appearance choice."""
@@ -1715,6 +2087,7 @@ class MainWindow(QMainWindow):
             workflow_id=workflow.workflow_id if workflow else "",
         )
         dialog.references_changed.connect(self.set_reference_values)
+        dialog.references_applied.connect(self.apply_calculated_reference)
         dialog.exec_()
         self._record_support(
             SupportEventCategory.WORKFLOW,
@@ -1761,6 +2134,8 @@ class MainWindow(QMainWindow):
                 "Connect the measurement hardware before calculating a reference.",
             )
             return
+        self.reference_session.begin_calculation()
+        self._refresh_reference_controls()
         owner_token = object()
         self.reference_workflow = self._new_workflow("reference_calculation")
         meter = self._meter_proxy_for_workflow(
@@ -1814,6 +2189,7 @@ class MainWindow(QMainWindow):
                 status="error",
             )
             self._close_reference_progress()
+            self.invalidate_reference("Reference calculation failed: %s" % error)
             self._update_hardware_readiness_controls()
             QMessageBox.critical(self, "Reference calculation", str(error))
 
@@ -1836,7 +2212,7 @@ class MainWindow(QMainWindow):
             both_wavelengths_complete=True,
             status="success",
         )
-        self.set_reference_values(reference_1310, reference_1550)
+        self.apply_calculated_reference(reference_1310, reference_1550)
         self.statusBar().showMessage(
             "Reference calculated. Measurement hardware remains connected.",
             5000,
@@ -1859,6 +2235,7 @@ class MainWindow(QMainWindow):
             status="error",
         )
         self._finish_reference_calculation()
+        self.invalidate_reference("Reference calculation failed: %s" % message)
         QMessageBox.critical(self, "Reference calculation failed", message)
 
     def _finish_reference_calculation(self):
@@ -2236,26 +2613,72 @@ class MainWindow(QMainWindow):
                     for item in payload.get("measurements", [])
                     if item.get("physical_port") is not None
                 }
-                if physical_ports:
+                references = {
+                    int(item["channel"]): item.get("reference")
+                    for item in payload.get("measurements", [])
+                    if isinstance(item, dict) and item.get("reference")
+                }
+                if physical_ports or references:
                     run_data.measurements = [
                         MeasurementRecord(
                             record.channel,
                             record.loss_1310,
                             record.loss_1550,
                             physical_ports.get(record.channel),
+                            references.get(record.channel, record.reference_snapshot),
                         )
                         for record in run_data.measurements
                     ]
-                run_data.warning_limit = float(payload["warning_limit_db"])
-                self.limit_spin.setValue(run_data.warning_limit)
+                criteria = payload.get("criteria")
+                if isinstance(criteria, dict):
+                    try:
+                        profile = LimitProfile.from_mapping(criteria)
+                    except (ValueError, TypeError, KeyError):
+                        profile = legacy_limit_profile(
+                            float(payload.get("warning_limit_db", 2.0))
+                        )
+                else:
+                    # Runs created before model-specific criteria retain their
+                    # original single warning limit and are marked legacy.
+                    profile = legacy_limit_profile(
+                        float(payload.get("warning_limit_db", 2.0))
+                    )
+                run_data.criteria_snapshot = profile.as_dict()
+                run_data.warning_limit = profile.warning_above_db
+                self._set_active_limit_profile(profile)
             except (OSError, ValueError, TypeError, KeyError):
                 self.statusBar().showMessage(
                     "Loaded CSV; the companion run.json could not be read."
                 )
+        historical_reference = next(
+            (
+                record.reference_snapshot
+                for record in reversed(run_data.measurements)
+                if isinstance(record.reference_snapshot, dict)
+            ),
+            None,
+        )
+        if historical_reference:
+            try:
+                self._syncing_reference_widgets = True
+                self.reference_1310_spin.setValue(
+                    float(historical_reference["reference_1310_dbm"])
+                )
+                self.reference_1550_spin.setValue(
+                    float(historical_reference["reference_1550_dbm"])
+                )
+            except (KeyError, TypeError, ValueError):
+                pass
+            finally:
+                self._syncing_reference_widgets = False
+        self.invalidate_reference(
+            "Loaded references are historical only; calculate a new reference before acquisition."
+        )
         self.run_recorder = self.run_repository.recorder_from_existing(
             path,
             metadata=run_data.metadata,
             limit=self.limit_spin.value(),
+            criteria_snapshot=run_data.criteria_snapshot,
             attempts=run_data.attempts,
             replacement_analysis=run_data.replacement_analysis,
             switch_test_sessions=run_data.switch_test_sessions,
@@ -2593,6 +3016,7 @@ class MainWindow(QMainWindow):
                         self.run_data.source_path,
                         metadata=self.run_data.metadata,
                         limit=self.limit_spin.value(),
+                        criteria_snapshot=self.run_data.criteria_snapshot,
                         attempts=self.run_data.attempts,
                         replacement_analysis=self.run_data.replacement_analysis,
                         completed_replacements=self.run_data.completed_replacements,
@@ -2641,6 +3065,15 @@ class MainWindow(QMainWindow):
                 "Hardware not ready",
                 "Connect the measurement hardware and optical switch before "
                 "starting a run.",
+            )
+            return
+        if not self.reference_session.is_valid:
+            QMessageBox.warning(
+                self,
+                "Reference required",
+                "A valid reference is required before starting an IL run.\n\n"
+                "Connect the measurement hardware and select Calculate Reference."
+                "\n\nAdmin Mode may be used to apply an explicit manual reference.",
             )
             return
         if not retest and not self.confirm_hardware_setup_complete():
@@ -2699,6 +3132,38 @@ class MainWindow(QMainWindow):
                 return
 
         continuing_existing = run_mode == "continue"
+        if continuing_existing or retest:
+            profile = self._profile_for_current_run()
+        else:
+            if self.limit_profile_error:
+                QMessageBox.warning(
+                    self,
+                    "Limit profiles unavailable",
+                    "The configured limit profiles could not be loaded:\n%s" % self.limit_profile_error,
+                )
+                return
+            model = self._connected_switch_model()
+            profile = self.limit_profiles.get(model)
+            if profile is None:
+                QMessageBox.warning(
+                    self,
+                    "Unsupported switch model",
+                    "No limit profile is configured for the connected switch model: %s" % model,
+                )
+                return
+        self._set_active_limit_profile(profile)
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "run.criteria_snapshot_resolved",
+            switch_model=profile.model,
+            criteria_profile=profile.profile_name,
+            criteria_revision=profile.revision,
+            too_good_limit_db=profile.too_good_below_db,
+            fail_limit_db=profile.fail_above_db,
+            warning_enabled=profile.warning_enabled,
+            criteria_snapshot=profile.as_dict(),
+            status="success",
+        )
         try:
             preparation = prepare_hardware_run(
                 retest=retest,
@@ -2751,6 +3216,9 @@ class MainWindow(QMainWindow):
             retest=retest,
             plan=preparation.plan,
         )
+        self.active_run_reference_snapshot = dict(
+            self.reference_session.snapshot.as_dict()
+        )
         if not retest and run_mode == "new":
             self.run_data = RunData(
                 self.unit_repository.run_directory_for_number(
@@ -2768,11 +3236,13 @@ class MainWindow(QMainWindow):
                     "Tested by": self.hardware_tested_by.text().strip(),
                     "Run number": str(selected_run_number),
                 },
+                criteria_snapshot=profile.as_dict(),
             )
             self._load_unit_state(selected_unit_directory)
             self.run_recorder = self.run_repository.new_recorder(
                 metadata=self.run_data.metadata,
                 limit=self.limit_spin.value(),
+                criteria_snapshot=profile.as_dict(),
                 directory=self.run_data.source_path,
             )
             self.switch_test_timer = SwitchTestTimer(
@@ -2789,6 +3259,7 @@ class MainWindow(QMainWindow):
                     self.run_data.source_path,
                     metadata=self.run_data.metadata,
                     limit=self.limit_spin.value(),
+                    criteria_snapshot=self.run_data.criteria_snapshot,
                     attempts=self.run_data.attempts,
                     replacement_analysis=self.run_data.replacement_analysis,
                     switch_test_sessions=self.run_data.switch_test_sessions,
@@ -2833,8 +3304,8 @@ class MainWindow(QMainWindow):
             meter=meter,
             switch=switch,
             reference_powers={
-                1310: self.reference_1310_spin.value(),
-                1550: self.reference_1550_spin.value(),
+                1310: self.reference_session.snapshot.reference_1310_dbm,
+                1550: self.reference_session.snapshot.reference_1550_dbm,
             },
             existing_channels=(
                 [record.channel for record in self.run_data.measurements]
@@ -2845,6 +3316,7 @@ class MainWindow(QMainWindow):
             live_write_mode=self.live_write_mode_enabled,
             support_logger=self.support_logger,
             workflow_id=workflow_id,
+            reference_snapshot=self.active_run_reference_snapshot,
         )
         try:
             self.hardware_controller.start(request)
@@ -2875,7 +3347,7 @@ class MainWindow(QMainWindow):
         self._update_hardware_readiness_controls()
 
     def confirm_hardware_setup_complete(self):
-        """Validate setup metadata and references before connecting hardware."""
+        """Validate setup metadata before connecting hardware."""
         missing_metadata = []
         if not self.hardware_part_number.currentText().strip():
             missing_metadata.append("Part number")
@@ -2918,41 +3390,6 @@ class MainWindow(QMainWindow):
                 "validation.continued_without_metadata",
                 choice="continue_without_metadata",
                 details=", ".join(missing_metadata),
-                status="accepted",
-            )
-
-        if (
-            self.reference_1310_spin.value() == 0.00
-            and self.reference_1550_spin.value() == 0.00
-        ):
-            choice = QMessageBox(self)
-            choice.setWindowTitle("Reference values are zero")
-            choice.setText(
-                "Please make sure to calculate or enter reference values for "
-                "1310 nm and 1550 nm wavelengths."
-            )
-            choice.setInformativeText(
-                "Also, don't try to tell me they're actually 0 because I "
-                "don't believe you."
-            )
-            return_button = choice.addButton(
-                "Return to Setup",
-                QMessageBox.RejectRole,
-            )
-            continue_button = choice.addButton(
-                "Continue Anyways",
-                QMessageBox.AcceptRole,
-            )
-            choice.setDefaultButton(return_button)
-            choice.exec_()
-            if choice.clickedButton() != continue_button:
-                return False
-            self._record_support(
-                SupportEventCategory.OPERATOR,
-                "validation.continued_with_zero_references",
-                choice="continue_anyways",
-                reference_1310_dbm=0.0,
-                reference_1550_dbm=0.0,
                 status="accepted",
             )
 
@@ -3234,6 +3671,9 @@ class MainWindow(QMainWindow):
             loss_1310,
             loss_1550,
             physical_port,
+            dict(self.active_run_reference_snapshot)
+            if self.active_run_reference_snapshot
+            else None,
         )
         updated_measurements = [
             existing
@@ -3432,6 +3872,7 @@ class MainWindow(QMainWindow):
         self.change_hardware_channel_button.setEnabled(False)
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(True)
+        self.active_run_reference_snapshot = None
         self.statusBar().showMessage("Hardware run complete. CSV and JSON are saved.")
         QTimer.singleShot(0, self.offer_coc_export)
 
@@ -3454,6 +3895,7 @@ class MainWindow(QMainWindow):
         self.change_hardware_channel_button.setEnabled(False)
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(bool(self.run_data and self.run_data.measurements))
+        self.active_run_reference_snapshot = None
         self.statusBar().showMessage("Hardware run stopped. Completed readings remain visible.")
         QTimer.singleShot(0, self.offer_coc_export)
 
@@ -3477,6 +3919,7 @@ class MainWindow(QMainWindow):
         self.write_hardware_button.setEnabled(False)
         self.change_hardware_channel_button.setEnabled(False)
         self.stop_hardware_button.setEnabled(False)
+        self.active_run_reference_snapshot = None
         QMessageBox.critical(self, "Hardware run stopped", message)
         QTimer.singleShot(0, self.offer_coc_export)
 
@@ -3498,6 +3941,7 @@ class MainWindow(QMainWindow):
         finished_thread = self.hardware_thread
         self.hardware_thread = None
         self.hardware_worker = None
+        self.active_run_reference_snapshot = None
         if finished_thread is not None:
             finished_thread.deleteLater()
         self._update_hardware_readiness_controls()
@@ -3584,11 +4028,9 @@ class MainWindow(QMainWindow):
     def refresh_analysis(self):
         if self.run_data is None:
             return
-        if self.run_recorder is not None and self.run_data.measurements:
-            self.run_recorder.limit = self.limit_spin.value()
-            self.run_recorder.save(self.run_data.measurements)
-            self.persist_unit_record()
-        summary = self.run_data.analysis(self.limit_spin.value())
+        profile = self._profile_for_current_run()
+        self._set_active_limit_profile(profile)
+        summary = self.run_data.analysis_with_profile(profile)
         for key, label in self.metric_labels.items():
             if key in ("over_1310", "over_1550", "over_both"):
                 label.setText(format_channel_summary(summary[key + "_channels"]))
@@ -3642,16 +4084,21 @@ class MainWindow(QMainWindow):
         required_recommendations = [
             item
             for item in recommendations
-            if recommendation_category(item, result["warning_limit_db"]) == "required"
+            if recommendation_category(item, result.get("warning_limit_db")) == "required"
         ]
         optional_recommendations = [
             item
             for item in recommendations
-            if recommendation_category(item, result["warning_limit_db"]) == "optional"
+            if recommendation_category(item, result.get("warning_limit_db")) == "optional"
         ]
         spare_ports = [
             str(spare["physical_port"])
             for spare in result.get("bottom_spares", [])
+        ]
+        too_good_spares = [
+            str(spare["physical_port"])
+            for spare in result.get("bottom_spares", [])
+            if spare.get("too_good")
         ]
         lines = [
             "Required replacements: %d" % len(required_recommendations),
@@ -3659,6 +4106,11 @@ class MainWindow(QMainWindow):
             "Recommended designated spares: %s"
             % (", ".join(spare_ports) if spare_ports else "none"),
         ]
+        if too_good_spares:
+            lines.append(
+                "Too-good spare warning: %s"
+                % ", ".join(too_good_spares)
+            )
         for title, categorized in (
             ("Required replacements", required_recommendations),
             ("Optional Replacements", optional_recommendations),
@@ -3862,9 +4314,14 @@ class MainWindow(QMainWindow):
                     production_records,
                     readings,
                     designed_count.value(),
-                    self.limit_spin.value(),
+                    self.active_limit_profile.warning_above_db
+                    if self.active_limit_profile.warning_enabled
+                    else self.active_limit_profile.fail_above_db,
                     minimum_improvement.value(),
                     bottom_spare_count.value(),
+                    fail_limit=self.active_limit_profile.fail_above_db,
+                    model=self.active_limit_profile.model,
+                    too_good_limit=self.active_limit_profile.too_good_below_db,
                 )
                 self.apply_replacement_analysis(result)
                 return
@@ -3921,6 +4378,7 @@ class MainWindow(QMainWindow):
         else:
             self.run_recorder.metadata = dict(self.run_data.metadata)
             self.run_recorder.limit = self.limit_spin.value()
+            self.run_recorder.criteria_snapshot = self.run_data.criteria_snapshot
             self.run_recorder.attempts = list(self.run_data.attempts)
             self.run_recorder.replacement_analysis = self.run_data.replacement_analysis
             self.run_recorder.completed_replacements = list(
@@ -4020,11 +4478,10 @@ class MainWindow(QMainWindow):
         if self.current_loss_1310 is None or self.current_loss_1550 is None:
             color = "#b3bbc5" if self.dark_mode_enabled else "#587073"
         else:
-            limit = self.limit_spin.value()
-            over_limit = (
-                self.current_loss_1310 > limit or self.current_loss_1550 > limit
+            assessment = self._profile_for_current_run().classify(
+                self.current_loss_1310, self.current_loss_1550
             )
-            if over_limit:
+            if assessment.is_fail:
                 color = "#ff8f86" if self.dark_mode_enabled else "#a33b2f"
             else:
                 color = "#72d19a" if self.dark_mode_enabled else "#28704a"
@@ -4043,15 +4500,19 @@ class MainWindow(QMainWindow):
     def refresh_current_reading(self):
         if self.current_loss_1310 is None or self.current_loss_1550 is None:
             return
-        limit = self.limit_spin.value()
-        flagged_1310 = self.current_loss_1310 > limit
-        flagged_1550 = self.current_loss_1550 > limit
-        if flagged_1310 and flagged_1550:
-            status = "OVER LIMIT at both wavelengths"
-        elif flagged_1310:
-            status = "OVER LIMIT at 1310 nm"
-        elif flagged_1550:
-            status = "OVER LIMIT at 1550 nm"
+        assessment = self._profile_for_current_run().classify(
+            self.current_loss_1310, self.current_loss_1550
+        )
+        if assessment.is_fail:
+            status = "FAIL at %s" % ", ".join(
+                "%d nm" % wavelength for wavelength in assessment.fail_wavelengths
+            )
+        elif assessment.is_too_good and assessment.is_optimization:
+            status = "Too good to verify; optimization warning"
+        elif assessment.is_too_good:
+            status = "Too good to verify"
+        elif assessment.is_optimization:
+            status = "Optimization warning"
         else:
             status = "Within configured limit"
         self.reading_status_label.setText(status)
@@ -4073,8 +4534,10 @@ class MainWindow(QMainWindow):
     def record_matches_filter(self, record, limit):
         """Return whether a saved record belongs in the selected table view."""
         filter_index = self.reading_filter.currentIndex()
-        over_1310 = record.loss_1310 > limit
-        over_1550 = record.loss_1550 > limit
+        profile = self._profile_for_current_run()
+        assessment = profile.classify(record.loss_1310, record.loss_1550)
+        over_1310 = 1310 in assessment.fail_wavelengths
+        over_1550 = 1550 in assessment.fail_wavelengths
         if filter_index == FILTER_WITHIN_LIMIT:
             return not over_1310 and not over_1550
         if filter_index == FILTER_ANY_OVER_LIMIT:
@@ -4090,7 +4553,7 @@ class MainWindow(QMainWindow):
     def refresh_table(self):
         if self.run_data is None:
             return
-        limit = self.limit_spin.value()
+        profile = self._profile_for_current_run()
         comparison_records = {}
         if self.comparison_run_data is not None:
             comparison_records = index_measurements(
@@ -4125,7 +4588,7 @@ class MainWindow(QMainWindow):
             record
             for record in records
             if record.channel == pending_channel
-            or self.record_matches_filter(record, limit)
+            or self.record_matches_filter(record, profile.fail_above_db)
         ]
         if pending_channel is not None and all(
             record.channel != pending_channel for record in records
@@ -4148,17 +4611,18 @@ class MainWindow(QMainWindow):
                         item.setTextAlignment(Qt.AlignCenter)
                     self.table.setItem(row_index, column, item)
                 continue
-            flagged_1310 = record.loss_1310 > limit
-            flagged_1550 = record.loss_1550 > limit
-            flagged = flagged_1310 or flagged_1550
-            if flagged_1310 and flagged_1550:
-                status = "Both wavelengths over"
-            elif flagged_1310:
-                status = "1310 nm over"
-            elif flagged_1550:
-                status = "1550 nm over"
-            else:
-                status = "Within limit"
+            assessment = profile.classify(record.loss_1310, record.loss_1550)
+            flagged = assessment.is_fail
+            status_parts = []
+            if assessment.is_fail:
+                status_parts.append(
+                    "FAIL at " + ", ".join("%d nm" % wavelength for wavelength in assessment.fail_wavelengths)
+                )
+            if assessment.is_too_good:
+                status_parts.append("Too good to verify")
+            if assessment.is_optimization and not assessment.is_fail:
+                status_parts.append("Optimization warning")
+            status = "; ".join(status_parts) if status_parts else "Within configured limit"
             values = [
                 str(record.channel),
                 "%.4f" % record.loss_1310,
@@ -4180,14 +4644,14 @@ class MainWindow(QMainWindow):
     def select_over_limit(self):
         if self.run_data is None:
             return
-        limit = self.limit_spin.value()
+        profile = self._profile_for_current_run()
         self.reading_filter.setCurrentIndex(FILTER_ANY_OVER_LIMIT)
         self.table.clearSelection()
         selected = 0
         for row_index, record in enumerate(self.displayed_records):
             if (
                 record.channel != self.hardware_pending_channel
-                and (record.loss_1310 > limit or record.loss_1550 > limit)
+                and profile.classify(record.loss_1310, record.loss_1550).is_fail
             ):
                 index = self.table.model().index(row_index, 0)
                 self.table.selectionModel().select(
@@ -4196,7 +4660,7 @@ class MainWindow(QMainWindow):
                 )
                 selected += 1
         self.statusBar().showMessage(
-            "%d over-limit channel(s) selected for retest." % selected
+            "%d failed channel(s) selected for retest." % selected
         )
 
     def _show_degraded_logging_warning(self):

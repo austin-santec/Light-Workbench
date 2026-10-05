@@ -74,6 +74,10 @@ def analyze_replacements(
     warning_limit,
     minimum_improvement=0.05,
     bottom_spare_count=2,
+    *,
+    fail_limit=None,
+    model="",
+    too_good_limit=None,
 ):
     """Recommend worthwhile one-to-one replacements and designated spares.
 
@@ -92,6 +96,11 @@ def analyze_replacements(
         raise ValueError("Minimum improvement cannot be negative.")
     if bottom_spare_count < 0:
         raise ValueError("Designated spare count cannot be negative.")
+    if fail_limit is None:
+        fail_limit = warning_limit
+    if fail_limit < -100 or fail_limit > 100:
+        raise ValueError("Fail limit is outside the supported range.")
+    optimization_limit = warning_limit
 
     production = {
         record.channel: _production_reading(record)
@@ -118,6 +127,10 @@ def analyze_replacements(
         "designed_channel_count": designed_channel_count,
         "extra_ports": sorted(extras),
         "warning_limit_db": float(warning_limit),
+        "optimization_limit_db": float(optimization_limit),
+        "fail_limit_db": float(fail_limit),
+        "model": model,
+        "too_good_below_db": too_good_limit,
         "minimum_improvement_db": float(minimum_improvement),
         "bottom_spare_count": int(bottom_spare_count),
         "missing_channels": missing_channels,
@@ -136,11 +149,16 @@ def analyze_replacements(
         reverse=True,
     )
     for channel, current in targets:
+        # Only optimize ports above the model's optimization threshold. For
+        # OSX-100 this is the fail limit, so no warning-based replacements are
+        # produced.
+        if model and current.worst_loss <= optimization_limit:
+            continue
         candidates = [
             candidate
             for candidate in available.values()
-            if candidate.loss_1310 <= warning_limit
-            and candidate.loss_1550 <= warning_limit
+            if candidate.loss_1310 <= optimization_limit
+            and candidate.loss_1550 <= optimization_limit
             and current.worst_loss - candidate.worst_loss >= minimum_improvement
         ]
         if not candidates:
@@ -155,7 +173,7 @@ def analyze_replacements(
                         "current_loss_1310_db": current.loss_1310,
                         "current_loss_1550_db": current.loss_1550,
                     },
-                    warning_limit,
+                    fail_limit,
                 ),
                 "current_physical_port": current.port,
                 "current_loss_1310_db": current.loss_1310,
@@ -186,7 +204,11 @@ def analyze_replacements(
             "loss_1310_db": reading.loss_1310,
             "loss_1550_db": reading.loss_1550,
             "worst_loss_db": reading.worst_loss,
-            "within_warning_limit": reading.worst_loss <= warning_limit,
+            "within_warning_limit": reading.worst_loss <= optimization_limit,
+            "within_optimization_limit": reading.worst_loss <= optimization_limit,
+            "too_good": (
+                too_good_limit is not None and reading.worst_loss < too_good_limit
+            ),
         }
         for reading in remaining[:bottom_spare_count]
     ]
@@ -266,11 +288,13 @@ def replacement_metadata(result: dict) -> dict[str, str]:
     ]
     metadata = {
         "Replacement analysis": result["status"],
+        "Replacement model": result.get("model", "") or "Legacy",
         "Designed channel count": str(result["designed_channel_count"]),
         "Replacement candidate ports": ", ".join(
             str(port) for port in result["extra_ports"]
         ) or "None",
         "Replacement warning limit dB": "%.4f" % result["warning_limit_db"],
+        "Replacement fail limit dB": "%.4f" % result.get("fail_limit_db", result["warning_limit_db"]),
         "Replacement minimum improvement dB": "%.4f"
         % result["minimum_improvement_db"],
         "Required replacements": str(len(required_recommendations)),
@@ -332,6 +356,8 @@ def replacement_metadata(result: dict) -> dict[str, str]:
                     "" if spare["within_warning_limit"] else " (over warning limit)",
                 )
             )
+            if spare.get("too_good"):
+                metadata["Recommended designated spare %d" % index] += " (too-good warning)"
     else:
         metadata["Recommended designated spares"] = "None available"
     return metadata

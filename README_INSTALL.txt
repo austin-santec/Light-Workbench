@@ -24,6 +24,10 @@ The target computer needs:
   * The ILM/OP815 USB driver.
   * A compatible 32-bit VISA runtime, such as NI-VISA with 32-bit support.
   * The ILM and supported OSX-100/OSX-150 connected by USB and powered on for hardware tests.
+  * Quality criteria are selected from the connected model. Normal users
+    cannot edit them during a run. Administrators can use Edit > Admin Mode...
+    and Edit > Admin Config... to change the per-user profiles stored under
+    `%LOCALAPPDATA%\\LightWorkbench\\config\\limit_profiles.ini`.
 
 The application is 32-bit. It normally runs on both 32-bit and 64-bit Windows,
 but a 64-bit computer must still have the 32-bit VISA support installed.
@@ -65,7 +69,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.14.0; an existing executable keeps its prior version until rebuilt.
+1.16.0; an existing executable keeps its prior version until rebuilt.
 
 
 3. VERIFY VISA

@@ -49,10 +49,16 @@ be used as source locations. The release scripts keep deployment output in
   `application/hardware_connection.py` and `domain/hardware_connection.py`.
 - Calculations, validation, and rules that do not need Qt or hardware:
   `domain/`.
+- Model-specific insertion-loss criteria: `domain/limit_profiles.py`.
 - Vendor-neutral contracts and composed hardware lifecycle: `hardware/`.
 - Hardware identity/status presentation: `hardware/device_identity.py` and
   `ui/hardware_status.py`.
 - CSV/JSON/XLSX/filesystem and future storage adapters: `infrastructure/`.
+- Administrator criteria INI persistence: `infrastructure/limit_profile_repository.py`.
+- Session-only administrator authorization and dialogs:
+  `application/admin_session.py` and `ui/admin_config.py`.
+- Reference authorization lifecycle:
+  `application/reference_session.py` and `domain/reference.py`.
 - Typed support events: `domain/support_events.py`; queue/correlation ownership:
   `application/support_logging.py`; rotation/redaction/bundles:
   `infrastructure/support_log_writer.py` and `infrastructure/support_bundle.py`;

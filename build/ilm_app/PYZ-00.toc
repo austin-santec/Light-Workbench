@@ -34,6 +34,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\__init__.py',
    'PYMODULE'),
+  ('application.admin_session',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\admin_session.py',
+   'PYMODULE'),
   ('application.diagnostic_trace',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\diagnostic_trace.py',
@@ -65,6 +69,10 @@
   ('application.red_light_controller',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\red_light_controller.py',
+   'PYMODULE'),
+  ('application.reference_session',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\reference_session.py',
    'PYMODULE'),
   ('application.run_controller',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -293,6 +301,10 @@
   ('domain.hardware_connection',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\hardware_connection.py',
+   'PYMODULE'),
+  ('domain.limit_profiles',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\limit_profiles.py',
    'PYMODULE'),
   ('domain.measurement',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -552,6 +564,10 @@
   ('infrastructure.diagnostic_export',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\diagnostic_export.py',
+   'PYMODULE'),
+  ('infrastructure.limit_profile_repository',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\limit_profile_repository.py',
    'PYMODULE'),
   ('infrastructure.run_persistence',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -1401,6 +1417,10 @@
   ('ui',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\__init__.py',
+   'PYMODULE'),
+  ('ui.admin_config',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\admin_config.py',
    'PYMODULE'),
   ('ui.hardware_status',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '

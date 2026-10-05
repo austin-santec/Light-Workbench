@@ -41,6 +41,12 @@ requirement into completed, partial, and not-yet-implemented work.
   engineering logs, redaction, rotation, support bundles, and audit-trail
   limitations.
 
+Model-specific quality criteria are defined in `domain/limit_profiles.py`,
+stored through `infrastructure/limit_profile_repository.py`, and edited from
+the session-only `Edit > Admin Mode...` / `Edit > Admin Config...` workflow.
+New run JSON files snapshot the criteria so historical analysis does not change
+when an administrator updates a future profile.
+
 The current release version is maintained in `config/app_info.py`; do not
 duplicate it in this index. The current desktop entry point is `ilm_app.py`,
 while `ILMReadLoss.py` remains a supported legacy console workflow.

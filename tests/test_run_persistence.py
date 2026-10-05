@@ -1,10 +1,14 @@
 import csv
+import csv
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
 
 from run_data import MeasurementRecord
+from infrastructure.csv_run_loader import load_run_csv
+from domain.limit_profiles import default_limit_profiles
+from domain.reference import ReferenceMethod, new_reference_snapshot
 from run_persistence import (
     RunRecorder,
     build_run_csv_path,
@@ -16,6 +20,51 @@ from infrastructure.run_persistence import RunRecorder as InfrastructureRunRecor
 
 
 class RunPersistenceTests(unittest.TestCase):
+    def test_save_persists_reference_snapshot_per_reading_and_run_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = new_reference_snapshot(
+                -0.04,
+                0.14,
+                method=ReferenceMethod.CALCULATED,
+            )
+            recorder = RunRecorder(root=directory)
+            recorder.save([
+                MeasurementRecord(
+                    3,
+                    0.9,
+                    0.64,
+                    3,
+                    snapshot.as_dict(),
+                )
+            ])
+            payload = load_run_json(recorder.json_path)
+            self.assertEqual(payload["schema_version"], 3)
+            self.assertEqual(payload["measurements"][0]["reference"], snapshot.as_dict())
+            self.assertEqual(payload["reference_snapshots"], [snapshot.as_dict()])
+            with recorder.csv_path.open(newline="", encoding="utf-8") as csv_file:
+                csv_rows = list(csv.reader(csv_file))
+            self.assertEqual(csv_rows[1][7], "-0.04")
+            self.assertEqual(csv_rows[1][8], "0.14")
+            self.assertEqual(csv_rows[1][9], "calculated")
+            loaded = load_run_csv(recorder.csv_path)
+            self.assertEqual(
+                loaded.measurements[0].reference_snapshot["snapshot_id"],
+                snapshot.snapshot_id,
+            )
+    def test_save_persists_criteria_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = default_limit_profiles()["OSX-150"]
+            recorder = RunRecorder(
+                root=directory,
+                metadata={"Mode": "Real hardware"},
+                limit=2.25,
+                criteria_snapshot=profile.as_dict(),
+            )
+            recorder.save([MeasurementRecord(1, 1.0, 1.0, 1)])
+            payload = load_run_json(recorder.json_path)
+            self.assertEqual(payload["criteria"]["model"], "OSX-150")
+            self.assertEqual(payload["criteria"]["fail_above_db"], 2.5)
+
     def test_save_records_csv_json_and_atomic_events_without_changing_data(self):
         class Logger:
             def __init__(self):
@@ -111,7 +160,8 @@ class RunPersistenceTests(unittest.TestCase):
             self.assertTrue(recorder.csv_path.is_file())
             self.assertTrue(recorder.json_path.is_file())
             payload = load_run_json(recorder.json_path)
-            self.assertEqual(payload["schema_version"], 1)
+            self.assertEqual(payload["schema_version"], 3)
+            self.assertIsNone(payload["criteria"])
             self.assertEqual(payload["warning_limit_db"], 2.0)
             self.assertEqual(payload["measurements"][0]["physical_port"], 1)
             self.assertNotIn("replacement_analysis", payload)

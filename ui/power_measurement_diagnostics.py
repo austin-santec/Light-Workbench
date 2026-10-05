@@ -95,6 +95,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
     """
 
     references_changed = pyqtSignal(float, float)
+    references_applied = pyqtSignal(float, float)
 
     def __init__(
         self,
@@ -716,6 +717,12 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
 
     def apply_references(self):
         self.references_changed.emit(
+            self.reference_1310_spin.value(),
+            self.reference_1550_spin.value(),
+        )
+        # This explicit action is the only diagnostic path that may authorize
+        # a reference for the production run workflow.
+        self.references_applied.emit(
             self.reference_1310_spin.value(),
             self.reference_1550_spin.value(),
         )

@@ -25,10 +25,12 @@ imports:
  &#8226;   <a href="#_collections_abc">_collections_abc</a>
  &#8226;   <a href="#_weakrefset">_weakrefset</a>
  &#8226;   <a href="#abc">abc</a>
+ &#8226;   <a href="#application.admin_session">application.admin_session</a>
  &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
  &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
  &#8226;   <a href="#application.hardware_session">application.hardware_session</a>
  &#8226;   <a href="#application.live_controller">application.live_controller</a>
+ &#8226;   <a href="#application.reference_session">application.reference_session</a>
  &#8226;   <a href="#application.run_controller">application.run_controller</a>
  &#8226;   <a href="#application.run_start">application.run_start</a>
  &#8226;   <a href="#application.support_logging">application.support_logging</a>
@@ -41,8 +43,10 @@ imports:
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain.comparison">domain.comparison</a>
  &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
+ &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
+ &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
  &#8226;   <a href="#domain.timing">domain.timing</a>
@@ -176,6 +180,7 @@ imports:
  &#8226;   <a href="#hardware.power_meter">hardware.power_meter</a>
  &#8226;   <a href="#heapq">heapq</a>
  &#8226;   <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
+ &#8226;   <a href="#infrastructure.limit_profile_repository">infrastructure.limit_profile_repository</a>
  &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
  &#8226;   <a href="#infrastructure.unit_repository">infrastructure.unit_repository</a>
@@ -208,6 +213,7 @@ imports:
  &#8226;   <a href="#tools.dependency_check">tools.dependency_check</a>
  &#8226;   <a href="#traceback">traceback</a>
  &#8226;   <a href="#types">types</a>
+ &#8226;   <a href="#ui.admin_config">ui.admin_config</a>
  &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
@@ -333,7 +339,7 @@ imported by:
   <a target="code" href="" type="text/plain"><tt>'org.python'</tt></a>
 <span class="moduletype">MissingModule</span>  <div class="import">
 imported by:
-    <a href="#pickle">pickle</a>
+    <a href="#copy">copy</a>
  &#8226;   <a href="#xml.sax">xml.sax</a>
 
   </div>
@@ -399,6 +405,7 @@ imported by:
  &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
  &#8226;   <a href="#application.run_controller">application.run_controller</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#ui.admin_config">ui.admin_config</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
@@ -447,6 +454,7 @@ imported by:
     <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
  &#8226;   <a href="#PyQt5.QtGui">PyQt5.QtGui</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#ui.admin_config">ui.admin_config</a>
  &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
@@ -1512,7 +1520,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#application.diagnostic_trace">application.diagnostic_trace</a>
+    <a href="#application.admin_session">application.admin_session</a>
+ &#8226;   <a href="#application.diagnostic_trace">application.diagnostic_trace</a>
  &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
  &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
  &#8226;   <a href="#application.hardware_session">application.hardware_session</a>
@@ -1520,10 +1529,27 @@ imported by:
  &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
  &#8226;   <a href="#application.power_diagnostics_controller">application.power_diagnostics_controller</a>
  &#8226;   <a href="#application.red_light_controller">application.red_light_controller</a>
+ &#8226;   <a href="#application.reference_session">application.reference_session</a>
  &#8226;   <a href="#application.run_controller">application.run_controller</a>
  &#8226;   <a href="#application.run_start">application.run_start</a>
  &#8226;   <a href="#application.support_logging">application.support_logging</a>
  &#8226;   <a href="#application.timing">application.timing</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="application.admin_session"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/application/admin_session.py" type="text/plain"><tt>application.admin_session</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#application">application</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
 
   </div>
 
@@ -1705,6 +1731,23 @@ imported by:
     <a href="#application">application</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="application.reference_session"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/application/reference_session.py" type="text/plain"><tt>application.reference_session</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#application">application</a>
+ &#8226;   <a href="#domain.reference">domain.reference</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
 
   </div>
 
@@ -3382,6 +3425,7 @@ imported by:
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#infrastructure.coc_export">infrastructure.coc_export</a>
  &#8226;   <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
+ &#8226;   <a href="#infrastructure.limit_profile_repository">infrastructure.limit_profile_repository</a>
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
  &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
  &#8226;   <a href="#infrastructure.support_log_writer">infrastructure.support_log_writer</a>
@@ -3428,7 +3472,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#pyvisa.util">pyvisa.util</a>
+    <a href="#infrastructure.limit_profile_repository">infrastructure.limit_profile_repository</a>
+ &#8226;   <a href="#pyvisa.util">pyvisa.util</a>
 
   </div>
 
@@ -3503,8 +3548,8 @@ imported by:
   <a target="code" href="///C:/Users/Austin/AppData/Local/Programs/Python/Python311-32/Lib/copy.py" type="text/plain"><tt>copy</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#copyreg">copyreg</a>
- &#8226;   <a href="#org">org</a>
+    <a href="#'org.python'">'org.python'</a>
+ &#8226;   <a href="#copyreg">copyreg</a>
  &#8226;   <a href="#types">types</a>
  &#8226;   <a href="#weakref">weakref</a>
 
@@ -3779,7 +3824,9 @@ imported by:
  &#8226;   <a href="#domain.diagnostic_analysis">domain.diagnostic_analysis</a>
  &#8226;   <a href="#domain.diagnostic_trace">domain.diagnostic_trace</a>
  &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
+ &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
  &#8226;   <a href="#domain.reporting">domain.reporting</a>
  &#8226;   <a href="#domain.run_data">domain.run_data</a>
@@ -3817,6 +3864,7 @@ imported by:
  &#8226;   <a href="#application.diagnostic_trace">application.diagnostic_trace</a>
  &#8226;   <a href="#application.support_logging">application.support_logging</a>
  &#8226;   <a href="#calendar">calendar</a>
+ &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
  &#8226;   <a href="#domain.timing">domain.timing</a>
  &#8226;   <a href="#email.utils">email.utils</a>
@@ -3920,6 +3968,7 @@ imported by:
  &#8226;   <a href="#domain.diagnostic_analysis">domain.diagnostic_analysis</a>
  &#8226;   <a href="#domain.diagnostic_trace">domain.diagnostic_trace</a>
  &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
+ &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
@@ -4013,6 +4062,27 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="domain.limit_profiles"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/limit_profiles.py" type="text/plain"><tt>domain.limit_profiles</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#math">math</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#infrastructure.limit_profile_repository">infrastructure.limit_profile_repository</a>
+ &#8226;   <a href="#ui.admin_config">ui.admin_config</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="domain.measurement"></a>
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/measurement.py" type="text/plain"><tt>domain.measurement</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -4099,13 +4169,19 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#enum">enum</a>
+ &#8226;   <a href="#uuid">uuid</a>
 
   </div>
   <div class="import">
 imported by:
     <a href="#application.power_diagnostics_controller">application.power_diagnostics_controller</a>
+ &#8226;   <a href="#application.reference_session">application.reference_session</a>
  &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
 
   </div>
@@ -7215,6 +7291,7 @@ imported by:
  &#8226;   <a href="#asyncio.timeouts">asyncio.timeouts</a>
  &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
  &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
  &#8226;   <a href="#http">http</a>
@@ -7961,6 +8038,7 @@ imports:
  &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib._bootstrap">importlib._bootstrap</a>
  &#8226;   <a href="#importlib._bootstrap_external">importlib._bootstrap_external</a>
+ &#8226;   <a href="#importlib.machinery">importlib.machinery</a>
  &#8226;   <a href="#sys">sys</a>
  &#8226;   <a href="#warnings">warnings</a>
 
@@ -8095,6 +8173,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#ctypes.util">ctypes.util</a>
+ &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib.abc">importlib.abc</a>
  &#8226;   <a href="#inspect">inspect</a>
  &#8226;   <a href="#pkgutil">pkgutil</a>
@@ -8476,6 +8555,7 @@ imported by:
  &#8226;   <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
  &#8226;   <a href="#infrastructure.csv_run_loader">infrastructure.csv_run_loader</a>
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
+ &#8226;   <a href="#infrastructure.limit_profile_repository">infrastructure.limit_profile_repository</a>
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
  &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
  &#8226;   <a href="#infrastructure.schema">infrastructure.schema</a>
@@ -8579,6 +8659,28 @@ imports:
   <div class="import">
 imported by:
     <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="infrastructure.limit_profile_repository"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/infrastructure/limit_profile_repository.py" type="text/plain"><tt>infrastructure.limit_profile_repository</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#config.app_config">config.app_config</a>
+ &#8226;   <a href="#configparser">configparser</a>
+ &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
+ &#8226;   <a href="#infrastructure">infrastructure</a>
+ &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#tempfile">tempfile</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
 
   </div>
 
@@ -9178,6 +9280,7 @@ imported by:
     <a href="#_pydecimal">_pydecimal</a>
  &#8226;   <a href="#asyncio.windows_events">asyncio.windows_events</a>
  &#8226;   <a href="#datetime">datetime</a>
+ &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#fractions">fractions</a>
  &#8226;   <a href="#openpyxl.compat.strings">openpyxl.compat.strings</a>
  &#8226;   <a href="#openpyxl.drawing.drawing">openpyxl.drawing.drawing</a>
@@ -14960,7 +15063,7 @@ imported by:
   <a target="code" href="" type="text/plain"><tt>org</tt></a>
 <span class="moduletype">MissingModule</span>  <div class="import">
 imported by:
-    <a href="#copy">copy</a>
+    <a href="#pickle">pickle</a>
 
   </div>
 
@@ -15022,6 +15125,7 @@ imported by:
  &#8226;   <a href="#importlib.resources.abc">importlib.resources.abc</a>
  &#8226;   <a href="#infrastructure.coc_export">infrastructure.coc_export</a>
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
+ &#8226;   <a href="#infrastructure.limit_profile_repository">infrastructure.limit_profile_repository</a>
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
  &#8226;   <a href="#infrastructure.support_log_writer">infrastructure.support_log_writer</a>
@@ -15144,6 +15248,7 @@ imported by:
  &#8226;   <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
  &#8226;   <a href="#infrastructure.csv_run_loader">infrastructure.csv_run_loader</a>
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
+ &#8226;   <a href="#infrastructure.limit_profile_repository">infrastructure.limit_profile_repository</a>
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
  &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
@@ -15165,14 +15270,14 @@ imported by:
   <a target="code" href="///C:/Users/Austin/AppData/Local/Programs/Python/Python311-32/Lib/pickle.py" type="text/plain"><tt>pickle</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#'org.python'">'org.python'</a>
- &#8226;   <a href="#_compat_pickle">_compat_pickle</a>
+    <a href="#_compat_pickle">_compat_pickle</a>
  &#8226;   <a href="#_pickle">_pickle</a>
  &#8226;   <a href="#codecs">codecs</a>
  &#8226;   <a href="#copyreg">copyreg</a>
  &#8226;   <a href="#functools">functools</a>
  &#8226;   <a href="#io">io</a>
  &#8226;   <a href="#itertools">itertools</a>
+ &#8226;   <a href="#org">org</a>
  &#8226;   <a href="#pprint">pprint</a>
  &#8226;   <a href="#re">re</a>
  &#8226;   <a href="#struct">struct</a>
@@ -17094,6 +17199,7 @@ imported by:
  &#8226;   <a href="#importlib.resources._common">importlib.resources._common</a>
  &#8226;   <a href="#infrastructure.coc_export">infrastructure.coc_export</a>
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
+ &#8226;   <a href="#infrastructure.limit_profile_repository">infrastructure.limit_profile_repository</a>
  &#8226;   <a href="#multiprocessing.connection">multiprocessing.connection</a>
  &#8226;   <a href="#multiprocessing.heap">multiprocessing.heap</a>
  &#8226;   <a href="#multiprocessing.synchronize">multiprocessing.synchronize</a>
@@ -17479,6 +17585,7 @@ imported by:
  &#8226;   <a href="#asyncio.timeouts">asyncio.timeouts</a>
  &#8226;   <a href="#domain.diagnostic_analysis">domain.diagnostic_analysis</a>
  &#8226;   <a href="#domain.diagnostic_trace">domain.diagnostic_trace</a>
+ &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
  &#8226;   <a href="#functools">functools</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
@@ -17556,11 +17663,31 @@ imported by:
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/ui/__init__.py" type="text/plain"><tt>ui</tt></a>
 <span class="moduletype">Package</span>  <div class="import">
 imported by:
-    <a href="#ui.hardware_status">ui.hardware_status</a>
+    <a href="#ui.admin_config">ui.admin_config</a>
+ &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
  &#8226;   <a href="#ui.support_logs">ui.support_logs</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ui.admin_config"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/ui/admin_config.py" type="text/plain"><tt>ui.admin_config</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
+ &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
+ &#8226;   <a href="#ui">ui</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
 
   </div>
 
@@ -17848,6 +17975,7 @@ imported by:
     <a href="#application.diagnostic_trace">application.diagnostic_trace</a>
  &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
  &#8226;   <a href="#application.support_logging">application.support_logging</a>
+ &#8226;   <a href="#domain.reference">domain.reference</a>
 
   </div>
 

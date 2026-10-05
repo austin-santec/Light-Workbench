@@ -40,7 +40,7 @@ The storage format should not determine how business logic represents data.
 
 The current CSV and JSON formats remain supported for compatibility. If a
 future schema changes, include a `schema_version` and provide a migration path.
-Run JSON currently uses schema version 1; unit JSON uses schema version 2.
+Run JSON currently uses schema version 3; unit JSON uses schema version 2.
 Migration helpers reject newer versions instead of silently dropping fields.
 
 ## Format responsibilities
@@ -61,6 +61,27 @@ Migration helpers reject newer versions instead of silently dropping fields.
 - XLSX: COC/report output only; it is not the primary application database.
 - Replacement analysis: calculated presentation data.
 - Manually recorded replacements and spares: persistent device data.
+
+## Reference authorization and audit model
+
+Reference values are not authorized merely because numbers appear in the main
+window. The application keeps a session-only reference state with these
+important states: not referenced, calculating, valid calculated, valid manual
+admin, and invalidated. A production run requires a valid state. Disconnecting
+or changing the measurement hardware invalidates the session and requires a new
+reference calculation.
+
+`Calculate Reference` creates an immutable snapshot containing a unique ID,
+both wavelength values, method, UTC timestamp, and connected meter/laser
+identity. Admin Mode can create a `manual_admin` snapshot only through the
+explicit `Apply Manual Reference` action. The normal reference fields are
+read-only; diagnostic tools may use temporary values, and only an explicit
+diagnostic Apply action can authorize a calculated diagnostic snapshot.
+
+Every accepted measurement stores the snapshot used for its IL calculation in
+JSON and in the extended CSV audit columns. The JSON also contains a unique
+run-level `reference_snapshots` history. Loaded historical references are
+displayed for audit context but never authorize new hardware acquisition.
 
 ## Persistence rules
 
@@ -108,3 +129,25 @@ The planned database extension is documented separately in
 `docs/DATABASE_ROADMAP.md`. The database design preserves this file-backed
 model: CSV and JSON remain available, accepted/written measurements are the
 analytical inputs, and replacement recommendations remain derived data.
+
+## Controlled quality criteria
+
+Production criteria are separate from hardware-driver configuration. The
+current profiles are stored at `%LOCALAPPDATA%\\LightWorkbench\\config\\limit_profiles.ini`
+and can be changed only through `Edit > Admin Mode...` followed by
+`Edit > Admin Config...`. Admin authorization is session-only and the
+password is never persisted or written to support logs.
+
+The shipped defaults are:
+
+| Model | Too-good warning | Optimization warning | Formal failure |
+| --- | ---: | ---: | ---: |
+| OSX-100 | below 0.2000 dB | not applicable | above 0.8000 dB |
+| OSX-150 | below 0.5000 dB | above 2.2500 dB | above 2.5000 dB |
+
+Equality at any boundary is not flagged. Too-good and optimization warnings
+do not turn a table row red or prevent writing a reading; only formal failures
+are red and are selected by the failure-selection control. Each new run stores
+the resolved model, profile name/revision, and all threshold values in its JSON
+criteria snapshot. Legacy run JSON remains readable through its original
+warning limit.

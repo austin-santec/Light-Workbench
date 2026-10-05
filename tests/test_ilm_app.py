@@ -281,7 +281,8 @@ class MainWindowTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            [action.text() for action in menus["Edit"].actions()], ["Keybinds..."]
+            [action.text() for action in menus["Edit"].actions()],
+            ["Keybinds...", "Admin Mode...", "Admin Config..."],
         )
         self.assertEqual(
             [action.text() for action in menus["Tools"].actions()],
@@ -308,6 +309,31 @@ class MainWindowTests(unittest.TestCase):
                 "Logging Status...",
             ],
         )
+        window.close()
+
+    def test_admin_config_is_locked_until_admin_mode(self):
+        window = MainWindow()
+        self.assertFalse(window.admin_config_action.isEnabled())
+        self.assertFalse(window.admin_session.is_active)
+        window.close()
+
+    def test_model_criteria_only_make_formal_failures_red(self):
+        window = MainWindow()
+        window.run_data = RunData(
+            Path("test-run"),
+            [
+                MeasurementRecord(1, 2.3, 2.3),
+                MeasurementRecord(2, 2.6, 2.0),
+            ],
+            {},
+            criteria_snapshot=window.limit_profiles["OSX-150"].as_dict(),
+        )
+        window.refresh_analysis()
+        self.assertEqual(window.metric_labels["optimization"].text(), "1")
+        self.assertEqual(window.metric_labels["over_limit"].text(), "1")
+        self.assertFalse(window.table.item(0, 0).background().style() != Qt.NoBrush)
+        expected_fail = "#5b1f25" if window.dark_mode_enabled else "#ffe1dc"
+        self.assertEqual(window.table.item(1, 0).background().color().name(), expected_fail)
         window.close()
 
     def test_switch_visa_address_setting_is_used_by_new_switches(self):
@@ -741,6 +767,8 @@ class MainWindowTests(unittest.TestCase):
 
                 window.hardware_connection_manager.connect_switch().result(timeout=2)
                 QTest.qWait(25)
+                self.assertFalse(window.start_hardware_button.isEnabled())
+                window.apply_calculated_reference(-0.04, 0.14)
                 self.assertTrue(window.start_hardware_button.isEnabled())
                 window.run_data = RunData(
                     Path("test-run"),
@@ -794,6 +822,34 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("Tested by", window.metadata_labels)
         window.close()
 
+    def test_production_reference_fields_are_locked_until_admin_mode(self):
+        window = MainWindow()
+        try:
+            self.assertTrue(window.reference_1310_spin.isReadOnly())
+            self.assertTrue(window.reference_1550_spin.isReadOnly())
+            self.assertFalse(window.apply_manual_reference_button.isEnabled())
+            window.admin_session.authenticate("lwb")
+            window._refresh_reference_controls()
+            self.assertFalse(window.reference_1310_spin.isReadOnly())
+            self.assertFalse(window.reference_1550_spin.isReadOnly())
+            self.assertTrue(window.apply_manual_reference_button.isEnabled())
+        finally:
+            window.close()
+
+    def test_manual_reference_requires_explicit_admin_apply(self):
+        window = MainWindow()
+        try:
+            window.admin_session.authenticate("lwb")
+            window._refresh_reference_controls()
+            window.reference_1310_spin.setValue(-0.04)
+            window.reference_1550_spin.setValue(0.14)
+            self.assertFalse(window.reference_session.is_valid)
+            window.apply_manual_reference()
+            self.assertTrue(window.reference_session.is_valid)
+            self.assertEqual(window.reference_session.snapshot.method, "manual_admin")
+        finally:
+            window.close()
+
     def test_start_run_uses_separate_metadata_and_reference_warnings(self):
         window = MainWindow()
         metadata_dialog = MagicMock()
@@ -805,28 +861,15 @@ class MainWindowTests(unittest.TestCase):
         ]
         metadata_dialog.clickedButton.return_value = metadata_continue
 
-        reference_dialog = MagicMock()
-        reference_return = object()
-        reference_continue = object()
-        reference_dialog.addButton.side_effect = [
-            reference_return,
-            reference_continue,
-        ]
-        reference_dialog.clickedButton.return_value = reference_continue
-
         with patch(
             "ilm_app.QMessageBox",
-            side_effect=[metadata_dialog, reference_dialog],
+            return_value=metadata_dialog,
         ):
             self.assertTrue(window.confirm_hardware_setup_complete())
 
         self.assertEqual(
             metadata_dialog.addButton.call_args_list[1].args[0],
             "Continue Without Metadata",
-        )
-        self.assertEqual(
-            reference_dialog.addButton.call_args_list[1].args[0],
-            "Continue Anyways",
         )
         window.close()
 

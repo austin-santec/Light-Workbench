@@ -23,6 +23,40 @@ class RunData:
     replacement_analysis: dict | None = None
     switch_test_sessions: list[dict] = field(default_factory=list)
     completed_replacements: list[dict] = field(default_factory=list)
+    criteria_snapshot: dict | None = None
+
+    def analysis_with_profile(self, profile) -> dict:
+        """Return model-specific quality counts for the active criteria."""
+        assessments = [
+            (record, profile.classify(record.loss_1310, record.loss_1550))
+            for record in self.measurements
+        ]
+        failed = [record for record, assessment in assessments if assessment.is_fail]
+        fail_1310 = [record.channel for record, assessment in assessments if 1310 in assessment.fail_wavelengths]
+        fail_1550 = [record.channel for record, assessment in assessments if 1550 in assessment.fail_wavelengths]
+        fail_both = [
+            record.channel for record, assessment in assessments
+            if 1310 in assessment.fail_wavelengths and 1550 in assessment.fail_wavelengths
+        ]
+        return {
+            "limit": profile.fail_above_db,
+            "total": len(self.measurements),
+            "over_limit": len(failed),
+            "over_1310": len(fail_1310),
+            "over_1310_channels": fail_1310,
+            "over_1550": len(fail_1550),
+            "over_1550_channels": fail_1550,
+            "over_both": len(fail_both),
+            "over_both_channels": fail_both,
+            "too_good": sum(1 for _, assessment in assessments if assessment.is_too_good),
+            "too_good_channels": [record.channel for record, assessment in assessments if assessment.is_too_good],
+            "optimization": sum(1 for _, assessment in assessments if assessment.is_optimization and not assessment.is_fail),
+            "optimization_channels": [record.channel for record, assessment in assessments if assessment.is_optimization and not assessment.is_fail],
+            "failed": len(failed),
+            "fail_1310": len(fail_1310),
+            "fail_1550": len(fail_1550),
+            "fail_both": len(fail_both),
+        }
 
     def over_limit(self, limit: float) -> list[MeasurementRecord]:
         """Return channels exceeding the limit at either wavelength."""

@@ -5,7 +5,17 @@ This is a simple working checklist based on the detailed assessment in
 Refer to the full document when you need the exact requirement wording,
 implementation evidence, or technical details.
 
-Last synchronized with the requirements assessment: **2026-10-02**.
+Last synchronized with the requirements assessment: **2026-10-05**.
+
+Reference enforcement update: FUN-012 and FUN-013 are complete in version
+1.16.0. Production runs require a valid calculated or explicitly
+Admin-authorized manual reference. Each accepted reading stores the immutable
+reference snapshot used for its calculation, and legacy loaded references are
+review-only until a new reference is established.
+
+Implementation note: model-specific controlled criteria and session-only Admin
+Mode are now implemented. The detailed requirement counts above should be
+re-audited against the full requirements document before a formal release.
 
 ## Quick status
 

@@ -33,6 +33,7 @@ class HardwareRunRequest:
     live_write_interval: float = LIVE_WRITE_INTERVAL_SECONDS
     support_logger: object | None = None
     workflow_id: str = ""
+    reference_snapshot: Mapping[str, object] | None = None
 
 
 class HardwareRunController(QObject):

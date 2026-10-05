@@ -121,6 +121,19 @@ def find_run_json_path(csv_path):
     return same_named_path
 
 
+def _reference_snapshots(measurements):
+    """Return unique per-reading reference snapshots for the run audit."""
+    snapshots = {}
+    for record in measurements:
+        reference = record.reference_snapshot
+        if not isinstance(reference, dict):
+            continue
+        snapshot_id = str(reference.get("snapshot_id") or "")
+        if snapshot_id:
+            snapshots[snapshot_id] = dict(reference)
+    return list(snapshots.values())
+
+
 class RunRecorder:
     """Write the current table and run-level timing metadata to disk."""
 
@@ -129,12 +142,14 @@ class RunRecorder:
         root: str | Path | None = None,
         metadata=None,
         limit=2.0,
+        criteria_snapshot=None,
         directory: str | Path | None = None,
         support_logger=None,
     ):
         self.metadata = dict(metadata or {})
         self.support_logger = support_logger
         self.limit = float(limit)
+        self.criteria_snapshot = dict(criteria_snapshot) if criteria_snapshot else None
         self._fixed_directory = directory is not None
         if directory is not None:
             self.directory = Path(directory)
@@ -162,6 +177,7 @@ class RunRecorder:
         csv_path: str | Path,
         metadata=None,
         limit=2.0,
+        criteria_snapshot=None,
         attempts=None,
         replacement_analysis=None,
         switch_test_sessions=None,
@@ -177,6 +193,7 @@ class RunRecorder:
         recorder.json_path = find_run_json_path(recorder.csv_path)
         recorder.metadata = dict(metadata or {})
         recorder.limit = float(limit)
+        recorder.criteria_snapshot = dict(criteria_snapshot) if criteria_snapshot else None
         recorder.attempts = list(attempts or [])
         recorder.replacement_analysis = replacement_analysis
         recorder.switch_test_sessions = list(switch_test_sessions or [])
@@ -234,6 +251,8 @@ class RunRecorder:
             ),
             "run_number": stored_metadata.get("Run number"),
             "warning_limit_db": self.limit,
+            "criteria": self.criteria_snapshot,
+            "reference_snapshots": _reference_snapshots(measurements),
             "metadata": stored_metadata,
             "measurements": [
                 {
@@ -241,6 +260,7 @@ class RunRecorder:
                     "physical_port": record.physical_port,
                     "loss_1310_db": record.loss_1310,
                     "loss_1550_db": record.loss_1550,
+                    "reference": record.reference_snapshot,
                 }
                 for record in measurements
             ],
@@ -423,7 +443,32 @@ class RunRecorder:
                 for index in range(row_count):
                     measurement = rows[index] if index < len(rows) else ["", "", ""]
                     metadata = metadata_rows[index] if index < len(metadata_rows) else ["", ""]
-                    writer.writerow(measurement + [""] + metadata)
+                    if index == 0:
+                        writer.writerow(
+                            measurement
+                            + [""]
+                            + metadata
+                            + [
+                                "",
+                                "Reference 1310 dBm",
+                                "Reference 1550 dBm",
+                                "Reference method",
+                                "Reference timestamp",
+                                "Reference snapshot ID",
+                            ]
+                        )
+                        continue
+                    reference = None
+                    if index > 0 and index - 1 < len(measurements):
+                        reference = measurements[index - 1].reference_snapshot
+                    reference_columns = [
+                        "%.2f" % reference["reference_1310_dbm"],
+                        "%.2f" % reference["reference_1550_dbm"],
+                        reference.get("method", ""),
+                        reference.get("established_at", ""),
+                        reference.get("snapshot_id", ""),
+                    ] if isinstance(reference, dict) else ["", "", "", "", ""]
+                    writer.writerow(measurement + [""] + metadata + [""] + reference_columns)
                 csv_file.flush()
                 os.fsync(csv_file.fileno())
             os.replace(temporary_path, self.csv_path)

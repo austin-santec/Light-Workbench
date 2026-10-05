@@ -24,11 +24,20 @@ At startup, the program offers three workflows:
 Repeated channels are tested only once. For example, `1, 1-3` tests channels
 1, 2, and 3 rather than testing channel 1 twice.
 
+Quality criteria are selected from the connected OSX-100 or OSX-150 model.
+OSX-100 uses a 0.8 dB formal-failure limit with no optimization-warning band;
+OSX-150 uses a 2.25 dB optimization warning and a 2.5 dB formal-failure
+limit. Too-good checks are below 0.2 dB and 0.5 dB. These criteria are
+read-only during normal testing and are stored with each new run.
+Administrators can change them through Edit > Admin Mode... and Edit > Admin
+Config...; the admin session is not persisted.
+
 For every channel, it can:
 
 - Automatically route the connected OSX-100/OSX-150 to the requested logical channel.
 - Measure absolute power at 1310 nm and 1550 nm.
-- Calculate insertion loss using reference values entered by the operator.
+- Calculate insertion loss using an explicit calculated reference session; only
+  Admin Mode can authorize a manually entered production reference.
 - Display both insertion-loss values before saving them.
 - Accept the displayed reading with Enter.
 - Discard and retest the same channel by entering `-` and pressing Enter.
@@ -228,7 +237,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.14.0**; an existing executable keeps its prior
+current source version is **1.16.0**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
@@ -309,8 +318,11 @@ ILM wavelength matches the requested wavelength. A difference in the DLL's
 diagnostic index/count convention alone does not stop the run when the actual
 wavelength is correct; diagnostics retain those raw values as warnings.
 
-The 1310 nm and 1550 nm reference powers are configurable in the desktop
-setup panel. A real full-pass run queries the OSX-150 for its configured
+The 1310 nm and 1550 nm reference powers are displayed in the desktop setup
+panel. Normal operators cannot edit or authorize them directly. Use
+`Calculate Reference` with connected measurement hardware; Admin Mode provides
+an explicit `Apply Manual Reference` action for controlled exceptions. A real
+full-pass run queries the OSX-150 for its configured
 logical channel count instead of relying on the simulation channel setting.
 
 Before starting real hardware, the setup panel supports a full configured
@@ -319,11 +331,10 @@ the main-board serial, switch serial, operating band, and operator initials in
 the run metadata.
 
 Before `Start Run` can be clicked, use **Connect Hardware...** to connect all
-required hardware. `Calculate Reference` requires only connected measurement
-hardware. When `Start Run` is clicked, Light Workbench separately checks for missing
-setup metadata and warns when both reference values are `0.00`. Each warning
-allows the operator to return to setup or continue without metadata/with the
-entered reference values.
+required hardware and establish a valid reference. `Calculate Reference`
+requires only connected measurement hardware. A production run cannot start
+until a valid calculated or explicitly authorized Admin Mode reference exists.
+Missing setup metadata is still handled by its separate metadata prompt.
 For initial hardware validation, use the one-channel or short-range modes.
 
 The setup panel only shows the selector needed by the chosen channel mode:
@@ -592,7 +603,7 @@ Then follow these steps:
 4. Enter the main board serial, or press Enter to leave it blank.
 5. Enter the switch serial, or press Enter to leave it blank. The field accepts
    any length and does not require the value to be numeric.
-6. Enter the ILM's current 1310 nm and 1550 nm reference powers in dBm.
+6. Connect measurement hardware and select `Calculate Reference`.
 7. The program connects to the ILM.
 8. Move the cable to the channel shown in the prompt and press Enter.
 9. Review the displayed 1310 nm and 1550 nm insertion losses.
@@ -609,9 +620,10 @@ selector. Ordered full passes also ask whether to continue sequentially from the
 new channel or resume the interrupted channel afterward. Previously saved data
 is preserved until a replacement reading is written.
 
-At a reference prompt, pressing Enter without typing a number uses the default
-shown in square brackets. Entering the actual references for the current setup
-is recommended.
+Each accepted reading stores the immutable reference snapshot used for its
+calculation, including values, method, timestamp, snapshot ID, and connected
+measurement-device identity. Loading an old run displays its historical
+reference for review but never authorizes it for a new acquisition.
 
 ## How insertion loss is calculated
 

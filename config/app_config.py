@@ -35,6 +35,13 @@ def fallback_support_log_root() -> Path:
     return Path(tempfile.gettempdir()) / "LightWorkbench" / "logs"
 
 
+def default_limit_profile_path() -> Path:
+    """Return the per-user administrator profile location."""
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    base = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
+    return base / "LightWorkbench" / "config" / "limit_profiles.ini"
+
+
 @dataclass(frozen=True)
 class AppPaths:
     """Paths shared by the desktop app and deployment tools."""
@@ -45,6 +52,7 @@ class AppPaths:
     coc_template_filename: str = COC_TEMPLATE_FILENAME
     support_log_root: Path = default_support_log_root()
     support_log_fallback_root: Path = fallback_support_log_root()
+    limit_profile_path: Path = default_limit_profile_path()
 
     @property
     def coc_template_path(self) -> Path:

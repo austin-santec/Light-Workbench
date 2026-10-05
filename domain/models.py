@@ -109,6 +109,7 @@ class MeasurementRecord:
     loss_1310: float
     loss_1550: float
     physical_port: int | None = None
+    reference_snapshot: dict | None = None
 
 
 @dataclass(frozen=True)
