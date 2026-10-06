@@ -38,6 +38,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\admin_session.py',
    'PYMODULE'),
+  ('application.coc_workflow',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\coc_workflow.py',
+   'PYMODULE'),
   ('application.diagnostic_trace',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\diagnostic_trace.py',
@@ -289,6 +293,10 @@
   ('domain',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\__init__.py',
+   'PYMODULE'),
+  ('domain.coc_preparation',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\coc_preparation.py',
    'PYMODULE'),
   ('domain.comparison',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -1425,6 +1433,10 @@
   ('ui.admin_config',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\admin_config.py',
+   'PYMODULE'),
+  ('ui.coc_export_dialog',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\coc_export_dialog.py',
    'PYMODULE'),
   ('ui.hardware_status',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '

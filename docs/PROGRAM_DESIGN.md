@@ -100,6 +100,19 @@ used for their calculation.
 selection, and normalization of manually recorded replacements. It is kept
 independent of Qt, hardware adapters, and CSV/JSON file formats.
 
+`domain/coc_preparation.py` owns the report-publication boundary. It merges one
+explicit base run with at most one explicit replacement/retest run, preserves
+whole two-wavelength samples and provenance, validates physical-port changes
+against completed replacements, requires every front-panel channel, applies
+the strict `< 2.5000 dB` COC rule, and derives non-blocking optimization
+recommendations. It has no Qt, filesystem, workbook, or hardware dependency.
+
+`application/coc_workflow.py` loads candidate runs through repository
+interfaces and hydrates JSON-only physical-port and criteria details. The
+`ui/coc_export_dialog.py` dialog owns only source selection and validation
+presentation. Neither layer edits source measurements or creates a synthetic
+combined run.
+
 `infrastructure/run_repository.py` is the application-facing boundary for
 file-backed CSV/JSON run storage and numbered-run lookup. The established
 `run_data.py` and `run_persistence.py` import paths remain compatibility
@@ -144,8 +157,9 @@ recording, continuation renaming, and legacy JSON loading. The root
 paths, and normalization of shared replacements and designated spares. The
 root `unit_persistence.py` module remains a compatibility facade.
 
-`infrastructure/coc_export.py` owns template lookup, COC workbook creation,
-merged-cell mapping, and preservation of the template's drawing package. The
+`infrastructure/coc_export.py` owns capacity-aware template validation, COC
+workbook creation, merged-cell/row cleanup, print-area adjustment, and
+preservation of the template's drawing package. The
 root `coc_export.py` module remains a compatibility facade, while
 `infrastructure/coc_exporter.py` remains the application-facing adapter.
 

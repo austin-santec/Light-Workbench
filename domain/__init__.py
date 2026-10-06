@@ -2,6 +2,13 @@
 
 from .measurement import calculate_insertion_loss
 from .raw_export import format_raw_measurements
+from .coc_preparation import (
+    CocPreparationResult,
+    CocPreparedChannel,
+    CocSourceRun,
+    infer_front_panel_channel_count,
+    prepare_coc,
+)
 from .run_data import RunData
 from .reference import calculate_reference_offsets
 from .reporting import (
@@ -37,6 +44,11 @@ __all__ = [
     "ChannelMode",
     "calculate_insertion_loss",
     "format_raw_measurements",
+    "CocPreparationResult",
+    "CocPreparedChannel",
+    "CocSourceRun",
+    "infer_front_panel_channel_count",
+    "prepare_coc",
     "RunData",
     "calculate_reference_offsets",
     "RunSummary",

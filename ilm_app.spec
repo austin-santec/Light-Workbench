@@ -11,7 +11,11 @@ a = Analysis(
     binaries=[(str(project_root / "OP815M.dll"), ".")],
     datas=[
         (
-            str(project_root / "Templates" / "OSX-100 Single Mode COC Template 1.xlsx"),
+            str(project_root / "Templates" / "OSX-150 Single Mode COC Template 2 (45max).xlsx"),
+            "Templates",
+        ),
+        (
+            str(project_root / "Templates" / "OSX-150 Single Mode COC Template 1 (48max).xlsx"),
             "Templates",
         ),
         (

@@ -6,12 +6,17 @@ import re
 import shutil
 import tempfile
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from config.app_config import COC_TEMPLATE_FILENAME, DEFAULT_PART_LOOKUP_ROOT
+from config.app_config import (
+    COC_TEMPLATE_45_FILENAME,
+    COC_TEMPLATE_48_FILENAME,
+    COC_TEMPLATE_FILENAME,
+    DEFAULT_PART_LOOKUP_ROOT,
+)
 
 _INVALID_FILENAME_CHARACTERS = re.compile(r'[<>:"/\\|?*]')
 
@@ -65,24 +70,102 @@ def _safe_filename_component(value):
     return component or "Unknown"
 
 
-def _next_output_path(directory, serial):
+def _next_output_path(directory, serial, export_timestamp=None):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    base_name = "COC OSX-150 %s.xlsx" % _safe_filename_component(serial)
+    timestamp = (export_timestamp or datetime.now()).strftime("%y%m%d-%H%M%S")
+    serial_component = _safe_filename_component(serial)
+    base_name = "COC OSX-150 %s_%s.xlsx" % (serial_component, timestamp)
     output_path = directory / base_name
     suffix = 2
     while output_path.exists():
         output_path = directory / (
-            "COC OSX-150 %s (%d).xlsx"
-            % (_safe_filename_component(serial), suffix)
+            "COC OSX-150 %s_%s (%d).xlsx"
+            % (serial_component, timestamp, suffix)
         )
         suffix += 1
     return output_path
 
 
-def _measurement_rows():
-    """Return the COC rows for logical channels 1 through 48."""
-    return list(range(11, 56)) + list(range(67, 70))
+def measurement_rows(template_capacity=48):
+    """Return the expected logical-channel rows for a template capacity."""
+    if int(template_capacity) == 45:
+        return list(range(11, 56))
+    if int(template_capacity) == 48:
+        return list(range(11, 56)) + list(range(67, 70))
+    raise ValueError("COC template capacity must be 45 or 48 channels.")
+
+
+def template_filename_for_channel_count(channel_count):
+    """Return the approved OSX-150 template name for a front-panel count."""
+    count = int(channel_count)
+    if not 1 <= count <= 48:
+        raise ValueError("Front-panel channel count must be between 1 and 48.")
+    return COC_TEMPLATE_45_FILENAME if count <= 45 else COC_TEMPLATE_48_FILENAME
+
+
+def inspect_coc_template_capacity(template_path):
+    """Validate the expected sheet/channel map and return capacity 45 or 48."""
+    try:
+        from openpyxl import load_workbook
+    except ImportError as error:
+        raise RuntimeError(
+            "The XLSX COC exporter requires the openpyxl package."
+        ) from error
+
+    path = Path(template_path)
+    if not path.is_file():
+        raise FileNotFoundError("The COC template was not found:\n%s" % path)
+    workbook = load_workbook(path, read_only=False, data_only=False)
+    try:
+        if "OSX Template" not in workbook.sheetnames:
+            raise ValueError("The COC template does not contain an 'OSX Template' sheet.")
+        sheet = workbook["OSX Template"]
+        for channel, row in enumerate(range(11, 56), start=1):
+            if sheet["B%d" % row].value != channel:
+                raise ValueError(
+                    "The COC template has an invalid channel map at channel %d."
+                    % channel
+                )
+        second_section = [sheet["B%d" % row].value for row in range(67, 70)]
+        if second_section == [46, 47, 48]:
+            return 48
+        if all(value in (None, "") for value in second_section):
+            return 45
+        raise ValueError(
+            "The COC template must support either channels 1-45 or channels 1-48."
+        )
+    finally:
+        workbook.close()
+
+
+def _trim_report_rows(sheet, channel_count, template_capacity):
+    """Remove unused report rows while explicitly repairing merged ranges."""
+    if template_capacity == 45:
+        last_row = 10 + channel_count
+    else:
+        last_row = 66 + (channel_count - 45)
+
+    for merged_range in list(sheet.merged_cells.ranges):
+        if merged_range.min_row > last_row:
+            sheet.unmerge_cells(str(merged_range))
+            continue
+        if merged_range.max_row > last_row:
+            min_col = merged_range.min_col
+            max_col = merged_range.max_col
+            min_row = merged_range.min_row
+            sheet.unmerge_cells(str(merged_range))
+            if min_row < last_row or min_col < max_col:
+                sheet.merge_cells(
+                    start_row=min_row,
+                    start_column=min_col,
+                    end_row=last_row,
+                    end_column=max_col,
+                )
+
+    if sheet.max_row > last_row:
+        sheet.delete_rows(last_row + 1, sheet.max_row - last_row)
+    sheet.print_area = "$B$1:$H$%d" % last_row
 
 
 def _restore_template_drawings(template_path, output_path):
@@ -275,6 +358,8 @@ def export_coc(
     main_board_serial,
     export_date=None,
     tested_by="",
+    front_panel_channel_count=48,
+    export_timestamp=None,
 ):
     """Create a COC XLSX copy while preserving non-output template cells."""
     try:
@@ -293,8 +378,22 @@ def export_coc(
         raise ValueError("Enter or look up a Part Number before writing the COC.")
     if not serial:
         raise ValueError("Enter a Main Board serial number before writing the COC.")
+    channel_count = int(front_panel_channel_count)
+    if not 1 <= channel_count <= 48:
+        raise ValueError("Front-panel channel count must be between 1 and 48.")
+    template_capacity = inspect_coc_template_capacity(template)
+    required_capacity = 45 if channel_count <= 45 else 48
+    if template_capacity < required_capacity:
+        raise ValueError(
+            "The selected COC template supports only %d channels; %d are required."
+            % (template_capacity, channel_count)
+        )
 
-    output_path = _next_output_path(output_directory, serial)
+    output_path = _next_output_path(
+        output_directory,
+        serial,
+        export_timestamp=export_timestamp,
+    )
     temporary_file = tempfile.NamedTemporaryFile(
         prefix=".coc-",
         suffix=".xlsx",
@@ -321,12 +420,16 @@ def export_coc(
         records_by_channel = {
             record.channel: record
             for record in measurements
-            if 1 <= record.channel <= 48
+            if 1 <= record.channel <= channel_count
         }
-        for channel, row in enumerate(_measurement_rows(), start=1):
+        for channel, row in enumerate(measurement_rows(template_capacity), start=1):
+            if channel > channel_count:
+                break
             record = records_by_channel.get(channel)
             sheet["D%d" % row] = record.loss_1310 if record else None
             sheet["E%d" % row] = record.loss_1550 if record else None
+
+        _trim_report_rows(sheet, channel_count, template_capacity)
 
         workbook.save(temporary_path)
         workbook.close()
@@ -343,9 +446,14 @@ def export_coc(
 
 
 __all__ = [
+    "COC_TEMPLATE_45_FILENAME",
+    "COC_TEMPLATE_48_FILENAME",
     "COC_TEMPLATE_FILENAME",
     "DEFAULT_PART_LOOKUP_ROOT",
     "export_coc",
     "find_part_number",
+    "inspect_coc_template_capacity",
+    "measurement_rows",
     "normalise_serial",
+    "template_filename_for_channel_count",
 ]

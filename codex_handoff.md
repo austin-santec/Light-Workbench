@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.17.0**. The single
+The current source release is **Light Workbench 1.18.1**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -60,6 +60,8 @@ support logs coalesce consecutive invalid samples into start/end episodes.
 | application/ | Workflow controllers, measurement worker, planning, and transient hardware-run state. |
 | domain/ | Vendor-neutral models, calculations, replacement rules, timing, and reporting. |
 | domain/raw_export.py | Pure Excel-compatible TSV formatting for accepted run measurements; it does not persist data. |
+| domain/coc_preparation.py | Pure COC source compatibility, merge, completeness, threshold, physical-port, and optimization validation. |
+| application/coc_workflow.py | Discovers persisted unit runs, hydrates report source data, and delegates COC preparation without reading UI widgets. |
 | domain/diagnostic_analysis.py | In-memory diagnostic samples and separate repeatability/stability statistics. |
 | domain/diagnostic_trace.py | Typed in-memory diagnostic hardware trace event model. |
 | application/diagnostic_trace.py | Thread-safe recorder for optional diagnostic trace events. |
@@ -83,6 +85,7 @@ support logs coalesce consecutive invalid samples into start/end episodes.
 | red_light_test.py | Compatibility facade for the Red Light presentation module. |
 | ui/live_il_reading.py | Meter-only Live IL Reading dialog. It connects only to the OP815, calculates both wavelength losses from editable references, supports non-persistent reconnect repeatability testing and timed live updates, and never controls the switch or persists data. |
 | ui/power_measurement_diagnostics.py | Non-recording raw-power diagnostic dialog showing absolute readings and exact IL math, with optional independent switch routing and opt-in trace export. |
+| ui/coc_export_dialog.py | Prepare COC modal for front-panel count, explicit base/supplemental run selection, validation summary, and blocked-export guidance. |
 | live_il_reading.py | Compatibility facade for the Live IL presentation module. |
 | config/app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
 | app_info.py | Compatibility facade for application release metadata. |
@@ -260,12 +263,19 @@ headerless tab-separated logical-channel, 1310 nm IL, and 1550 nm IL values
 for direct pasting into an existing Excel table. It ignores the table filter,
 excludes pending/live readings and metadata, and does not create or modify run
 files.
-11. COC export is available after a hardware completion, stop, or failure with
-a run, and from the controls/File menu. It accepts partial and over-limit data;
-missing logical channels stay blank. `infrastructure/coc_export.py` copies the bundled XLSX
-template and writes the `OSX Template` sheet's split rows, Part Number, Main
-Board serial, and date while preserving other workbook content. It uses
-`openpyxl`, so Excel is not required. The default part lookup is
+11. COC export uses a validated preparation workflow over persisted run data.
+The operator enters the front-panel channel count, chooses one base run, and
+may choose one compatible replacement/retest run. Supplemental complete pairs
+override the base by logical channel only when any changed physical port is
+supported by a completed unit replacement record. Every required channel must
+be present, finite, nonnegative, and strictly below 2.5000 dB after display
+rounding; there is no incomplete or failing override. Eligible channels above
+2.25 dB trigger an optimization confirmation only when a viable measured spare
+recommendation exists. `infrastructure/coc_export.py` selects the bundled 45-
+or 48-channel XLSX template, writes the `OSX Template` sheet's split rows and
+metadata, deletes unused report rows in the output copy, repairs merged ranges,
+and updates the print area. It uses `openpyxl`, so Excel is not required. The
+default part lookup is
 `U:\Product Log\Units-COCs-Param Files\OSX-150`. `File > Part Number Lookup
 Folder` opens that fixed location in Windows File Explorer; it is not editable
 from the application.
@@ -412,11 +422,15 @@ for that run's 1310 nm and 1550 nm values, matched by logical channel. Selecting
 run's analysis, filtering, or saved output.
 
 COC export metadata includes `Part number`, `COC output file`, `COC output
-path`, `COC exported at`, and `COC template`. The current XLSX mapping is
+path`, `COC exported at`, `COC template`, front-panel channel count, base and
+supplemental run numbers, source runs, and supplemental channel/physical-port
+overrides. The current XLSX mapping is
 `OSX Template!D11:D55` and `E11:E55` for channels 1-45,
 `D67:D69` and `E67:E69` for channels 46-48, `B4` for the merged part-number
 cell, `D4` for the merged Main Board serial cell, `F4` for the date, and `G4`
-for the Tested by initials.
+for the Tested by initials. COC filenames use the local-time pattern
+`COC OSX-150 <Main Board serial>_YYMMDD-HHMMSS.xlsx`, with a numeric suffix
+when a same-second export collides.
 
 ## Known issues and inconsistencies
 
@@ -461,9 +475,10 @@ the application provides a configurable folder and manual part-number fallback.
 
 Completed in the inspected environment:
 
-- python -m unittest discover -s tests: 265 tests passed, including support-log
+- python -m unittest discover -s tests: 342 tests passed, including support-log
   rotation, retention, redaction, fallback, trace fan-out, support bundles,
-  hardware connection safety, persistence, XLSX mapping, and UI coverage.
+  hardware connection safety, persistence, COC preparation/merge validation,
+  XLSX row trimming, and UI coverage.
 - python -m compileall -q -f .: passed.
 - py -3.11-32 -m unittest discover -v: could not start because the Python
   launcher did not recognize the installed interpreter, despite the direct

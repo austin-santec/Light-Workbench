@@ -12,7 +12,9 @@ from PyQt5.QtWidgets import QApplication, QDialog, QMessageBox
 from PyQt5.QtCore import QEventLoop, QObject, QTimer, Qt, pyqtSignal
 from PyQt5.QtTest import QTest
 
+from application.coc_workflow import CocRunOption
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
+from domain.coc_preparation import CocSourceRun, prepare_coc
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
 from ilm_app import (
     AboutDialog,
@@ -1340,20 +1342,157 @@ class MainWindowTests(unittest.TestCase):
         window.close()
 
     def test_coc_controls_require_at_least_one_written_measurement(self):
-        window = MainWindow()
-        window.run_data = RunData(Path("test-run"), [], {})
-        window.refresh_coc_controls()
-        self.assertEqual(window.copy_raw_data_button.text(), "Copy Raw Data...")
-        self.assertFalse(window.write_coc_button.isEnabled())
-        self.assertFalse(window.copy_raw_data_button.isEnabled())
-        self.assertFalse(window.write_coc_action.isEnabled())
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Run-1.csv"
+            window = MainWindow()
+            window.run_data = RunData(path, [], {})
+            window.refresh_coc_controls()
+            self.assertEqual(window.copy_raw_data_button.text(), "Copy Raw Data...")
+            self.assertFalse(window.write_coc_button.isEnabled())
+            self.assertFalse(window.copy_raw_data_button.isEnabled())
+            self.assertFalse(window.write_coc_action.isEnabled())
 
-        window.run_data.measurements.append(MeasurementRecord(1, 1.0, 1.1))
-        window.refresh_coc_controls()
-        self.assertTrue(window.write_coc_button.isEnabled())
-        self.assertTrue(window.copy_raw_data_button.isEnabled())
-        self.assertTrue(window.write_coc_action.isEnabled())
-        window.close()
+            window.run_data.measurements.append(MeasurementRecord(1, 1.0, 1.1))
+            window.refresh_coc_controls()
+            self.assertFalse(window.write_coc_button.isEnabled())
+            self.assertTrue(window.copy_raw_data_button.isEnabled())
+
+            path.write_text("channel,1310 IL,1550 IL\n1,1.0000,1.1000\n", encoding="utf-8")
+            window.refresh_coc_controls()
+            self.assertTrue(window.write_coc_button.isEnabled())
+            self.assertTrue(window.write_coc_action.isEnabled())
+            window.close()
+
+    def test_write_coc_uses_persisted_preparation_without_hardware(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_path = Path(directory) / "Run-1.csv"
+            metadata = {
+                "Run number": "1",
+                "Main board serial": "MB1",
+                "Part number": "OSX-150-1A-001-09-FA-00B-1H",
+                "Switch serial": "SW1",
+                "Operating band": "O band",
+                "Tested by": "AJ",
+            }
+            criteria = {
+                "model": "OSX-150",
+                "warning_enabled": True,
+                "warning_above_db": 2.25,
+                "fail_above_db": 2.5,
+            }
+            source = CocSourceRun(
+                1,
+                run_path,
+                (
+                    MeasurementRecord(1, 2.3, 2.2, 1),
+                    MeasurementRecord(2, 0.8, 0.9, 2),
+                ),
+                metadata,
+                criteria,
+            )
+            result = prepare_coc(source, 1)
+            self.assertTrue(result.optimization_recommendations)
+
+            class AcceptedDialog:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_result = result
+                    self.base_run = source
+
+                def exec_(self):
+                    return QDialog.Accepted
+
+            window = MainWindow()
+            window.run_data = RunData(
+                run_path,
+                list(source.measurements),
+                dict(metadata),
+                criteria_snapshot=dict(criteria),
+            )
+            output_path = Path(directory) / "COC OSX-150 MB1.xlsx"
+            window.coc_exporter.export = MagicMock(return_value=output_path)
+
+            with patch.object(
+                window,
+                "_coc_run_options",
+                return_value=[CocRunOption(source)],
+            ), patch("ilm_app.CocExportDialog", AcceptedDialog), patch.object(
+                window,
+                "_select_coc_template",
+                return_value=Path(directory) / "template.xlsx",
+            ), patch.object(
+                window,
+                "_confirm_coc_optimization",
+                return_value=True,
+            ) as confirm, patch.object(
+                window,
+                "_persist_coc_export_metadata",
+            ) as persist, patch("ilm_app.QMessageBox.information"):
+                window.write_coc()
+
+            window.coc_exporter.export.assert_called_once()
+            self.assertEqual(
+                window.coc_exporter.export.call_args.kwargs["front_panel_channel_count"],
+                1,
+            )
+            confirm.assert_called_once_with(result)
+            persist.assert_called_once()
+            self.assertFalse(window.hardware_controller.is_active)
+            window.close()
+
+    def test_return_from_optimization_warning_creates_no_workbook(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_path = Path(directory) / "Run-1.csv"
+            metadata = {
+                "Run number": "1",
+                "Main board serial": "MB1",
+                "Part number": "OSX-150-1A-001-09-FA-00B-1H",
+                "Switch serial": "SW1",
+                "Operating band": "O band",
+            }
+            criteria = {
+                "model": "OSX-150",
+                "warning_enabled": True,
+                "warning_above_db": 2.25,
+                "fail_above_db": 2.5,
+            }
+            source = CocSourceRun(
+                1,
+                run_path,
+                (
+                    MeasurementRecord(1, 2.3, 2.2, 1),
+                    MeasurementRecord(2, 0.8, 0.9, 2),
+                ),
+                metadata,
+                criteria,
+            )
+            result = prepare_coc(source, 1)
+            self.assertTrue(result.optimization_recommendations)
+
+            class AcceptedDialog:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_result = result
+                    self.base_run = source
+
+                def exec_(self):
+                    return QDialog.Accepted
+
+            window = MainWindow()
+            window.run_data = RunData(run_path, list(source.measurements), dict(metadata))
+            window.coc_exporter.export = MagicMock()
+
+            with patch.object(
+                window,
+                "_coc_run_options",
+                return_value=[CocRunOption(source)],
+            ), patch("ilm_app.CocExportDialog", AcceptedDialog), patch.object(
+                window,
+                "_confirm_coc_optimization",
+                return_value=False,
+            ):
+                window.write_coc()
+
+            window.coc_exporter.export.assert_not_called()
+            window.close()
 
     def test_copy_raw_data_uses_all_written_rows_not_visible_filter(self):
         window = MainWindow()

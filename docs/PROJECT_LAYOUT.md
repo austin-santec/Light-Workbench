@@ -50,6 +50,9 @@ be used as source locations. The release scripts keep deployment output in
   `application/hardware_connection.py` and `domain/hardware_connection.py`.
 - Calculations, validation, and rules that do not need Qt or hardware:
   `domain/`.
+- Multi-run COC merging and publication rules: `domain/coc_preparation.py`;
+  repository coordination: `application/coc_workflow.py`; operator selection:
+  `ui/coc_export_dialog.py`; workbook mechanics: `infrastructure/coc_export.py`.
 - Model-specific insertion-loss criteria: `domain/limit_profiles.py`.
 - Vendor-neutral contracts and composed hardware lifecycle: `hardware/`.
 - Hardware identity/status presentation: `hardware/device_identity.py` and

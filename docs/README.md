@@ -66,6 +66,12 @@ performs a final wavelength verification immediately before `ReadPower`; an
 unsupported or actual-wavelength mismatch blocks the diagnostic sample. Raw
 index/count convention differences are retained as trace warnings.
 
+Final COC output is prepared from persisted run data rather than the visible
+table. The operator selects a front-panel count, a base run, and optionally one
+compatible replacement/retest run. Export is blocked for missing, invalid, or
+formally failing values; the generated workbook uses the appropriate bundled
+45- or 48-channel OSX-150 template and removes rows beyond the selected count.
+
 The normal window includes a compact Connected hardware panel and a
 `Connect Hardware...` split/menu button in the top header. The main action
 connects everything required for a run; menu actions connect or disconnect

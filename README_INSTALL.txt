@@ -69,7 +69,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.17.0; an existing executable keeps its prior version until rebuilt.
+1.18.1; an existing executable keeps its prior version until rebuilt.
 
 
 3. VERIFY VISA
@@ -198,8 +198,17 @@ from another numbered run for the same unit. Choose No comparison to hide those
 columns again. Comparison data is display-only and does not change analysis or
 saved run files.
 
-The Write COC... option can write partial or complete readings to a copied XLSX
-COC template. Excel does not need to be installed. For automatic part-number
+Write COC... asks for the front-panel channel count and a persisted base run,
+with an optional replacement/retest run. It requires every front-panel channel
+and blocks any 1310/1550 value at or above 2.5000 dB. Supplemental readings
+replace complete wavelength pairs and changed physical ports must match the
+unit's recorded replacements. A passing result above 2.2500 dB produces an
+optimization warning only when a measured replacement candidate is available.
+
+The 45-channel template is selected for counts 1-45 and the 48-channel template
+for counts 46-48. Unused rows are removed from the exported workbook. Excel
+does not need to be installed. COC files use the name format
+COC OSX-150 <Main Board serial>_YYMMDD-HHMMSS.xlsx. For automatic part-number
 lookup, the computer must have access to:
 
   U:\Product Log\Units-COCs-Param Files\OSX-150
@@ -209,7 +218,7 @@ supported OSX connects and no run is loaded or active, its reported serial
 fills Main board serial and the lookup starts automatically in the background.
 Lookup failure does not disconnect the hardware or change the separately
 entered Switch serial.
-The two graphics included in the COC template are preserved in exported files.
+Template graphics are preserved in exported files when present.
 Replacement recommendations are calculated for the selected run but are not
 stored as permanent results. Completed replacements and designated spare ports
 are stored in the shared unit.json record.

@@ -266,6 +266,39 @@ class RunPersistenceTests(unittest.TestCase):
                 str(recorder.directory / "COC OSX-150 17689.xlsx"),
             )
 
+    def test_rename_for_metadata_preserves_timestamped_coc_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            recorder = RunRecorder(
+                root=directory,
+                metadata={
+                    "Main board serial": "17688",
+                    "Switch serial": "12345",
+                    "COC output file": "COC OSX-150 17688_260916-112620.xlsx",
+                    "COC output path": "placeholder",
+                },
+            )
+            recorder.save([MeasurementRecord(1, 1.0, 1.1, 1)])
+            coc_name = "COC OSX-150 17688_260916-112620.xlsx"
+            coc_path = recorder.directory / coc_name
+            coc_path.write_bytes(b"test workbook")
+
+            updated_metadata = recorder.rename_for_metadata(
+                {
+                    "Main board serial": "17689",
+                    "Switch serial": "67890",
+                    "COC output file": coc_name,
+                    "COC output path": str(coc_path),
+                }
+            )
+
+            renamed = "COC OSX-150 17689_260916-112620.xlsx"
+            self.assertTrue((recorder.directory / renamed).is_file())
+            self.assertEqual(updated_metadata["COC output file"], renamed)
+            self.assertEqual(
+                updated_metadata["COC output path"],
+                str(recorder.directory / renamed),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

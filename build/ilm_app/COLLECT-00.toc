@@ -348,9 +348,13 @@
   ('PyQt5\\sip.cp311-win32.pyd',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\site-packages\\PyQt5\\sip.cp311-win32.pyd',
    'EXTENSION'),
-  ('Templates\\OSX-100 Single Mode COC Template 1.xlsx',
+  ('Templates\\OSX-150 Single Mode COC Template 1 (48max).xlsx',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
-   'Testing\\Templates\\OSX-100 Single Mode COC Template 1.xlsx',
+   'Testing\\Templates\\OSX-150 Single Mode COC Template 1 (48max).xlsx',
+   'DATA'),
+  ('Templates\\OSX-150 Single Mode COC Template 2 (45max).xlsx',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\Templates\\OSX-150 Single Mode COC Template 2 (45max).xlsx',
    'DATA'),
   ('VCRUNTIME140.dll',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\VCRUNTIME140.dll',

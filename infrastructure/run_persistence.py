@@ -386,20 +386,39 @@ class RunRecorder:
                 source = new_directory / old_name
                 if not source.exists():
                     continue
-                match = re.match(
+                timestamp_match = re.match(
+                    r"^(COC OSX-150 ).+?_(\d{6}-\d{6})( \(\d+\))?\.xlsx$",
+                    old_name,
+                    re.IGNORECASE,
+                )
+                legacy_match = re.match(
                     r"^(COC OSX-150 )(.*?)( \(\d+\))?\.xlsx$",
                     old_name,
                     re.IGNORECASE,
                 )
-                suffix_text = match.group(3) or "" if match else ""
-                target = new_directory / (
-                    "COC OSX-150 %s%s.xlsx" % (new_main_serial, suffix_text)
-                )
+                if timestamp_match:
+                    timestamp = timestamp_match.group(2)
+                    suffix_text = timestamp_match.group(3) or ""
+                    target = new_directory / (
+                        "COC OSX-150 %s_%s%s.xlsx"
+                        % (new_main_serial, timestamp, suffix_text)
+                    )
+                else:
+                    suffix_text = legacy_match.group(3) or "" if legacy_match else ""
+                    target = new_directory / (
+                        "COC OSX-150 %s%s.xlsx" % (new_main_serial, suffix_text)
+                    )
                 number = 2
                 while target.exists() or target in used_coc_paths:
-                    target = new_directory / (
-                        "COC OSX-150 %s (%d).xlsx" % (new_main_serial, number)
-                    )
+                    if timestamp_match:
+                        target = new_directory / (
+                            "COC OSX-150 %s_%s (%d).xlsx"
+                            % (new_main_serial, timestamp, number)
+                        )
+                    else:
+                        target = new_directory / (
+                            "COC OSX-150 %s (%d).xlsx" % (new_main_serial, number)
+                        )
                     number += 1
                 source.rename(target)
                 used_coc_paths.add(target)

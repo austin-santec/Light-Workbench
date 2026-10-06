@@ -1,7 +1,7 @@
 """User-facing Light Workbench identity and release information."""
 
 APP_NAME = "Light Workbench"
-APP_VERSION = "1.17.0"
+APP_VERSION = "1.18.1"
 APP_TAGLINE = "Make light work, light work! Ha!"
 APP_DESCRIPTION = (
     "Optical testing and measurement software for insertion-loss testing, "
@@ -23,6 +23,7 @@ def about_text():
             "- Santec OSX-100/OSX-150 channel control and Red Light Test",
             "- Over-limit filtering and replacement analysis",
             "- XLSX COC export and saved run review",
+            "- Validated multi-run COC preparation with replacement provenance",
             "- Headerless raw-data clipboard export for Excel",
             "- Live IL readings, reference calculation, and repeatability testing",
             "- Non-recording raw-power diagnostics with optional switch routing",

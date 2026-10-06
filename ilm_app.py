@@ -71,6 +71,7 @@ from application.part_number_lookup import (
     PartNumberLookupController,
     classify_part_lookup_error,
 )
+from application.coc_workflow import CocRunOption, CocWorkflow
 from application.reference_session import ReferenceSession
 from domain.measurement import (
     calculate_insertion_loss,
@@ -89,10 +90,12 @@ from domain.limit_profiles import (
 )
 from domain.comparison import comparison_values, index_measurements
 from domain.raw_export import format_raw_measurements
+from domain.coc_preparation import infer_front_panel_channel_count
 from domain.timing import SwitchTestTimer
 from hardware.factory import HardwareFactory
 from infrastructure.coc_exporter import (
-    COC_TEMPLATE_FILENAME,
+    COC_TEMPLATE_45_FILENAME,
+    COC_TEMPLATE_48_FILENAME,
     DEFAULT_PART_LOOKUP_ROOT,
     FileCocExporter,
 )
@@ -117,6 +120,7 @@ from ui.power_measurement_diagnostics import PowerMeasurementDiagnosticsDialog
 from ui.hardware_status import HardwareStatusPanel
 from ui.support_logs import LoggingStatusDialog, SupportBundleDialog
 from ui.admin_config import AdminConfigDialog, AdminPasswordDialog
+from ui.coc_export_dialog import CocExportDialog, format_optimization_warning
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
 
@@ -576,6 +580,10 @@ class MainWindow(QMainWindow):
         self._part_lookup_requests = {}
         self.run_repository = FileRunRepository(self.support_logger)
         self.unit_repository = FileUnitRepository(self.support_logger)
+        self.coc_workflow = CocWorkflow(
+            self.run_repository,
+            self.unit_repository,
+        )
         self.demo_meter: SimulatedPowerMeter | None = None
         self.demo_channel = 0
         self.demo_measurement = None
@@ -2589,7 +2597,7 @@ class MainWindow(QMainWindow):
         )
 
     def choose_coc_template(self):
-        current = self.coc_template_path()
+        current = self.coc_template_path(45)
         selected, _ = QFileDialog.getOpenFileName(
             self,
             "Select XLSX COC template",
@@ -2597,8 +2605,18 @@ class MainWindow(QMainWindow):
             "Excel workbooks (*.xlsx)",
         )
         if selected:
-            self.settings.setValue("coc_template_path", selected)
-            self.statusBar().showMessage("COC template selected: %s" % selected)
+            try:
+                capacity = self.coc_exporter.inspect_template_capacity(selected)
+            except (OSError, RuntimeError, ValueError) as error:
+                QMessageBox.warning(self, "Invalid COC template", str(error))
+                return
+            self.settings.setValue(
+                "coc_template_%d_path" % capacity,
+                selected,
+            )
+            self.statusBar().showMessage(
+                "%d-channel COC template selected: %s" % (capacity, selected)
+            )
 
     def lookup_part_number(self):
         serial = self.hardware_main_board_serial.text().strip()
@@ -2650,10 +2668,33 @@ class MainWindow(QMainWindow):
         if update_run_data and self.run_data is not None:
             self.run_data.metadata["Part number"] = part_number
 
-    def coc_template_path(self):
-        configured = self.settings.value("coc_template_path", "")
+    def coc_template_path(self, front_panel_channel_count=45):
+        """Resolve the validated template for the requested report capacity."""
+        capacity = 45 if int(front_panel_channel_count) <= 45 else 48
+        configured = self.settings.value("coc_template_%d_path" % capacity, "")
         if configured and Path(configured).is_file():
-            return Path(configured)
+            try:
+                if self.coc_exporter.inspect_template_capacity(configured) == capacity:
+                    return Path(configured)
+            except (OSError, RuntimeError, ValueError):
+                pass
+
+        # Migrate the former single-template preference only when its actual
+        # workbook capacity matches the report being prepared.
+        legacy_configured = self.settings.value("coc_template_path", "")
+        if legacy_configured and Path(legacy_configured).is_file():
+            try:
+                legacy_capacity = self.coc_exporter.inspect_template_capacity(
+                    legacy_configured
+                )
+            except (OSError, RuntimeError, ValueError):
+                legacy_capacity = None
+            if legacy_capacity == capacity:
+                self.settings.setValue(
+                    "coc_template_%d_path" % capacity,
+                    legacy_configured,
+                )
+                return Path(legacy_configured)
 
         roots = []
         if getattr(sys, "frozen", False):
@@ -2665,11 +2706,16 @@ class MainWindow(QMainWindow):
             )
         else:
             roots.append(Path(__file__).resolve().parent)
+        filename = (
+            COC_TEMPLATE_45_FILENAME
+            if capacity == 45
+            else COC_TEMPLATE_48_FILENAME
+        )
         for root in roots:
-            candidate = root / "Templates" / COC_TEMPLATE_FILENAME
+            candidate = root / "Templates" / filename
             if candidate.is_file():
                 return candidate
-        return roots[0] / "Templates" / COC_TEMPLATE_FILENAME
+        return roots[0] / "Templates" / filename
 
     def _unit_metadata(self, metadata=None):
         """Return only identity fields that belong to the physical unit."""
@@ -4750,21 +4796,32 @@ class MainWindow(QMainWindow):
         )
 
     def refresh_coc_controls(self):
-        """Enable run-data outputs whenever completed readings are available."""
-        enabled = bool(self.run_data and self.run_data.measurements)
-        self.write_coc_button.setEnabled(enabled)
-        self.copy_raw_data_button.setEnabled(enabled)
-        self.write_coc_action.setEnabled(enabled)
+        """Enable current-run and persisted-unit outputs independently."""
+        current_readings = bool(self.run_data and self.run_data.measurements)
+        persisted_readings = bool(
+            current_readings
+            and self.run_data is not None
+            and Path(self.run_data.source_path).is_file()
+        )
+        if self.unit_directory is not None:
+            try:
+                persisted_readings = persisted_readings or bool(
+                    self.unit_repository.available_run_numbers(self.unit_directory)
+                )
+            except OSError:
+                pass
+        self.write_coc_button.setEnabled(persisted_readings)
+        self.copy_raw_data_button.setEnabled(current_readings)
+        self.write_coc_action.setEnabled(persisted_readings)
 
     def offer_coc_export(self):
-        """Ask whether the current run should be copied into the COC template."""
+        """Offer the same validated preparation workflow used by Write COC."""
         if self.run_data is None or not self.run_data.measurements:
             return
         answer = QMessageBox.question(
             self,
             "Write to COC?",
-            "Write the current readings to a COC workbook now?\n"
-            "Missing channel readings will remain blank.",
+            "Prepare a validated COC workbook from this unit's saved runs now?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
@@ -4800,50 +4857,256 @@ class MainWindow(QMainWindow):
         self.run_recorder.save(self.run_data.measurements)
         self.persist_unit_record()
 
+    def _coc_run_options(self):
+        """Return persisted runs for the active unit, including legacy context."""
+        options = []
+        if self.unit_directory is not None:
+            options = self.coc_workflow.available_runs(self.unit_directory)
+        current_path = Path(self.run_data.source_path) if self.run_data else None
+        if current_path is not None and current_path.is_file():
+            known_paths = {option.source.source_path.resolve() for option in options}
+            if current_path.resolve() not in known_paths:
+                try:
+                    source = self.coc_workflow.load_source(
+                        current_path,
+                        fallback_run_number=int(
+                            self.run_data.metadata.get("Run number", 1)
+                        ),
+                    )
+                except (OSError, ValueError, TypeError, KeyError):
+                    source = None
+                if source is not None and source.measurements:
+                    options.append(CocRunOption(source))
+                    options.sort(key=lambda option: option.source.run_number)
+        return options
+
+    def _default_coc_channel_count(self, options):
+        part_number = self.hardware_part_number.currentText().strip()
+        if not part_number and self.run_data is not None:
+            part_number = self.run_data.metadata.get("Part number", "")
+        inferred = infer_front_panel_channel_count(part_number)
+        if inferred is not None:
+            return inferred
+        available = {
+            record.channel
+            for option in options
+            for record in option.source.measurements
+            if 1 <= record.channel <= 48
+        }
+        contiguous = 0
+        while contiguous + 1 in available:
+            contiguous += 1
+        return contiguous or 1
+
+    def _confirm_coc_optimization(self, result):
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Warning)
+        message.setWindowTitle("COC optimization available")
+        message.setText(format_optimization_warning(result))
+        return_button = message.addButton("Return to Run", QMessageBox.RejectRole)
+        write_button = message.addButton("Write COC Anyway", QMessageBox.AcceptRole)
+        message.setDefaultButton(return_button)
+        message.exec_()
+        return message.clickedButton() is write_button
+
+    def _select_coc_template(self, front_panel_channel_count):
+        template = self.coc_template_path(front_panel_channel_count)
+        required_capacity = 45 if front_panel_channel_count <= 45 else 48
+        if template.is_file():
+            try:
+                capacity = self.coc_exporter.inspect_template_capacity(template)
+            except (OSError, RuntimeError, ValueError):
+                capacity = None
+            if capacity == required_capacity:
+                return template
+
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select %d-channel XLSX COC template" % required_capacity,
+            str(template.parent),
+            "Excel workbooks (*.xlsx)",
+        )
+        if not selected:
+            return None
+        capacity = self.coc_exporter.inspect_template_capacity(selected)
+        if capacity != required_capacity:
+            raise ValueError(
+                "The selected template supports %d channels; a %d-channel template is required."
+                % (capacity, required_capacity)
+            )
+        self.settings.setValue(
+            "coc_template_%d_path" % required_capacity,
+            selected,
+        )
+        return Path(selected)
+
+    def _persist_coc_export_metadata(self, base_run, metadata):
+        """Persist report provenance without changing accepted measurements."""
+        payload = {}
+        json_path = self.run_repository.find_json_path(base_run.source_path)
+        if json_path.is_file():
+            try:
+                payload = self.run_repository.load_json(json_path)
+            except (OSError, ValueError, TypeError, KeyError):
+                payload = {}
+        criteria = dict(base_run.criteria or {}) or None
+        warning_limit = (
+            criteria.get("warning_above_db")
+            if criteria and criteria.get("warning_above_db") is not None
+            else criteria.get("fail_above_db", 2.5) if criteria else 2.5
+        )
+        recorder = self.run_repository.recorder_from_existing(
+            base_run.source_path,
+            metadata=metadata,
+            limit=float(warning_limit),
+            criteria_snapshot=criteria,
+            attempts=payload.get("attempts", []),
+            switch_test_sessions=payload.get("switch_test_sessions", []),
+            completed_replacements=payload.get("completed_replacements", []),
+        )
+        recorder.save(list(base_run.measurements))
+
     def write_coc(self):
-        """Write the current partial or complete run to a copied XLSX template."""
+        """Prepare, validate, and write a complete COC from persisted runs."""
         if self.run_data is None:
             QMessageBox.information(self, "No run loaded", "Load or start a run first.")
             return
+        options = self._coc_run_options()
+        if not options:
+            QMessageBox.information(
+                self,
+                "No written run data",
+                "No persisted run with written readings is available for this unit.",
+            )
+            return
 
-        serial = self.hardware_main_board_serial.text().strip()
-        if not serial:
-            serial = self.run_data.metadata.get("Main board serial", "").strip()
-        part_number = self.hardware_part_number.currentText().strip()
-        tested_by = self.hardware_tested_by.text().strip()
-        if not part_number:
-            part_number = self.run_data.metadata.get("Part number", "").strip()
+        self._record_support(
+            SupportEventCategory.EXPORT,
+            "export.coc_preparation_started",
+            measurement_count=sum(len(option.source.measurements) for option in options),
+            status="started",
+        )
+
+        def prepare(base, count, supplemental):
+            return self.coc_workflow.prepare(
+                base,
+                count,
+                supplemental_run=supplemental,
+                completed_replacements=self.completed_replacements,
+                designated_spares=self.designated_spares,
+            )
+
+        def record_blocked_validation(result):
+            self._record_support(
+                SupportEventCategory.EXPORT,
+                "export.coc_validation_blocked",
+                run_number=result.base_run_number,
+                measurement_count=len(result.channels),
+                reason=(
+                    "missing=%d; failures=%d; invalid=%d; compatibility=%d"
+                    % (
+                        len(result.missing_channels),
+                        len(result.failures),
+                        len(result.invalid_readings),
+                        len(result.validation_issues),
+                    )
+                ),
+                status="blocked",
+            )
+
+        dialog = CocExportDialog(
+            options,
+            prepare,
+            initial_channel_count=self._default_coc_channel_count(options),
+            current_run_path=self.run_data.source_path,
+            validation_blocked_callback=record_blocked_validation,
+            parent=self,
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            self._record_support(
+                SupportEventCategory.EXPORT,
+                "export.coc_preparation_canceled",
+                choice="cancel",
+                status="canceled",
+            )
+            return
+        result = dialog.preparation_result
+        base_run = dialog.base_run
+        if result is None or base_run is None or not result.eligible:
+            self._record_support(
+                SupportEventCategory.EXPORT,
+                "export.coc_validation_blocked",
+                reason="preparation_not_eligible",
+                status="blocked",
+            )
+            return
+
+        if result.optimization_recommendations:
+            self._record_support(
+                SupportEventCategory.EXPORT,
+                "export.coc_optimization_confirmation_shown",
+                run_number=result.base_run_number,
+                measurement_count=len(result.optimization_recommendations),
+                status="warning",
+            )
+            if not self._confirm_coc_optimization(result):
+                self._record_support(
+                    SupportEventCategory.EXPORT,
+                    "export.coc_preparation_canceled",
+                    choice="return_to_run",
+                    status="canceled",
+                )
+                return
+
+        serial = str(base_run.metadata.get("Main board serial") or "").strip()
+        part_number = str(base_run.metadata.get("Part number") or "").strip()
+        tested_by = str(base_run.metadata.get("Tested by") or "").strip()
         if not part_number and serial:
-            lookup_root = str(DEFAULT_PART_LOOKUP_ROOT)
             try:
-                part_number = self.coc_exporter.find_part_number(serial, lookup_root)
-                self.hardware_part_number.setCurrentText(part_number)
+                part_number = self.coc_exporter.find_part_number(
+                    serial,
+                    str(DEFAULT_PART_LOOKUP_ROOT),
+                )
             except (OSError, LookupError, ValueError):
                 pass
 
-        template = self.coc_template_path()
-        if not template.is_file():
-            selected, _ = QFileDialog.getOpenFileName(
-                self,
-                "Select XLSX COC template",
-                str(template.parent),
-                "Excel workbooks (*.xlsx)",
-            )
-            if not selected:
-                return
-            template = Path(selected)
-            self.settings.setValue("coc_template_path", str(template))
-
         try:
+            template = self._select_coc_template(
+                result.front_panel_channel_count
+            )
+            if template is None:
+                return
+            self._record_support(
+                SupportEventCategory.EXPORT,
+                "export.coc_started",
+                run_number=result.base_run_number,
+                measurement_count=len(result.measurements),
+                destination=base_run.source_path.parent,
+                status="started",
+            )
             output_path = self.coc_exporter.export(
                 template,
-                self.run_data.source_path.parent,
-                self.run_data.measurements,
+                base_run.source_path.parent,
+                list(result.measurements),
                 part_number,
                 serial,
                 tested_by=tested_by,
+                front_panel_channel_count=result.front_panel_channel_count,
             )
-            self.run_data.metadata.update(
+            override_text = "; ".join(
+                "Channel %d = Run %d / Physical Port %d"
+                % (
+                    channel.record.channel,
+                    channel.source_run_number,
+                    channel.physical_port,
+                )
+                for channel in result.overridden_channels
+            ) or "None"
+            source_runs = ["Run %d" % result.base_run_number]
+            if result.supplemental_run_number is not None:
+                source_runs.append("Run %d" % result.supplemental_run_number)
+            metadata = dict(base_run.metadata)
+            metadata.update(
                 {
                     "Part number": part_number,
                     "Main board serial": self.coc_exporter.normalise_serial(serial),
@@ -4852,19 +5115,31 @@ class MainWindow(QMainWindow):
                     "COC output path": str(output_path),
                     "COC exported at": datetime.now().isoformat(timespec="seconds"),
                     "COC template": str(template),
+                    "COC front panel channels": str(result.front_panel_channel_count),
+                    "COC base run": "Run %d" % result.base_run_number,
+                    "COC supplemental run": (
+                        "Run %d" % result.supplemental_run_number
+                        if result.supplemental_run_number is not None
+                        else "None"
+                    ),
+                    "COC source runs": ", ".join(source_runs),
+                    "COC supplemental overrides": override_text,
                 }
             )
-            self.hardware_part_number.setCurrentText(part_number)
-            self.hardware_main_board_serial.setText(
-                self.coc_exporter.normalise_serial(serial)
-            )
-            self.metadata_labels["Part number"].setText(part_number)
-            self.metadata_labels["Main board serial"].setText(
-                self.coc_exporter.normalise_serial(serial)
-            )
-            self.metadata_labels["Tested by"].setText(tested_by or "Not recorded")
-            self.persist_run_metadata()
+            self._persist_coc_export_metadata(base_run, metadata)
+            if Path(self.run_data.source_path).resolve() == base_run.source_path.resolve():
+                self.run_data.metadata.update(metadata)
+                if self.run_recorder is not None:
+                    self.run_recorder.metadata = dict(metadata)
         except (OSError, RuntimeError, ValueError, KeyError) as error:
+            self._record_support(
+                SupportEventCategory.EXPORT,
+                "export.coc_failed",
+                level=SupportLogLevel.ERROR,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
             QMessageBox.critical(self, "Could not write COC", str(error))
             return
 

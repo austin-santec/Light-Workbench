@@ -11,7 +11,10 @@ DEFAULT_RUN_ROOT = Path.home() / "Documents" / "ILM-Reads"
 DEFAULT_PART_LOOKUP_ROOT = Path(
     r"U:\Product Log\Units-COCs-Param Files\OSX-150"
 )
-COC_TEMPLATE_FILENAME = "OSX-100 Single Mode COC Template 1.xlsx"
+COC_TEMPLATE_45_FILENAME = "OSX-150 Single Mode COC Template 2 (45max).xlsx"
+COC_TEMPLATE_48_FILENAME = "OSX-150 Single Mode COC Template 1 (48max).xlsx"
+# Compatibility name for older imports. New code selects by channel capacity.
+COC_TEMPLATE_FILENAME = COC_TEMPLATE_45_FILENAME
 # Support logs are retained indefinitely. The 500 MB value is a warning
 # threshold for operator-managed archiving/deletion, not an automatic cleanup
 # limit.
@@ -57,6 +60,15 @@ class AppPaths:
     @property
     def coc_template_path(self) -> Path:
         return self.project_root / "Templates" / self.coc_template_filename
+
+    def coc_template_path_for_capacity(self, capacity: int) -> Path:
+        """Return the approved OSX-150 template for a report capacity."""
+        filename = (
+            COC_TEMPLATE_45_FILENAME
+            if int(capacity) <= 45
+            else COC_TEMPLATE_48_FILENAME
+        )
+        return self.project_root / "Templates" / filename
 
     @property
     def assets_root(self) -> Path:

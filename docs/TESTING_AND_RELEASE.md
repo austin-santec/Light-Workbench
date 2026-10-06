@@ -18,6 +18,11 @@ Use for Qt worker lifecycle, controller state transitions, run continuation,
 file persistence, COC export, and dialog behavior. Use fakes rather than real
 hardware.
 
+COC coverage must include whole-pair multi-run overrides, run/criteria/physical
+port compatibility, strict 2.5000 dB publication blocking, optimization
+confirmation, 45/48 template selection, row trimming, merged ranges, print
+area, source-template immutability, and preservation of source run readings.
+
 Persistent-connection tests must verify partial connection success, duplicate
 session prevention, exclusive lease conflicts, release without disconnect,
 single-thread native calls, laser-safe shutdown, and application-close cleanup.

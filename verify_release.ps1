@@ -27,6 +27,18 @@ if (-not (Test-Path -LiteralPath $internalDirectory -PathType Container)) {
     throw "PyInstaller support directory is missing: $internalDirectory"
 }
 
+$requiredTemplates = @(
+    "OSX-150 Single Mode COC Template 2 (45max).xlsx",
+    "OSX-150 Single Mode COC Template 1 (48max).xlsx"
+)
+$templateDirectory = Join-Path $internalDirectory "Templates"
+foreach ($templateName in $requiredTemplates) {
+    $templatePath = Join-Path $templateDirectory $templateName
+    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
+        throw "Required COC template is missing: $templatePath"
+    }
+}
+
 $executable = Get-Item -LiteralPath (Join-Path $DistributionPath "LightWorkbench.exe")
 if ($executable.Length -le 0) {
     throw "The packaged executable is empty: $($executable.FullName)"

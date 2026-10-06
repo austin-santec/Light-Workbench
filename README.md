@@ -149,6 +149,7 @@ redaction, and support-bundle details.
 | `domain/models.py` | Typed vendor-neutral measurement, device, unit, run, reference, and workflow models |
 | `domain/run_data.py` | Domain run model and over-limit analysis rules |
 | `domain/raw_export.py` | Pure tab-separated formatting for copying accepted readings to Excel |
+| `domain/coc_preparation.py` | Pure multi-run COC merge, provenance, completeness, port-map, and publication rules |
 | `domain/diagnostic_analysis.py` | In-memory diagnostic samples and variation statistics |
 | `domain/diagnostic_trace.py` | Typed in-memory hardware trace event model |
 | `domain/support_events.py` | Typed allowlisted engineering support-event schema |
@@ -157,6 +158,7 @@ redaction, and support-bundle details.
 | `application/run_controller.py` | Hardware-run lifecycle controller and queued worker command boundary |
 | `application/hardware_connection.py` | Persistent serialized hardware ownership, capability leases, and managed device proxies |
 | `application/part_number_lookup.py` | Non-blocking part-number lookup controller and lookup-failure classification |
+| `application/coc_workflow.py` | Repository-backed COC source-run loading and preparation workflow |
 | `application/live_controller.py` | Live IL meter worker lifecycle controller |
 | `application/red_light_controller.py` | Red Light Test switch worker lifecycle controller |
 | `application/power_diagnostics_controller.py` | Non-recording raw-power diagnostic lifecycle controller |
@@ -191,6 +193,7 @@ redaction, and support-bundle details.
 | `ui/power_measurement_diagnostics.py` | Raw-power diagnostics dialog with optional switch routing |
 | `ui/red_light_test.py` | Separate VFL pre-test dialog presentation module |
 | `ui/support_logs.py` | Support logging status and bundle date-range dialogs |
+| `ui/coc_export_dialog.py` | Front-panel count, source-run selection, and COC validation preview |
 | `tools/dependency_check.py` | Non-destructive prerequisite and connection diagnostics |
 | `hardware/interfaces.py` | Vendor-neutral power-meter, laser-source, and optical-switch contracts |
 | `domain/hardware_connection.py` | Vendor-neutral hardware capabilities, readiness snapshots, and connection errors |
@@ -206,7 +209,8 @@ redaction, and support-bundle details.
 | `app_info.py` | Compatibility facade for application release metadata |
 | `dependency_check.py` | Compatibility facade for dependency diagnostics |
 | `OP815M.dll` | Vendor library used to communicate with the ILM |
-| `Templates/OSX-100 Single Mode COC Template 1.xlsx` | XLSX COC template bundled with the desktop application |
+| `Templates/OSX-150 Single Mode COC Template 2 (45max).xlsx` | Bundled OSX-150 COC template for 1-45 front-panel channels |
+| `Templates/OSX-150 Single Mode COC Template 1 (48max).xlsx` | Bundled OSX-150 COC template for 46-48 front-panel channels |
 | `assets/C&C lulu.png` | Normal application and header icon |
 | `assets/C&C lulu white eyes.png` | Admin Mode application and header icon |
 | `README_INSTALL.txt` | Light Workbench ZIP deployment, prerequisite, and quick-start instructions |
@@ -248,7 +252,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.17.0**; an existing executable keeps its prior
+current source version is **1.18.1**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
@@ -432,25 +436,39 @@ as plain text for pasting into the Unit Editor notes.
 
 ## COC workbook export
 
-The desktop application can write a partial or complete run to a copied XLSX
-COC template. The export is offered after a hardware run completes, is stopped,
-or fails after producing a run, and is also available from the controls and
-`File` menu. Channels without accepted readings remain blank, and readings
-above the warning limit are still written.
+`Write COC...` opens a preparation dialog instead of immediately exporting the
+active table. The operator confirms the front-panel channel count, chooses one
+persisted base run, and can optionally choose one replacement/retest run.
+Supplemental readings replace complete 1310/1550 pairs by logical channel;
+the source run and reported physical port remain traceable. A changed physical
+port must match a completed Current Port -> Replacement Port record.
 
-The current template's `OSX Template` sheet receives the values in its split
-table: channels 1-45 use rows 11-55 and channels 46-48 use rows 67-69. The
+The report is blocked if a required front-panel channel is missing, invalid,
+negative, physically inconsistent, or has either displayed four-decimal value
+greater than or equal to 2.5000 dB. There is no incomplete-report override.
+When the combined result passes but a channel is above 2.2500 dB and a measured
+replacement candidate is available, the operator is warned and may return to
+the run or write the passing COC anyway. Source run measurements are never
+changed by preparing or exporting a combined report.
+
+The 45-channel template is selected automatically for counts 1-45; the
+48-channel template is selected for counts 46-48. The `OSX Template` sheet
+uses rows 11-55 for channels 1-45 and rows 67-69 for channels 46-48. The
 1310 nm values go in column D and 1550 nm values go in column E. The Part
 Number is written to merged `B4:C4` through `B4`, the Main Board serial to
 merged `D4:E4` through `D4`, the current date to `F4`, and the Tested by
 initials to `G4`. Other template
-values, formatting, formulas, and print settings are preserved.
+values and formatting are preserved. Rows below the final required channel are
+removed, affected merged ranges are repaired, and the print area ends at the
+completed report.
 
-The first output is named `COC OSX-150 <Main Board serial>.xlsx` and is saved
-in the run folder. Existing files receive a numeric suffix instead of being
+The first output is named `COC OSX-150 <Main Board serial>_YYMMDD-HHMMSS.xlsx`
+and is saved in the selected base run folder. Existing files receive a numeric suffix instead of being
 overwritten. The original template is never modified. The COC export uses
 `openpyxl`, so Microsoft Excel is not required on the target computer.
-The template's embedded graphics are preserved in each exported workbook.
+Template graphics are preserved when present. Base/supplemental run numbers,
+front-panel count, and supplemental channel/physical-port overrides are stored
+as COC provenance in the base run metadata.
 
 ## Copy raw readings for Excel
 

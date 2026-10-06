@@ -5,7 +5,7 @@ This is a simple working checklist based on the detailed assessment in
 Refer to the full document when you need the exact requirement wording,
 implementation evidence, or technical details.
 
-Last synchronized with the requirements assessment: **2026-10-05**.
+Last synchronized with the requirements assessment: **2026-10-06**.
 
 Reference enforcement update: FUN-012 and FUN-013 are complete in version
 1.16.1. Production runs require a valid calculated or explicitly
@@ -27,11 +27,17 @@ from its existing identity response and attempts part-number lookup in the
 background. Lookup failure does not change hardware readiness, and loaded or
 active run metadata remains protected.
 
+COC update: final export now requires complete, valid persisted readings for
+every selected front-panel channel. One compatible replacement/retest run may
+override the base run when the physical-port change is supported by the unit's
+replacement record. The exporter selects the 45- or 48-channel template and
+removes unused rows from the generated copy.
+
 ## Quick status
 
-- [x] **7 completed requirements**
-- [ ] **30 partially completed requirements**
-- [ ] **20 requirements not yet implemented**
+- [x] **15 completed requirements**
+- [ ] **28 partially completed requirements**
+- [ ] **14 requirements not yet implemented**
 - **57 total requirements**
 
 `MVP` means needed for the first requirements-compliant release. `Later` means
@@ -48,7 +54,19 @@ still need to be repeated during final release testing.
   - Connect Hardware provides independent and all-hardware disconnect actions;
     disconnecting measurement hardware safely leaves remote mode and releases
     the driver session.
+- [x] **FUN-008 — Block incomplete final COC reports.** `[MVP]`
+  - Every required front-panel channel must have a complete, valid reading;
+    there is no incomplete-report override.
+- [x] **FUN-012 — Require a reference for every wavelength before testing.** `[MVP]`
+- [x] **FUN-013 — Store the reference evidence used by each written reading.** `[MVP]`
+- [x] **FUN-015 — Discover supported OSX-100/OSX-150 switches and show status.** `[MVP]`
+- [x] **FUN-021 — Keep acceptance limits in controlled configuration.** `[MVP]`
+- [x] **FUN-023 — Save criteria identity and revision with each run.** `[MVP]`
+- [x] **FUN-025 — Use the controlled optimization band below the failure limit.** `[MVP]`
 - [x] **FUN-027 — Keep logical channels separate from physical switch ports.** `[MVP]`
+- [x] **FUN-040 — Fit generated COC rows to the front-panel channel count.** `[MVP]`
+  - Template selection, merged ranges, unused rows, and print area are handled
+    without changing the source workbook.
 - [x] **FUN-047 — Automatically save after every written reading or retest.** `[MVP]`
 - [x] **FUN-056 — Keep run data safe if report/COC export fails.** `[MVP]`
 - [x] **FUN-060 — Create useful support logs without exposing confidential data.** `[Later]`
@@ -81,21 +99,11 @@ Check an item only after the **Still needed** portion is implemented and tested.
   - Still needed: Give consistent, device-specific recovery instructions for
     connection failures.
 
-- [ ] **FUN-012 — Require a reference for every wavelength before testing.** `[MVP]`
-  - Already works: References can be calculated or entered manually.
-  - Still needed: Prevent DUT testing until a valid reference has been completed.
-
 - [ ] **FUN-014 — Reject invalid or unreliable ILM readings.** `[MVP]`
   - Already works: Communication failures, missing wavelength values, and actual
     wavelength mismatches are handled.
   - Still needed: Detect stale, saturated, under-range, and other invalid readings
     using defined validity rules.
-
-- [ ] **FUN-015 — Find the selected OSX model and show its connection status.** `[MVP]`
-  - Already works: Verified OSX-100 and OSX-150 devices are detected using manual,
-    last-known, and targeted USB VISA discovery, with LF/CRLF identity probing,
-    channel-count validation, and detailed identity/status reporting.
-  - Still needed: Add an operator-selected family and family-mismatch workflow.
 
 - [ ] **FUN-017 — Route a channel and confirm the switch finished moving.** `[MVP]`
   - Already works: The application sends the route command and reads back the
@@ -114,11 +122,6 @@ Check an item only after the **Still needed** portion is implemented and tested.
     continued later.
   - Still needed: Add guided reconnection during the interrupted session and
     confirm the switch route before resuming.
-
-- [ ] **FUN-025 — Use an optimization warning stricter than the failure limit.** `[MVP]`
-  - Already works: The warning threshold drives over-limit and replacement analysis.
-  - Still needed: Separate the controlled optimization warning from the published
-    absolute failure limit.
 
 - [ ] **FUN-026 — Show Pass, Optimization Review, Fail, Untested, and Invalid.** `[MVP]`
   - Already works: The application shows within-limit, over-limit, and pending states.
@@ -222,19 +225,14 @@ technical questions that must be answered before implementation.
 - [ ] **FUN-001 — Add an OSX-100/OSX-150 family selector and family-specific workflow.** `[MVP]`
 - [ ] **FUN-004 — Keep every retest attempt and explicitly identify the final result.** `[MVP]`
 - [ ] **FUN-005 — Let the user select supported wavelengths and use compatible equipment.** `[MVP]`
-- [ ] **FUN-008 — Block incomplete final reports unless a defined exception and reason are recorded.** `[MVP]`
-- [ ] **FUN-013 — Store the reference values, time, instrument, and validity with the run.** `[MVP]`
 - [ ] **FUN-016 — Detect a switch-family mismatch and handle the defined exception workflow.** `[Later]`
 - [ ] **FUN-018 — Support configurable USB/serial/Ethernet transports where the hardware allows it.** `[Later]`
-- [ ] **FUN-021 — Store product acceptance limits in controlled configuration.** `[MVP]`
 - [ ] **FUN-022 — Define criteria by family, channel count, wavelength, warning, and failure limit.** `[MVP]`
-- [ ] **FUN-023 — Save the criteria-set name and revision with every run.** `[MVP]`
 - [ ] **FUN-024 — Restrict criteria changes to the defined authorized roles.** `[Later]`
 - [ ] **FUN-032 — Force a new two-wavelength test after a port mapping changes.** `[MVP]`
 - [ ] **FUN-035 — Include the final port mapping and replacements in the final report.** `[MVP]`
 - [ ] **FUN-036 — Keep both pre-optimization and post-optimization measurements.** `[Later]`
 - [ ] **FUN-038 — Configure report field/column mappings separately for each template.** `[Later]`
-- [ ] **FUN-040 — Resize report rows for different channel counts without breaking the workbook.** `[MVP]`
 - [ ] **FUN-042 — Preview the final report before saving it.** `[Later]`
 - [ ] **FUN-044 — Optionally export the final report as a PDF.** `[Later]`
 - [ ] **FUN-045 — Mark retested channels, report only the chosen final values, and preserve history.** `[MVP]`

@@ -62,6 +62,30 @@ Migration helpers reject newer versions instead of silently dropping fields.
 - Replacement analysis: calculated presentation data.
 - Manually recorded replacements and spares: persistent device data.
 
+## Validated COC view
+
+A COC can use one persisted base run and one explicitly selected persisted
+replacement/retest run. This creates a temporary report view, not another run.
+The supplemental run replaces a complete 1310/1550 pair for a logical channel;
+individual wavelengths are never mixed. Changed physical ports must agree with
+the unit's completed replacement records. Source measurements, references,
+replacement records, and hardware state remain unchanged.
+
+The confirmed front-panel count defines required logical channels `1..N`.
+Every required channel must be present and valid, and each loss rounded to the
+established four-decimal display precision must be strictly below 2.5000 dB.
+Exactly 2.5000 dB is therefore not publishable. Readings above the front-panel
+count may support replacement analysis but are excluded from the workbook.
+
+The base run metadata records the COC output path, front-panel count, selected
+source runs, and each supplemental logical-channel/physical-port override.
+This provenance does not change the base run's accepted measurement list.
+OSX-150 reports use separate approved templates for capacities 1-45 and 46-48;
+the exporter removes unused rows and updates merged ranges and print area on
+the copied workbook only. Output files use the local-time name format
+`COC OSX-150 <Main Board serial>_YYMMDD-HHMMSS.xlsx`, with a numeric collision
+suffix when multiple exports occur in the same second.
+
 ## Reference authorization and audit model
 
 Reference values are not authorized merely because numbers appear in the main
