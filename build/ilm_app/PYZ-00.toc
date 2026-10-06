@@ -62,6 +62,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\measurement_worker.py',
    'PYMODULE'),
+  ('application.part_number_lookup',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\part_number_lookup.py',
+   'PYMODULE'),
   ('application.power_diagnostics_controller',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\power_diagnostics_controller.py',

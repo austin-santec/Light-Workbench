@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtGui import QCloseEvent
 from PyQt5.QtWidgets import QApplication, QDialog, QMessageBox
-from PyQt5.QtCore import QEventLoop, QTimer, Qt
+from PyQt5.QtCore import QEventLoop, QObject, QTimer, Qt, pyqtSignal
 from PyQt5.QtTest import QTest
 
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
@@ -17,6 +17,7 @@ from domain.models import ConnectionState, DeviceCategory, DeviceInfo
 from ilm_app import (
     AboutDialog,
     CompletedReplacementDialog,
+    DEFAULT_PART_LOOKUP_ROOT,
     DEFAULT_RUN_ROOT,
     MainWindow,
     STANDARD_PART_NUMBERS,
@@ -81,6 +82,24 @@ class ReferenceSwitch:
     def close(self):
         self.connected = False
         self.closed = True
+
+
+class FakePartNumberLookupController(QObject):
+    succeeded = pyqtSignal(int, str, str)
+    failed = pyqtSignal(int, str, str, str)
+
+    def __init__(self):
+        super().__init__()
+        self.requests = []
+        self.was_closed = False
+
+    def start(self, serial, lookup_root):
+        request_id = len(self.requests) + 1
+        self.requests.append((request_id, serial, Path(lookup_root)))
+        return request_id
+
+    def close(self):
+        self.was_closed = True
 
 
 class MainWindowTests(unittest.TestCase):
@@ -228,6 +247,251 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("0 channels", switch_status.text())
         self.assertIn("CFG:SWT:END?", switch_status.toolTip())
         self.assertIn("Response: 0", switch_status.toolTip())
+        window.close()
+
+    def test_connected_supported_switch_autofills_main_board_and_part_number(self):
+        lookup = FakePartNumberLookupController()
+        window = MainWindow(part_lookup_controller=lookup)
+        window.hardware_switch_serial.setText("OPERATOR-SWITCH-SERIAL")
+
+        for index, model in enumerate(("OSX-100", "OSX-150"), start=1):
+            serial = "SN%d" % index
+            window._hardware_device_status_changed(
+                DeviceInfo(
+                    category=DeviceCategory.OPTICAL_SWITCH,
+                    model=model,
+                    serial_number=serial,
+                    state=ConnectionState.CONNECTED,
+                )
+            )
+            request_id, requested_serial, _root = lookup.requests[-1]
+            expected_serial = str(index)
+            self.assertEqual(requested_serial, expected_serial)
+            self.assertEqual(window.hardware_main_board_serial.text(), expected_serial)
+            self.assertEqual(
+                window.hardware_switch_serial.text(),
+                "OPERATOR-SWITCH-SERIAL",
+            )
+
+            part_number = "%s-PART" % model
+            lookup.succeeded.emit(request_id, expected_serial, part_number)
+            self.assertEqual(window.hardware_part_number.currentText(), part_number)
+
+        window.close()
+
+    def test_real_automatic_lookup_reads_folder_without_creating_run_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lookup_root = Path(directory)
+            (lookup_root / "SN31415_OSX-150-PART").mkdir()
+            original_entries = sorted(path.name for path in lookup_root.iterdir())
+            with patch("ilm_app.DEFAULT_PART_LOOKUP_ROOT", lookup_root):
+                window = MainWindow()
+                lookup_finished = QEventLoop()
+                window.part_lookup_controller.succeeded.connect(
+                    lambda *_values: lookup_finished.quit()
+                )
+                QTimer.singleShot(3000, lookup_finished.quit)
+
+                window._hardware_device_status_changed(
+                    DeviceInfo(
+                        category=DeviceCategory.OPTICAL_SWITCH,
+                        model="OSX-150",
+                        serial_number="31415",
+                        state=ConnectionState.CONNECTED,
+                    )
+                )
+                lookup_finished.exec_()
+                self.application.processEvents()
+
+                self.assertEqual(
+                    window.hardware_part_number.currentText(),
+                    "OSX-150-PART",
+                )
+                self.assertIsNone(window.run_data)
+                self.assertIsNone(window.run_recorder)
+                self.assertEqual(
+                    sorted(path.name for path in lookup_root.iterdir()),
+                    original_entries,
+                )
+                window.close()
+
+    def test_switch_autofill_ignores_nonconnected_and_empty_identity_events(self):
+        lookup = FakePartNumberLookupController()
+        window = MainWindow(part_lookup_controller=lookup)
+
+        for state in (
+            ConnectionState.CONNECTING,
+            ConnectionState.IN_USE,
+            ConnectionState.DISCONNECTED,
+            ConnectionState.ERROR,
+        ):
+            window._hardware_device_status_changed(
+                DeviceInfo(
+                    category=DeviceCategory.OPTICAL_SWITCH,
+                    model="OSX-150",
+                    serial_number="12345",
+                    state=state,
+                )
+            )
+        window._hardware_device_status_changed(
+            DeviceInfo(
+                category=DeviceCategory.OPTICAL_SWITCH,
+                model="OSX-150",
+                serial_number="",
+                state=ConnectionState.CONNECTED,
+            )
+        )
+
+        self.assertEqual(lookup.requests, [])
+        self.assertEqual(window.hardware_main_board_serial.text(), "")
+        window.close()
+
+    def test_switch_autofill_avoids_duplicate_and_lease_release_lookups(self):
+        lookup = FakePartNumberLookupController()
+        window = MainWindow(part_lookup_controller=lookup)
+        connected = DeviceInfo(
+            category=DeviceCategory.OPTICAL_SWITCH,
+            model="OSX-150",
+            serial_number="12345",
+            state=ConnectionState.CONNECTED,
+        )
+
+        window._hardware_device_status_changed(connected)
+        window._hardware_device_status_changed(connected)
+        window._hardware_device_status_changed(
+            connected.with_state(ConnectionState.IN_USE)
+        )
+        window._hardware_device_status_changed(connected)
+        self.assertEqual(len(lookup.requests), 1)
+
+        window._hardware_device_status_changed(
+            connected.with_state(ConnectionState.DISCONNECTED)
+        )
+        window._hardware_device_status_changed(connected)
+        self.assertEqual(len(lookup.requests), 2)
+        window.close()
+
+    def test_switch_autofill_preserves_existing_part_for_same_serial(self):
+        lookup = FakePartNumberLookupController()
+        window = MainWindow(part_lookup_controller=lookup)
+        window.hardware_main_board_serial.setText("SN12345")
+        window.hardware_part_number.setCurrentText("MANUAL-PART")
+
+        window._hardware_device_status_changed(
+            DeviceInfo(
+                category=DeviceCategory.OPTICAL_SWITCH,
+                model="OSX-150",
+                serial_number="12345",
+                state=ConnectionState.CONNECTED,
+            )
+        )
+
+        self.assertEqual(lookup.requests, [])
+        self.assertEqual(window.hardware_part_number.currentText(), "MANUAL-PART")
+        window.close()
+
+    def test_changed_switch_serial_clears_stale_part_and_ignores_old_result(self):
+        lookup = FakePartNumberLookupController()
+        window = MainWindow(part_lookup_controller=lookup)
+        window.hardware_main_board_serial.setText("OLD")
+        window.hardware_part_number.setCurrentText("OLD-PART")
+
+        for serial in ("10001", "10002"):
+            window._hardware_device_status_changed(
+                DeviceInfo(
+                    category=DeviceCategory.OPTICAL_SWITCH,
+                    model="OSX-100",
+                    serial_number=serial,
+                    state=ConnectionState.CONNECTED,
+                )
+            )
+
+        self.assertEqual(window.hardware_main_board_serial.text(), "10002")
+        self.assertEqual(window.hardware_part_number.currentText(), "")
+        lookup.succeeded.emit(1, "10001", "STALE-PART")
+        self.assertEqual(window.hardware_part_number.currentText(), "")
+        lookup.succeeded.emit(2, "10002", "CURRENT-PART")
+        self.assertEqual(window.hardware_part_number.currentText(), "CURRENT-PART")
+        window.close()
+
+    def test_automatic_lookup_failure_keeps_serial_and_manual_entry_available(self):
+        lookup = FakePartNumberLookupController()
+        window = MainWindow(part_lookup_controller=lookup)
+        window._hardware_device_status_changed(
+            DeviceInfo(
+                category=DeviceCategory.OPTICAL_SWITCH,
+                model="OSX-150",
+                serial_number="24680",
+                state=ConnectionState.CONNECTED,
+            )
+        )
+
+        lookup.failed.emit(
+            1,
+            "24680",
+            "no_matching_serial",
+            "No matching folder was found.",
+        )
+
+        self.assertEqual(window.hardware_main_board_serial.text(), "24680")
+        self.assertEqual(window.hardware_part_number.currentText(), "")
+        self.assertTrue(window.hardware_part_number.isEditable())
+        self.assertIn(
+            "Connected",
+            window.hardware_status_panel.optical_switch_status.text(),
+        )
+        self.assertIn("lookup failed", window.statusBar().currentMessage())
+        window.close()
+
+    def test_switch_autofill_does_not_replace_loaded_or_active_run_metadata(self):
+        for run_is_active in (False, True):
+            with self.subTest(run_is_active=run_is_active):
+                lookup = FakePartNumberLookupController()
+                window = MainWindow(part_lookup_controller=lookup)
+                window.hardware_main_board_serial.setText("SAVED")
+                window.hardware_part_number.setCurrentText("SAVED-PART")
+                if run_is_active:
+                    window.hardware_controller.worker = object()
+                else:
+                    window.run_data = RunData(
+                        Path("saved.csv"),
+                        [],
+                        {
+                            "Main board serial": "SAVED",
+                            "Part number": "SAVED-PART",
+                        },
+                    )
+
+                window._hardware_device_status_changed(
+                    DeviceInfo(
+                        category=DeviceCategory.OPTICAL_SWITCH,
+                        model="OSX-150",
+                        serial_number="NEW-SERIAL",
+                        state=ConnectionState.CONNECTED,
+                    )
+                )
+
+                self.assertEqual(window.hardware_main_board_serial.text(), "SAVED")
+                self.assertEqual(window.hardware_part_number.currentText(), "SAVED-PART")
+                self.assertEqual(lookup.requests, [])
+                window.hardware_controller.worker = None
+                window.close()
+
+    def test_manual_part_lookup_uses_exporter_and_updates_loaded_metadata(self):
+        lookup = FakePartNumberLookupController()
+        window = MainWindow(part_lookup_controller=lookup)
+        window.run_data = RunData(Path("saved.csv"), [], {})
+        window.hardware_main_board_serial.setText("SN13579")
+        window.coc_exporter.find_part_number = MagicMock(return_value="MANUAL-PART")
+
+        window.lookup_part_number()
+
+        window.coc_exporter.find_part_number.assert_called_once_with(
+            "SN13579",
+            str(DEFAULT_PART_LOOKUP_ROOT),
+        )
+        self.assertEqual(window.hardware_part_number.currentText(), "MANUAL-PART")
+        self.assertEqual(window.run_data.metadata["Part number"], "MANUAL-PART")
         window.close()
 
     def test_completed_replacement_dialog_prefills_recommendations(self):

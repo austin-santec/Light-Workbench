@@ -44,7 +44,8 @@ be used as source locations. The release scripts keep deployment output in
 ## Change placement guide
 
 - UI display, dialogs, and Qt signal wiring: `ilm_app.py` or `ui/`.
-- Workflow state and worker ownership: `application/`.
+- Workflow state, worker ownership, and asynchronous metadata lookup:
+  `application/`.
 - Persistent connection serialization and exclusive hardware leases:
   `application/hardware_connection.py` and `domain/hardware_connection.py`.
 - Calculations, validation, and rules that do not need Qt or hardware:

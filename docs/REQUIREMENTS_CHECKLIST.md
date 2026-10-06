@@ -22,6 +22,11 @@ Implementation note: model-specific controlled criteria and session-only Admin
 Mode are now implemented. The detailed requirement counts above should be
 re-audited against the full requirements document before a formal release.
 
+Metadata-entry update: connecting a supported OSX now fills Main board serial
+from its existing identity response and attempts part-number lookup in the
+background. Lookup failure does not change hardware readiness, and loaded or
+active run metadata remains protected.
+
 ## Quick status
 
 - [x] **7 completed requirements**

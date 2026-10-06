@@ -52,6 +52,13 @@ transient diagnostics while safely closing the session and blocking routing.
 These details are hardware status only and do not alter run CSV/JSON data or
 measurement timing.
 
+After a supported switch reaches the Connected state, the main window may use
+the serial already present in `DeviceInfo` as the setup's Main board serial and
+request a background part-number lookup. This is a presentation/application
+convenience: it sends no additional SCPI command, does not alter the separate
+operator-entered Switch serial, does not affect hardware readiness when lookup
+fails, and cannot overwrite loaded or active run metadata.
+
 `domain/models.py` owns the vendor-neutral `DeviceInfo`, `DeviceCategory`, and
 `ConnectionState` models. `hardware/device_identity.py` provides a fallback
 for older adapters and test doubles. The normal run worker reports Connecting,

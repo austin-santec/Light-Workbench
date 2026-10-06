@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.16.4**. The single
+The current source release is **Light Workbench 1.17.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -48,6 +48,7 @@ support logs coalesce consecutive invalid samples into start/end episodes.
 | measurement_worker.py | Compatibility facade for the application measurement worker. |
 | application/live_controller.py | Shared meter worker lifecycle used by Live IL and the main-window reference calculation. |
 | application/hardware_connection.py | Persistent single-thread hardware ownership, capability proxies, and exclusive workflow leases. |
+| application/part_number_lookup.py | Background part-number lookup with request IDs and categorized failures; it never uses the hardware executor. |
 | domain/hardware_connection.py | Vendor-neutral connection capabilities, readiness snapshots, and ownership errors. |
 | application/power_diagnostics_controller.py | Non-recording raw-power meter worker lifecycle for Power Measurement Diagnostics. |
 | application/hardware_planning.py | Normalizes channel-mode selections before a hardware run starts. |
@@ -203,6 +204,10 @@ short range.
    resulting two-decimal offsets back to the setup without opening the Live IL
    window. Reference calibration uses a dedicated stabilized timing profile
    and does not slow normal production measurements.
+   When a supported OSX connects and no run is loaded or active, the serial
+   already returned by `*IDN?` fills Main board serial and starts a background
+   part-number lookup. Lookup failure leaves the hardware connected and allows
+   manual entry; Switch serial is not changed.
 4. Choose `Start Run` and confirm the warning dialog.
 5. The worker leases the already-connected supported switch and OP815, reports
    their identity and lifecycle state, routes a logical channel, and

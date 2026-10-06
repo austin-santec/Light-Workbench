@@ -139,6 +139,9 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "validation_reason",
         "invalid_wavelength",
         "invalid_sample_count",
+        "part_number",
+        "lookup_mode",
+        "lookup_request_id",
     }
 )
 

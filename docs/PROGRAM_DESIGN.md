@@ -163,6 +163,13 @@ session. This allows normal runs, reference calculation, Live IL, Red Light,
 and Power Diagnostics to reuse one connection without exposing native handles
 across worker threads or allowing simultaneous control.
 
+`application/part_number_lookup.py` owns background execution for the optional
+network-backed part-number lookup. The main window projects the serial from a
+newly connected supported switch into the setup form only when no run is
+loaded or active, then applies a lookup result only if its request and serial
+are still current. Lookup failure remains separate from hardware readiness and
+never writes run data.
+
 `domain/hardware_connection.py` defines capability, readiness, snapshot, and
 ownership errors without importing Qt or vendor drivers. Normal-run readiness
 requires available measurement hardware (plus a separate laser when configured)

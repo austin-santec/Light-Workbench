@@ -67,6 +67,10 @@ from application.run_start import (
     prepare_hardware_run,
 )
 from application.admin_session import AdminSession
+from application.part_number_lookup import (
+    PartNumberLookupController,
+    classify_part_lookup_error,
+)
 from application.reference_session import ReferenceSession
 from domain.measurement import (
     calculate_insertion_loss,
@@ -76,6 +80,7 @@ from domain.measurement import (
 )
 from domain.reference import ReferenceMethod, new_reference_snapshot
 from domain.hardware_connection import HardwareCapability
+from domain.models import ConnectionState, DeviceCategory
 from domain.limit_profiles import (
     LimitProfile,
     default_limit_profiles,
@@ -509,7 +514,12 @@ class ShortcutButton(QPushButton):
 class MainWindow(QMainWindow):
     reference_values_changed = pyqtSignal(float, float)
 
-    def __init__(self, initial_path: str | None = None, support_logger=None):
+    def __init__(
+        self,
+        initial_path: str | None = None,
+        support_logger=None,
+        part_lookup_controller=None,
+    ):
         super().__init__()
         self.support_logger = support_logger or get_support_logging_service()
         self.current_run_workflow = None
@@ -552,6 +562,18 @@ class MainWindow(QMainWindow):
             self._hardware_connection_operation_finished
         )
         self.coc_exporter = FileCocExporter(self.support_logger)
+        self.part_lookup_controller = part_lookup_controller or PartNumberLookupController(
+            self.coc_exporter.find_part_number,
+            self,
+        )
+        self.part_lookup_controller.succeeded.connect(
+            self._automatic_part_lookup_succeeded
+        )
+        self.part_lookup_controller.failed.connect(self._automatic_part_lookup_failed)
+        self._device_connection_states = {}
+        self._connected_switch_serial = ""
+        self._active_part_lookup_request = None
+        self._part_lookup_requests = {}
         self.run_repository = FileRunRepository(self.support_logger)
         self.unit_repository = FileUnitRepository(self.support_logger)
         self.demo_meter: SimulatedPowerMeter | None = None
@@ -730,6 +752,211 @@ class MainWindow(QMainWindow):
             self.hardware_status_panel.set_device_status(device_info)
         if device_info.connection_warning:
             self.statusBar().showMessage(device_info.connection_warning, 8000)
+        self._handle_connected_switch_metadata(device_info)
+
+    def _handle_connected_switch_metadata(self, device_info):
+        """Autofill setup metadata once for each real switch connection."""
+        category = device_info.category
+        previous_state = self._device_connection_states.get(
+            category,
+            ConnectionState.DISCONNECTED,
+        )
+        self._device_connection_states[category] = device_info.state
+        if (
+            category != DeviceCategory.OPTICAL_SWITCH
+            or device_info.state != ConnectionState.CONNECTED
+        ):
+            return
+
+        model = normalize_switch_model(device_info.model)
+        if model not in ("OSX-100", "OSX-150"):
+            return
+        serial = self.coc_exporter.normalise_serial(device_info.serial_number)
+        if not serial:
+            return
+
+        serial_changed = serial.casefold() != self._connected_switch_serial.casefold()
+        new_connection = previous_state in (
+            ConnectionState.DISCONNECTED,
+            ConnectionState.CONNECTING,
+            ConnectionState.ERROR,
+        )
+        if not serial_changed and not new_connection:
+            return
+        self._connected_switch_serial = serial
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "metadata.main_board_serial_detected",
+            model=model,
+            unit_serial=serial,
+            lookup_mode="automatic",
+            status="detected",
+        )
+
+        if self.run_data is not None or self.hardware_run_active:
+            reason = (
+                "active_run" if self.hardware_run_active else "loaded_historical_run"
+            )
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "metadata.autofill_skipped",
+                model=model,
+                unit_serial=serial,
+                lookup_mode="automatic",
+                reason=reason,
+                status="skipped",
+            )
+            self.statusBar().showMessage(
+                "Connected %s serial %s was not copied into the loaded run metadata."
+                % (model, serial),
+                8000,
+            )
+            return
+
+        current_serial = self.coc_exporter.normalise_serial(
+            self.hardware_main_board_serial.text()
+        )
+        form_serial_changed = current_serial.casefold() != serial.casefold()
+        self._active_part_lookup_request = None
+        if form_serial_changed:
+            self.hardware_main_board_serial.setText(serial)
+            self.hardware_part_number.setCurrentText("")
+            self.metadata_labels["Part number"].setText("-")
+        elif self.hardware_part_number.currentText().strip():
+            return
+
+        self._start_automatic_part_lookup(serial, model)
+
+    def _start_automatic_part_lookup(self, serial, model):
+        try:
+            request_id = self.part_lookup_controller.start(
+                serial,
+                DEFAULT_PART_LOOKUP_ROOT,
+            )
+        except Exception as error:
+            self._show_automatic_part_lookup_failure(
+                serial,
+                model,
+                classify_part_lookup_error(error),
+                str(error),
+            )
+            return
+        self._active_part_lookup_request = request_id
+        self._part_lookup_requests[request_id] = (serial, model)
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "metadata.part_lookup_started",
+            model=model,
+            unit_serial=serial,
+            lookup_mode="automatic",
+            lookup_request_id=request_id,
+            status="started",
+        )
+
+    def _automatic_part_lookup_is_current(self, request_id, serial):
+        if request_id != self._active_part_lookup_request:
+            return False
+        if self.run_data is not None or self.hardware_run_active:
+            return False
+        current_serial = self.coc_exporter.normalise_serial(
+            self.hardware_main_board_serial.text()
+        )
+        if current_serial.casefold() != serial.casefold():
+            return False
+        return not self.hardware_part_number.currentText().strip()
+
+    def _automatic_part_lookup_succeeded(self, request_id, serial, part_number):
+        serial, model = self._part_lookup_requests.pop(
+            request_id,
+            (serial, "OSX"),
+        )
+        if not self._automatic_part_lookup_is_current(request_id, serial):
+            self._record_stale_part_lookup(request_id, serial, model)
+            return
+        self._active_part_lookup_request = None
+        self._apply_part_number_result(part_number, update_run_data=False)
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "metadata.part_lookup_succeeded",
+            model=model,
+            unit_serial=serial,
+            part_number=part_number,
+            lookup_mode="automatic",
+            lookup_request_id=request_id,
+            status="success",
+        )
+        self.statusBar().showMessage(
+            "Main board serial %s detected; part number %s found."
+            % (serial, part_number),
+            8000,
+        )
+
+    def _automatic_part_lookup_failed(
+        self,
+        request_id,
+        serial,
+        failure_category,
+        message,
+    ):
+        serial, model = self._part_lookup_requests.pop(
+            request_id,
+            (serial, "OSX"),
+        )
+        if not self._automatic_part_lookup_is_current(request_id, serial):
+            self._record_stale_part_lookup(request_id, serial, model)
+            return
+        self._active_part_lookup_request = None
+        self._show_automatic_part_lookup_failure(
+            serial,
+            model,
+            failure_category,
+            message,
+            request_id=request_id,
+        )
+
+    def _show_automatic_part_lookup_failure(
+        self,
+        serial,
+        model,
+        failure_category,
+        message,
+        *,
+        request_id=None,
+    ):
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "metadata.part_lookup_failed",
+            level=SupportLogLevel.WARNING,
+            model=model,
+            unit_serial=serial,
+            lookup_mode="automatic",
+            lookup_request_id=request_id,
+            reason=failure_category,
+            error_message=message,
+            status="error",
+        )
+        detail = " ".join(str(message).split())
+        self.statusBar().showMessage(
+            "%s connected and main board serial %s was detected, but the part-number "
+            "lookup failed: %s Enter the part number manually or use Lookup Part "
+            "Number to retry." % (model, serial, detail),
+            12000,
+        )
+
+    def _record_stale_part_lookup(self, request_id, serial, model):
+        if self._active_part_lookup_request == request_id:
+            self._active_part_lookup_request = None
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "metadata.part_lookup_result_ignored",
+            level=SupportLogLevel.WARNING,
+            model=model,
+            unit_serial=serial,
+            lookup_mode="automatic",
+            lookup_request_id=request_id,
+            reason="stale_or_protected_metadata",
+            status="ignored",
+        )
 
     def _hardware_connection_snapshot_changed(self, _snapshot):
         """Apply capability readiness to only hardware-dependent controls."""
@@ -2376,20 +2603,52 @@ class MainWindow(QMainWindow):
     def lookup_part_number(self):
         serial = self.hardware_main_board_serial.text().strip()
         lookup_root = str(DEFAULT_PART_LOOKUP_ROOT)
+        self._active_part_lookup_request = None
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "metadata.part_lookup_started",
+            unit_serial=self.coc_exporter.normalise_serial(serial),
+            lookup_mode="manual",
+            status="started",
+        )
         try:
             part_number = self.coc_exporter.find_part_number(serial, lookup_root)
         except (OSError, LookupError, ValueError) as error:
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "metadata.part_lookup_failed",
+                level=SupportLogLevel.WARNING,
+                unit_serial=self.coc_exporter.normalise_serial(serial),
+                lookup_mode="manual",
+                reason=classify_part_lookup_error(error),
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
             QMessageBox.warning(self, "Part number lookup", str(error))
             return
 
-        self.hardware_part_number.setCurrentText(part_number)
-        self.metadata_labels["Part number"].setText(part_number)
-        if self.run_data is not None:
-            self.run_data.metadata["Part number"] = part_number
+        self._apply_part_number_result(part_number, update_run_data=True)
+        normalized_serial = self.coc_exporter.normalise_serial(serial)
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "metadata.part_lookup_succeeded",
+            unit_serial=normalized_serial,
+            part_number=part_number,
+            lookup_mode="manual",
+            status="success",
+        )
         self.statusBar().showMessage(
             "Part number found for Main Board serial %s."
-            % self.coc_exporter.normalise_serial(serial)
+            % normalized_serial
         )
+
+    def _apply_part_number_result(self, part_number, *, update_run_data):
+        """Apply a completed lookup on the UI thread."""
+        self.hardware_part_number.setCurrentText(part_number)
+        self.metadata_labels["Part number"].setText(part_number)
+        if update_run_data and self.run_data is not None:
+            self.run_data.metadata["Part number"] = part_number
 
     def coc_template_path(self):
         configured = self.settings.value("coc_template_path", "")
@@ -4165,6 +4424,8 @@ class MainWindow(QMainWindow):
             )
             event.ignore()
             return
+        if hasattr(self, "part_lookup_controller"):
+            self.part_lookup_controller.close()
         self._record_support(
             SupportEventCategory.APPLICATION,
             "application.close_completed",

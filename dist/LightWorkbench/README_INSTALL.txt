@@ -69,7 +69,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.16.4; an existing executable keeps its prior version until rebuilt.
+1.17.0; an existing executable keeps its prior version until rebuilt.
 
 
 3. VERIFY VISA
@@ -204,7 +204,11 @@ lookup, the computer must have access to:
 
   U:\Product Log\Units-COCs-Param Files\OSX-150
 
-If that network path is unavailable, enter the part number manually.
+If that network path is unavailable, enter the part number manually. When a
+supported OSX connects and no run is loaded or active, its reported serial
+fills Main board serial and the lookup starts automatically in the background.
+Lookup failure does not disconnect the hardware or change the separately
+entered Switch serial.
 The two graphics included in the COC template are preserved in exported files.
 Replacement recommendations are calculated for the selected run but are not
 stored as permanent results. Completed replacements and designated spare ports

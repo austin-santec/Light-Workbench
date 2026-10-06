@@ -62,6 +62,15 @@ reports a recognized model that has not been verified for this application,
 the run is refused with an explicit unsupported-device message; unknown device
 identities are not silently treated as compatible.
 
+When a supported OSX connects and no run is loaded or active, its reported
+device serial automatically fills **Main board serial** and Light Workbench
+looks up the matching part number in the designated folder. This network
+lookup runs in the background. If it fails, the hardware remains connected,
+the detected serial remains in the setup form, and the operator can enter a
+part number manually or retry with **Lookup Part Number**. The separately
+entered **Switch serial** is never changed by this convenience feature, and
+loaded or active run metadata is never overwritten.
+
 From `Tools > Red Light Test...`, the operator can open a separate pre-test
 window for checking a switch with a VFL. Opening the menu item does not connect
 to the switch. Click `Start Red Light Test` to connect and select channel 1;
@@ -147,6 +156,7 @@ redaction, and support-bundle details.
 | `config/app_info.py` | Single source for application name, version, tagline, and About text |
 | `application/run_controller.py` | Hardware-run lifecycle controller and queued worker command boundary |
 | `application/hardware_connection.py` | Persistent serialized hardware ownership, capability leases, and managed device proxies |
+| `application/part_number_lookup.py` | Non-blocking part-number lookup controller and lookup-failure classification |
 | `application/live_controller.py` | Live IL meter worker lifecycle controller |
 | `application/red_light_controller.py` | Red Light Test switch worker lifecycle controller |
 | `application/power_diagnostics_controller.py` | Non-recording raw-power diagnostic lifecycle controller |
@@ -238,7 +248,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.16.4**; an existing executable keeps its prior
+current source version is **1.17.0**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
@@ -468,7 +478,11 @@ as `17688`, the lookup finds a directory beginning with
 `SN17688_` and uses the remainder of that directory name as the part number.
 `File > Part Number Lookup Folder` opens the designated lookup folder in
 Windows File Explorer. The location is fixed and is not editable in the
-application. The part number can always be entered manually.
+application. The part number can always be entered manually. Connecting a
+supported OSX also uses the serial already returned by its identity response
+to fill Main Board serial and start this lookup in the background when no run
+is loaded or active. A missing network folder or match does not disconnect the
+hardware or prevent manual entry.
 The Part number field is also an editable drop-down containing the current
 standard OSX-150 part numbers. Operating band is selected from `O band` or
 `C band`. The `Tested by` field accepts the operator's initials and is saved
