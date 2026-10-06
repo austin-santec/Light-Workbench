@@ -73,6 +73,11 @@ class UnitPersistenceTests(unittest.TestCase):
                 record["completed_replacements"],
                 [{"current_port": 4, "replacement_port": 43}],
             )
+            self.assertEqual(len(record["replacement_history"]), 1)
+            self.assertEqual(
+                record["replacement_history"][0]["current_port"],
+                4,
+            )
             self.assertEqual(record["designated_spares"], [41, 46])
             self.assertEqual(record["runs"][0]["run_number"], 2)
             self.assertEqual(record["runs"][0]["switch_serial"], "SW/123")
@@ -80,6 +85,49 @@ class UnitPersistenceTests(unittest.TestCase):
                 run_csv_for_number(unit_directory, 2, "SW/123"),
                 run_directory / "Run-2-SW-123.csv",
             )
+
+    def test_unit_record_round_trips_append_only_replacement_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            unit_directory = unit_directory_for_metadata(
+                root, {"Main board serial": "17688"}
+            )
+            run_directory = run_directory_for_number(unit_directory, 1, "SW1")
+            first = {
+                "event_id": "first",
+                "event_type": "replacement_recorded",
+                "root_port": 14,
+                "current_port": 14,
+                "replacement_port": 41,
+                "reason": "High loss",
+                "operator": "DA",
+                "recorded_at_utc": "2026-10-06T21:32:18Z",
+            }
+            second = {
+                "event_id": "second",
+                "event_type": "replacement_recorded",
+                "root_port": 14,
+                "current_port": 41,
+                "replacement_port": 43,
+                "previous_record_id": "first",
+                "reason": "Replacement port failed",
+                "operator": "JS",
+                "recorded_at_utc": "2026-10-09T16:15:00Z",
+            }
+            save_unit_record(
+                unit_directory,
+                {"Main board serial": "17688"},
+                [{"current_port": 14, "replacement_port": 43}],
+                [46],
+                1,
+                run_directory,
+                switch_serial="SW1",
+                replacement_history=[first, second],
+            )
+
+            record = load_unit_record(unit_directory)
+            self.assertEqual(len(record["replacement_history"]), 2)
+            self.assertEqual(record["completed_replacements"][0]["replacement_port"], 43)
 
     def test_available_runs_only_returns_existing_numbered_csvs(self):
         with tempfile.TemporaryDirectory() as directory:

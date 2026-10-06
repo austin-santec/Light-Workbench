@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.19.0**. The single
+The current source release is **Light Workbench 1.20.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -255,13 +255,13 @@ use backups. Recommendations for current channels over the warning limit are
 classified as required; improvements to channels already within the limit are
 classified as optional. The result is stored on `RunData` and displayed on
 screen only; it is not stored as permanent run data. A run with no extra
-measured rows reports the analysis as not applicable. `Record Replaced
-Ports...` separately records physical swaps that were actually completed using
-Current Port and Replacement Port fields, and accepts designated spare ports.
-Completed swaps and designated spares are displayed in the Replacement
-analysis panel and saved in the shared unit `unit.json`; they are available to
-all numbered runs for that unit. Older replacement
-records with a logical-channel field are migrated when loaded.
+measured rows reports the analysis as not applicable. `Manage Port
+Replacements...` documents physical swaps completed outside the application
+using Current Port, Replacement Port, reason, operator, and timestamp.
+Append-only history preserves repeated chains such as `14 -> 41 -> 43`, while
+the effective projection remains compatible with COC and replacement analysis.
+The workflow does not change, identify, or verify switch mappings and does not
+use `CLOSe?`; older two-field records remain loadable.
 `Copy Replacement Notes` copies the completed Current Port -> Replacement Port
 pairs in a plain-text format for the Unit Editor notes.
 `Copy Raw Data...` copies accepted measurements from the active run as
@@ -396,9 +396,10 @@ metadata in E-F:
 RunRecorder defaults to `Documents\ILM-Reads`. New hardware runs are grouped
 under `Unit-[main board serial]\Run-N-[switch serial]\`, with a same-named CSV
 and JSON file in each numbered run folder. The unit folder also contains
-`unit.json`, which stores main-board/part identity, completed replacements,
-designated spares, and the index of available runs. Switch serial, operating
-band, and tested-by initials are run-specific. Legacy timestamped runs and
+`unit.json`, which stores main-board/part identity, append-only replacement
+history, its effective completed-replacement projection, designated spares,
+and the index of available runs. Switch serial, operating band, and tested-by
+initials are run-specific. Legacy timestamped runs and
 older unsuffixed `Run-N` folders remain supported and can still be opened
 directly.
 
@@ -418,8 +419,10 @@ versioned before broad deployment.
 Replacement analysis is calculated from the selected run and displayed in the
 UI only. Manually completed replacements and designated spare ports are stored
 in the shared `unit.json`, so they carry across numbered runs without changing
-the measurement table. The CSV measurement table remains three columns so it
-stays compatible with Excel and older CSV loading.
+the measurement table. Replacement history is append-only and does not use
+`CLOSe?`, send mapping commands, or verify the external hardware change. The
+CSV measurement table remains three columns so it stays compatible with Excel
+and older CSV loading.
 
 The UI table has an optional `Compare with` selector populated from the active
 unit's numbered-run index. Selecting a previous run adds two read-only columns

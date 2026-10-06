@@ -516,6 +516,54 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(dialog.table.cellWidget(0, 1).value(), 49)
         dialog.close()
 
+    def test_completed_replacement_dialog_records_reason_operator_and_history(self):
+        dialog = CompletedReplacementDialog(operator="DA")
+        dialog.table.cellWidget(0, 0).setValue(14)
+        dialog.table.cellWidget(0, 1).setValue(41)
+        dialog.reason_edit.setText("High insertion loss")
+        dialog.operator_edit.setText("DA")
+
+        dialog.accept_records()
+
+        self.assertEqual(len(dialog.history), 1)
+        self.assertEqual(dialog.history[0]["current_port"], 14)
+        self.assertEqual(dialog.history[0]["replacement_port"], 41)
+        self.assertEqual(dialog.history[0]["reason"], "High insertion loss")
+        self.assertEqual(dialog.history[0]["operator"], "DA")
+        self.assertEqual(dialog.records[0]["replacement_port"], 41)
+        dialog.close()
+
+    def test_completed_replacement_dialog_preserves_replacement_chain(self):
+        dialog = CompletedReplacementDialog(
+            history=[
+                {
+                    "event_id": "first",
+                    "event_type": "replacement_recorded",
+                    "current_port": 14,
+                    "replacement_port": 41,
+                    "reason": "High loss",
+                    "operator": "DA",
+                    "recorded_at_utc": "2026-10-06T21:32:18Z",
+                }
+            ],
+            operator="JS",
+        )
+        dialog.table.selectRow(0)
+        dialog.replace_again()
+        self.assertEqual(dialog.table.rowCount(), 2)
+        self.assertEqual(dialog.table.cellWidget(1, 0).value(), 41)
+        dialog.table.selectRow(1)
+        dialog.table.cellWidget(1, 1).setValue(43)
+        dialog.reason_edit.setText("Replacement port failed")
+        dialog.operator_edit.setText("JS")
+
+        dialog.accept_records()
+
+        self.assertEqual(len(dialog.history), 2)
+        self.assertEqual(dialog.records[0]["current_port"], 14)
+        self.assertEqual(dialog.records[0]["replacement_port"], 43)
+        dialog.close()
+
     def test_copy_replacement_notes_formats_recorded_ports_for_unit_editor(self):
         window = MainWindow()
         window.completed_replacements = [

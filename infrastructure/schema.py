@@ -4,7 +4,7 @@ from collections.abc import Mapping
 
 
 CURRENT_RUN_SCHEMA_VERSION = 3
-CURRENT_UNIT_SCHEMA_VERSION = 2
+CURRENT_UNIT_SCHEMA_VERSION = 3
 
 
 def _version(payload: Mapping[str, object]) -> int:
@@ -50,6 +50,7 @@ def migrate_unit_payload(payload: Mapping[str, object]) -> dict:
     migrated = dict(payload)
     migrated.setdefault("unit_metadata", {})
     migrated.setdefault("completed_replacements", [])
+    migrated.setdefault("replacement_history", None)
     migrated.setdefault("designated_spares", [])
     migrated.setdefault("runs", [])
     migrated["schema_version"] = CURRENT_UNIT_SCHEMA_VERSION

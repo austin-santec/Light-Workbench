@@ -69,7 +69,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.18.0; an existing executable keeps its prior version until rebuilt.
+1.20.0; an existing executable keeps its prior version until rebuilt.
 
 
 3. VERIFY VISA
@@ -104,9 +104,12 @@ folder; install VISA through the approved vendor installer.
      hardware is connected, click Calculate Reference, which reads both wavelengths from the ILM/OP815 and
      applies the measured offsets automatically; the values remain manually
      editable.
- 6. Enter the numbered Run number for this test. Use 1 for the first test on
-    the unit, 2 for the next test, and so on. Click Start Run and confirm the
-    hardware warning.
+  6. Enter the numbered Run number for this test. Use 1 for the first test on
+    the unit, 2 for the next test, and so on. Complete the required setup fields
+    and calculate the reference before clicking Start Run. The application
+    validates these items before it moves the switch or reads the ILM. Admin
+    Mode can explicitly continue without descriptive metadata, but it cannot
+    bypass hardware readiness or an invalid reference.
 
 OPTIONAL RED-LIGHT PRE-TEST
 
@@ -207,7 +210,8 @@ optimization warning only when a measured replacement candidate is available.
 
 The 45-channel template is selected for counts 1-45 and the 48-channel template
 for counts 46-48. Unused rows are removed from the exported workbook. Excel
-does not need to be installed. For automatic part-number
+does not need to be installed. COC files use the name format
+COC OSX-150 <Main Board serial>_YYMMDD-HHMMSS.xlsx. For automatic part-number
 lookup, the computer must have access to:
 
   U:\Product Log\Units-COCs-Param Files\OSX-150

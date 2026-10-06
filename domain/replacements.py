@@ -1,6 +1,8 @@
-"""Replacement-port recommendations for completed insertion-loss runs."""
+"""Replacement-port recommendations and manual replacement history."""
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from uuid import uuid4
 
 
 @dataclass(frozen=True)
@@ -14,6 +16,225 @@ class ReplacementReading:
     @property
     def worst_loss(self):
         return max(self.loss_1310, self.loss_1550)
+
+
+REPLACEMENT_RECORDED = "replacement_recorded"
+REPLACEMENT_VOIDED = "replacement_voided"
+
+
+def _utc_timestamp():
+    """Return an unambiguous UTC timestamp for replacement history."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
+        "+00:00", "Z"
+    )
+
+
+def new_replacement_event(
+    current_port,
+    replacement_port,
+    reason,
+    operator,
+    *,
+    reason_details="",
+    previous_record_id=None,
+    root_port=None,
+    source_run_number=None,
+    main_board_serial="",
+    switch_serial="",
+    record_id=None,
+    recorded_at_utc=None,
+):
+    """Create one append-only event for a manually completed replacement."""
+    try:
+        current_port = int(current_port)
+        replacement_port = int(replacement_port)
+    except (TypeError, ValueError):
+        raise ValueError("Replacement ports must be whole numbers.")
+    if current_port < 1 or replacement_port < 1:
+        raise ValueError("Replacement ports must be positive numbers.")
+    if current_port == replacement_port:
+        raise ValueError("Current Port and Replacement Port must be different.")
+    reason = str(reason or "").strip()
+    operator = str(operator or "").strip()
+    if not reason:
+        raise ValueError("A reason is required for a replacement record.")
+    if not operator:
+        raise ValueError("An operator is required for a replacement record.")
+    if root_port is None:
+        root_port = current_port
+    try:
+        root_port = int(root_port)
+    except (TypeError, ValueError):
+        raise ValueError("The original port must be a whole number.")
+    event = {
+        "event_id": str(record_id or uuid4()),
+        "event_type": REPLACEMENT_RECORDED,
+        "root_port": root_port,
+        "current_port": current_port,
+        "replacement_port": replacement_port,
+        "reason": reason,
+        "reason_details": str(reason_details or "").strip(),
+        "operator": operator,
+        "recorded_at_utc": (
+            _utc_timestamp() if recorded_at_utc is None else str(recorded_at_utc)
+        ),
+    }
+    if previous_record_id:
+        event["previous_record_id"] = str(previous_record_id)
+    if source_run_number not in (None, ""):
+        try:
+            event["source_run_number"] = int(source_run_number)
+        except (TypeError, ValueError):
+            pass
+    if str(main_board_serial or "").strip():
+        event["main_board_serial_at_recording"] = str(main_board_serial).strip()
+    if str(switch_serial or "").strip():
+        event["switch_serial_at_recording"] = str(switch_serial).strip()
+    return event
+
+
+def new_replacement_void_event(record_id, operator, reason):
+    """Create an append-only event that voids an earlier record."""
+    operator = str(operator or "").strip()
+    reason = str(reason or "").strip()
+    if not operator:
+        raise ValueError("An operator is required to void a replacement record.")
+    if not reason:
+        raise ValueError("A reason is required to void a replacement record.")
+    return {
+        "event_id": str(uuid4()),
+        "event_type": REPLACEMENT_VOIDED,
+        "target_record_id": str(record_id),
+        "reason": reason,
+        "operator": operator,
+        "recorded_at_utc": _utc_timestamp(),
+    }
+
+
+def normalise_replacement_history(events):
+    """Validate history events while preserving their audit fields."""
+    normalized = []
+    seen_ids = set()
+    for index, event in enumerate(events or [], start=1):
+        if not isinstance(event, dict):
+            raise ValueError("Replacement history event %d is not a record." % index)
+        event_type = str(event.get("event_type") or REPLACEMENT_RECORDED)
+        event_id = str(event.get("event_id") or "").strip()
+        if not event_id:
+            event_id = "legacy-replacement-%d" % index
+        if event_id in seen_ids:
+            raise ValueError("Replacement history contains duplicate event IDs.")
+        seen_ids.add(event_id)
+        if event_type == REPLACEMENT_RECORDED:
+            try:
+                current_port = int(event.get("current_port"))
+                replacement_port = int(event.get("replacement_port"))
+            except (TypeError, ValueError):
+                raise ValueError("Replacement history contains invalid ports.")
+            if current_port < 1 or replacement_port < 1:
+                raise ValueError("Replacement history ports must be positive.")
+            if current_port == replacement_port:
+                raise ValueError("A replacement event cannot use the same port twice.")
+            normalized_event = dict(event)
+            normalized_event.update(
+                {
+                    "event_id": event_id,
+                    "event_type": REPLACEMENT_RECORDED,
+                    "current_port": current_port,
+                    "replacement_port": replacement_port,
+                    "root_port": int(event.get("root_port") or current_port),
+                    "reason": str(event.get("reason") or "Not recorded"),
+                    "reason_details": str(event.get("reason_details") or ""),
+                    "operator": str(event.get("operator") or "Not recorded"),
+                    "recorded_at_utc": str(event.get("recorded_at_utc") or ""),
+                }
+            )
+            if event.get("previous_record_id"):
+                normalized_event["previous_record_id"] = str(
+                    event["previous_record_id"]
+                )
+            normalized.append(normalized_event)
+        elif event_type == REPLACEMENT_VOIDED:
+            target = str(event.get("target_record_id") or "").strip()
+            if not target:
+                raise ValueError("A void event must identify its target record.")
+            normalized.append(
+                {
+                    **event,
+                    "event_id": event_id,
+                    "event_type": REPLACEMENT_VOIDED,
+                    "target_record_id": target,
+                    "reason": str(event.get("reason") or "Not recorded"),
+                    "operator": str(event.get("operator") or "Not recorded"),
+                    "recorded_at_utc": str(event.get("recorded_at_utc") or ""),
+                }
+            )
+        else:
+            raise ValueError("Unsupported replacement history event type: %s" % event_type)
+    return normalized
+
+
+def legacy_replacement_history(records):
+    """Represent old two-port records as imported history events."""
+    history = []
+    for index, record in enumerate(records or [], start=1):
+        try:
+            current_port = int(record.get("current_port"))
+            replacement_port = int(record.get("replacement_port"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if current_port < 1 or replacement_port < 1 or current_port == replacement_port:
+            continue
+        history.append(
+            new_replacement_event(
+                current_port,
+                replacement_port,
+                "Not recorded (legacy replacement)",
+                "Not recorded",
+                record_id="legacy-replacement-%d" % index,
+                recorded_at_utc="",
+            )
+        )
+    return history
+
+
+def effective_replacements(history, *, include_audit_fields=True):
+    """Return the active two-port projection derived from append-only history."""
+    history = normalise_replacement_history(history)
+    records = {}
+    superseded = set()
+    voided = set()
+    for event in history:
+        if event["event_type"] == REPLACEMENT_RECORDED:
+            previous_id = event.get("previous_record_id")
+            if previous_id:
+                superseded.add(str(previous_id))
+            records[event["event_id"]] = event
+        elif event["event_type"] == REPLACEMENT_VOIDED:
+            voided.add(event["target_record_id"])
+    active = []
+    for event_id, event in records.items():
+        if event_id in superseded or event_id in voided:
+            continue
+        active.append(
+            {
+                **event,
+                "current_port": int(event.get("root_port") or event["current_port"]),
+                "replacement_port": int(event["replacement_port"]),
+            }
+        )
+    active = sorted(
+        active, key=lambda item: (item["current_port"], item["replacement_port"])
+    )
+    if include_audit_fields:
+        return active
+    return [
+        {
+            "current_port": item["current_port"],
+            "replacement_port": item["replacement_port"],
+        }
+        for item in active
+    ]
 
 
 def parse_extra_readings(value: str) -> list[ReplacementReading]:

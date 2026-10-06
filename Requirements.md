@@ -2,7 +2,7 @@
 
 **Source:** [OSX_IL_Test_Software_Requirements_RevB.xlsx](temp%20docs/OSX_IL_Test_Software_Requirements_RevB.xlsx), `Requirements` worksheet, rows 5–50. The workbook's Document Control sheet identifies the document as **version 0.1 Draft**, dated **2026-09-30**, and prepared for Santec California engineering, production, software, and quality stakeholders.
 
-**Assessment date:** 2026-10-06. **Software baseline:** Light Workbench 1.19.0 (`config/app_info.py`).
+**Assessment date:** 2026-10-06. **Software baseline:** Light Workbench 1.20.0 (`config/app_info.py`).
 
 **Assessment method:** Source-code, automated-test, and project-documentation review. This is an engineering gap assessment, not formal approval, hardware qualification, or user acceptance.
 
@@ -80,7 +80,7 @@ This assessment rates **17 requirements implemented, 24 partially implemented, a
 | --- | --- | --- | --- | --- |
 | FUN-027 | Must / MVP | Distinguish logical routed channels from physical switch channels. | Implemented | Routing uses a logical channel, queries the active physical port, shows it to the operator, and stores both values in run JSON. |
 | FUN-030 | Should / R1 | Rank spare channels using both wavelengths and show the calculation basis. | Partial | Replacement analysis uses both wavelengths and separates recommended from optional candidates. The complete controlled ranking basis is not fully presented or approved. |
-| FUN-031 | Must / MVP | Replace a routed channel with a selected spare and record old/new mapping, reason, operator, and timestamp. | Partial | The unit record stores manually entered Current Port → Replacement Port pairs and designated spares. It does not execute the switch remap or capture every required attribution field. |
+| FUN-031 | Must / MVP | Replace a routed channel with a selected spare and record old/new mapping, reason, operator, and timestamp. | Partial | Light Workbench now records the manually performed Current Port → Replacement Port change with reason, operator, timestamp, and append-only history, including repeated replacement chains. It intentionally does not execute, identify, or verify the hardware remap; the requirement wording should be clarified to match that operating model. |
 | FUN-032 | Must / MVP | Require two-wavelength retest after a mapping change. | Not implemented | Recording a replacement does not invalidate the affected final result or force a new accepted two-wavelength measurement. |
 | FUN-034 | Must / MVP | Show remaining unassigned spares and their latest test status. | Partial | Designated spares and replacement suggestions are visible. There is no authoritative assigned/unassigned spare inventory linked to each spare's latest disposition. |
 | FUN-035 | Must / MVP | Put the final logical-to-physical map and replacement identification in the debug file. | Partial | Support logs and run JSON record routed logical/physical pairs, and unit data records replacements. No single exported debug view currently assembles the complete final map and identifies every optimization replacement. |

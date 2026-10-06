@@ -108,8 +108,11 @@ can present one technician-friendly message and focus the first affected
 control without putting validation or side effects in the UI layer.
 
 `domain/replacements.py` owns replacement recommendations, designated-spare
-selection, and normalization of manually recorded replacements. It is kept
-independent of Qt, hardware adapters, and CSV/JSON file formats.
+selection, normalization of manually recorded replacements, append-only
+replacement events, and derivation of the effective replacement projection.
+It is kept independent of Qt, hardware adapters, and CSV/JSON file formats.
+Replacement events document changes performed outside Light Workbench; this
+workflow deliberately does not use `CLOSe?` or send mapping commands.
 
 `domain/coc_preparation.py` owns the report-publication boundary. It merges one
 explicit base run with at most one explicit replacement/retest run, preserves
@@ -165,8 +168,8 @@ recording, continuation renaming, and legacy JSON loading. The root
 `run_persistence.py` module remains a compatibility facade for older callers.
 
 `infrastructure/unit_persistence.py` owns unit JSON records, numbered-run
-paths, and normalization of shared replacements and designated spares. The
-root `unit_persistence.py` module remains a compatibility facade.
+paths, and persistence/migration of shared replacement history and designated
+spares. The root `unit_persistence.py` module remains a compatibility facade.
 
 `infrastructure/coc_export.py` owns capacity-aware template validation, COC
 workbook creation, merged-cell/row cleanup, print-area adjustment, and

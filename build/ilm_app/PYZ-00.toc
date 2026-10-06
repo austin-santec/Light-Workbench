@@ -86,6 +86,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\run_controller.py',
    'PYMODULE'),
+  ('application.run_preflight',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\run_preflight.py',
+   'PYMODULE'),
   ('application.run_start',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\run_start.py',

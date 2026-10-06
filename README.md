@@ -252,7 +252,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.19.0**; an existing executable keeps its prior
+current source version is **1.20.0**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
@@ -428,15 +428,19 @@ on screen only; they are not stored as run data.
 The program does not change the OSX-150 replacement configuration; the
 recommendations are an analysis for the operator to act on physically.
 
-After physically performing swaps, use `Record Replaced Ports...` in the
-Replacement analysis panel. Recommended swaps are pre-filled, and the table
-can be edited using the `Current Port` and `Replacement Port` fields.
-Completed replacements and designated spare ports are displayed in the panel
-and saved in the unit's shared `unit.json`; recording them does not alter the
-original measurements or recommendations. They remain available when another
-numbered run for the same unit is loaded.
-Use `Copy Replacement Notes` beside the recording button to copy the port pairs
-as plain text for pasting into the Unit Editor notes.
+After physically performing swaps, use `Manage Port Replacements...` in the
+Replacement analysis panel. The operator records the `Current Port`,
+`Replacement Port`, reason, and initials; the application supplies the UTC
+timestamp. Recommended swaps can be pre-filled, and designated spare ports
+remain available. Replacement events are append-only, so a later change such
+as `14 -> 41 -> 43` preserves the entire chain while normal COC consumers use
+the effective `14 -> 43` projection. Records and designated spares are saved
+in the unit's shared `unit.json`; recording them does not alter measurements
+or recommendations and never commands or verifies the switch. The workflow
+does not use `CLOSe?`; general routing behavior is documented separately.
+Use `Copy Replacement Notes` beside the management button to copy the active
+replacement records with their available reason, operator, and timestamp for
+pasting into the Unit Editor notes.
 
 ## COC workbook export
 

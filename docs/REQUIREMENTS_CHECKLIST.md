@@ -6,7 +6,7 @@ See [`Requirements.md`](../Requirements.md) for the full wording, evidence, and 
 
 **Last reviewed:** 2026-10-06
 
-**Software baseline:** Light Workbench 1.19.0
+**Software baseline:** Light Workbench 1.20.0
 
 **RevB total:** 46 requirement rows
 
@@ -94,9 +94,9 @@ Each item already has useful behavior, but the noted work remains.
   - Works now: analysis uses both wavelengths and separates recommended/optional replacements.
   - Next: approve and display the complete ranking calculation.
 
-- [ ] **FUN-031 — Replace a routed channel and record the complete change.** `[MVP]`
-  - Works now: Current Port → Replacement Port and designated spares are stored per unit.
-  - Next: execute/verify the real mapping and record reason, operator, and timestamp.
+- [ ] **FUN-031 — Document a manually performed replacement and record the complete change.** `[MVP]`
+  - Works now: Current Port → Replacement Port, reason, operator, timestamp, and append-only replacement history are stored per unit. Repeated changes can be tracked as chains such as 14 → 41 → 43.
+  - Important boundary: Light Workbench intentionally does not execute, identify, or verify the hardware mapping. The requirement wording should be clarified to reflect this manual process.
 
 - [ ] **FUN-034 — Show unassigned spares and their latest result.** `[MVP]`
   - Works now: designated spares and replacement suggestions are visible.

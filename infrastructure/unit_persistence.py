@@ -7,6 +7,11 @@ from datetime import datetime
 from pathlib import Path
 
 from infrastructure.schema import CURRENT_UNIT_SCHEMA_VERSION, migrate_unit_payload
+from domain.replacements import (
+    effective_replacements,
+    legacy_replacement_history,
+    normalise_replacement_history,
+)
 
 UNIT_SCHEMA_VERSION = CURRENT_UNIT_SCHEMA_VERSION
 UNIT_FILENAME = "unit.json"
@@ -141,11 +146,16 @@ def load_unit_record(unit_directory):
             "schema_version": UNIT_SCHEMA_VERSION,
             "unit_metadata": {},
             "completed_replacements": [],
+            "replacement_history": [],
             "designated_spares": [],
             "runs": [],
         }
     with path.open("r", encoding="utf-8") as json_file:
         payload = migrate_unit_payload(json.load(json_file))
+    history = payload.get("replacement_history")
+    if history is None:
+        history = legacy_replacement_history(payload.get("completed_replacements"))
+    history = normalise_replacement_history(history)
     return {
         "schema_version": payload.get("schema_version", UNIT_SCHEMA_VERSION),
         "unit_metadata": {
@@ -153,8 +163,9 @@ def load_unit_record(unit_directory):
             for key, value in dict(payload.get("unit_metadata") or {}).items()
             if key != "Switch serial"
         },
-        "completed_replacements": _normalise_replacements(
-            payload.get("completed_replacements")
+        "replacement_history": history,
+        "completed_replacements": effective_replacements(
+            history, include_audit_fields=False
         ),
         "designated_spares": _normalise_spares(payload.get("designated_spares")),
         "runs": list(payload.get("runs") or []),
@@ -169,6 +180,7 @@ def save_unit_record(
     run_number,
     run_directory,
     switch_serial=None,
+    replacement_history=None,
 ):
     """Atomically save shared unit data and the known run index."""
     unit_directory = Path(unit_directory)
@@ -179,16 +191,24 @@ def save_unit_record(
         for item in existing["runs"]
         if str(item.get("run_number")) != str(run_number)
     ]
-    run_directory = Path(run_directory)
-    runs.append(
-        {
-            "run_number": int(run_number),
-            "directory": run_directory.name,
-            "csv_file": "%s.csv" % run_directory.name,
-            "switch_serial": str(switch_serial or "").strip(),
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
-        }
-    )
+    if run_number is not None and run_directory is not None:
+        run_directory = Path(run_directory)
+        runs.append(
+            {
+                "run_number": int(run_number),
+                "directory": run_directory.name,
+                "csv_file": "%s.csv" % run_directory.name,
+                "switch_serial": str(switch_serial or "").strip(),
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        )
+    if replacement_history is None:
+        replacement_history = existing.get("replacement_history")
+        if not replacement_history and completed_replacements:
+            replacement_history = legacy_replacement_history(
+                completed_replacements
+            )
+    replacement_history = normalise_replacement_history(replacement_history)
     payload = {
         "schema_version": UNIT_SCHEMA_VERSION,
         "unit_metadata": {
@@ -196,8 +216,9 @@ def save_unit_record(
             for key in ("Main board serial", "Part number")
             if str(unit_metadata.get(key) or "").strip()
         },
-        "completed_replacements": _normalise_replacements(
-            completed_replacements
+        "replacement_history": replacement_history,
+        "completed_replacements": effective_replacements(
+            replacement_history, include_audit_fields=False
         ),
         "designated_spares": _normalise_spares(designated_spares),
         "runs": sorted(runs, key=lambda item: int(item.get("run_number", 0))),

@@ -15,7 +15,7 @@ represents one switch test of that unit.
 
 - Main board serial
 - Part number
-- Completed replacement records
+- Append-only replacement audit history and its current effective projection
 - Designated spare channels
 - Other information that should remain consistent when the switch changes
 
@@ -40,7 +40,7 @@ The storage format should not determine how business logic represents data.
 
 The current CSV and JSON formats remain supported for compatibility. If a
 future schema changes, include a `schema_version` and provide a migration path.
-Run JSON currently uses schema version 3; unit JSON uses schema version 2.
+Run JSON currently uses schema version 3; unit JSON uses schema version 3.
 Migration helpers reject newer versions instead of silently dropping fields.
 
 ## Format responsibilities
@@ -60,7 +60,13 @@ Migration helpers reject newer versions instead of silently dropping fields.
   `-02`, and later suffixes when a same-second export already exists.
 - XLSX: COC/report output only; it is not the primary application database.
 - Replacement analysis: calculated presentation data.
-- Manually recorded replacements and spares: persistent device data.
+- Manually recorded replacements and spares: persistent device data. Replacement
+  history is append-only: each manual replacement records the current port,
+  replacement port, reason, operator, and UTC timestamp. A later replacement
+  creates a linked event rather than editing the earlier event, so a chain such
+  as `14 -> 41 -> 43` remains available for audit. COC and normal UI consumers
+  receive a derived effective projection (`14 -> 43`). Void/correction events
+  preserve the original record and do not query or command the switch.
 
 ## Validated COC view
 
@@ -114,6 +120,10 @@ displayed for audit context but never authorize new hardware acquisition.
 - Write files atomically where possible.
 - Validate serials and path components before using them in filenames.
 - Preserve older run layouts while loading them.
+- Replacement records are unit-level documentation. The replacement workflow
+  does not use `CLOSe?`, change switch mappings, identify routed logical
+  channels, or verify a manually performed hardware change. General
+  `CLOSe?` behavior elsewhere remains a separate hardware concern.
 
 ## Rejected measurement evidence
 

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from infrastructure.unit_persistence import (
+    UNIT_SCHEMA_VERSION,
     available_run_numbers as _available_run_numbers,
     find_run_csv_for_number as _find_run_csv_for_number,
     infer_unit_directory as _infer_unit_directory,
@@ -68,6 +69,7 @@ class FileUnitRepository:
         run_number: int,
         run_directory: str | Path,
         switch_serial: str | None = None,
+        replacement_history: list[dict] | None = None,
     ) -> None:
         """Atomically save unit metadata and its run index."""
         try:
@@ -79,6 +81,7 @@ class FileUnitRepository:
                 run_number,
                 run_directory,
                 switch_serial,
+                replacement_history,
             )
         except Exception as error:
             self._record(
@@ -97,7 +100,7 @@ class FileUnitRepository:
             run_number=run_number,
             switch_serial=switch_serial,
             unit_serial=unit_metadata.get("Main board serial"),
-            schema_version_written=1,
+            schema_version_written=UNIT_SCHEMA_VERSION,
             status="success",
         )
 

@@ -9,6 +9,12 @@ from replacement_analysis import (
     replacement_metadata,
 )
 from domain.replacements import ReplacementReading as DomainReplacementReading
+from domain.replacements import (
+    effective_replacements,
+    new_replacement_event,
+    new_replacement_void_event,
+    normalise_replacement_history,
+)
 from run_data import MeasurementRecord
 
 
@@ -186,6 +192,42 @@ class ReplacementAnalysisTests(unittest.TestCase):
                     },
                 ]
             )
+
+    def test_replacement_history_derives_latest_effective_port(self):
+        first = new_replacement_event(14, 41, "High loss", "DA")
+        second = new_replacement_event(
+            41,
+            43,
+            "Replacement port failed",
+            "JS",
+            previous_record_id=first["event_id"],
+            root_port=14,
+        )
+
+        history = normalise_replacement_history([first, second])
+        effective = effective_replacements(history)
+
+        self.assertEqual(len(effective), 1)
+        self.assertEqual(effective[0]["current_port"], 14)
+        self.assertEqual(effective[0]["replacement_port"], 43)
+        self.assertEqual(effective[0]["operator"], "JS")
+
+    def test_voiding_preserves_the_original_event_and_removes_it_from_projection(self):
+        recorded = new_replacement_event(14, 41, "High loss", "DA")
+        voided = new_replacement_void_event(
+            recorded["event_id"], "DA", "Entered the wrong replacement port"
+        )
+
+        history = normalise_replacement_history([recorded, voided])
+
+        self.assertEqual(len(history), 2)
+        self.assertEqual(effective_replacements(history), [])
+
+    def test_new_replacement_event_requires_reason_and_operator(self):
+        with self.assertRaises(ValueError):
+            new_replacement_event(14, 41, "", "DA")
+        with self.assertRaises(ValueError):
+            new_replacement_event(14, 41, "High loss", "")
 
 
 if __name__ == "__main__":

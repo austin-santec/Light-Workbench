@@ -113,7 +113,12 @@ from run_data import MeasurementRecord, RunData
 from domain.replacements import (
     ReplacementReading,
     analyze_replacements,
+    effective_replacements,
+    legacy_replacement_history,
+    new_replacement_event,
+    new_replacement_void_event,
     normalise_completed_replacements,
+    normalise_replacement_history,
     recommendation_category,
 )
 from tools.dependency_check import DependencyReport, collect_dependency_report
@@ -349,38 +354,71 @@ class AboutDialog(QDialog):
 
 
 class CompletedReplacementDialog(QDialog):
-    """Edit the physical-port replacements that were actually performed."""
+    """Record manual replacements while preserving an append-only history."""
 
     def __init__(
         self,
         records=None,
         recommendations=None,
         designated_spares=None,
+        history=None,
+        operator="",
+        context=None,
         parent=None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Record Replaced Ports")
-        self.setMinimumSize(650, 450)
+        self.setWindowTitle("Manage Port Replacements")
+        self.setMinimumSize(760, 650)
+        self.default_operator = str(operator or "").strip()
+        self.context = dict(context or {})
+        self.history = normalise_replacement_history(history if history is not None else records)
+        self._original_events = {
+            event["event_id"]: event
+            for event in self.history
+            if event.get("event_type") == "replacement_recorded"
+        }
+        initial_records = effective_replacements(self.history)
+        self._row_records = []
+        self._last_detail_row = -1
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["Current Port", "Replacement Port"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.itemSelectionChanged.connect(self._show_selected_details)
 
         layout = QVBoxLayout(self)
         layout.addWidget(
             QLabel(
-                "Record the physical port swaps that were actually completed. "
-                "Recommendations are pre-filled when available."
+                "Record port replacements performed outside Light Workbench. "
+                "This dialog does not change or verify the OSX mapping."
             )
         )
         layout.addWidget(self.table, 1)
+
+        detail_layout = QFormLayout()
+        self.reason_edit = QLineEdit()
+        self.reason_edit.setPlaceholderText("Example: Excessive insertion loss")
+        self.operator_edit = QLineEdit(self.default_operator)
+        self.operator_edit.setPlaceholderText("Initials")
+        self.details_edit = QLineEdit()
+        self.details_edit.setPlaceholderText("Optional additional details")
+        detail_layout.addRow("Reason:", self.reason_edit)
+        detail_layout.addRow("Operator:", self.operator_edit)
+        detail_layout.addRow("Details:", self.details_edit)
+        layout.addLayout(detail_layout)
 
         row_buttons = QHBoxLayout()
         add_button = QPushButton("Add Replacement")
         add_button.clicked.connect(self.add_row)
         row_buttons.addWidget(add_button)
-        remove_button = QPushButton("Remove Selected")
+        replace_again_button = QPushButton("Replace Again...")
+        replace_again_button.clicked.connect(self.replace_again)
+        row_buttons.addWidget(replace_again_button)
+        remove_button = QPushButton("Void Selected")
+        remove_button.setToolTip(
+            "Mark the selected saved replacement inactive without deleting its history."
+        )
         remove_button.clicked.connect(self.remove_selected_row)
         row_buttons.addWidget(remove_button)
         row_buttons.addStretch()
@@ -398,12 +436,20 @@ class CompletedReplacementDialog(QDialog):
         spare_layout.addRow("Designated spare ports:", self.spare_ports_edit)
         layout.addLayout(spare_layout)
 
+        layout.addWidget(QLabel("Append-only audit history:"))
+        self.history_table = QTableWidget(0, 6)
+        self.history_table.setHorizontalHeaderLabels(
+            ["Current", "Replacement", "Reason", "Operator", "Recorded", "Event"]
+        )
+        self.history_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.history_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.history_table, 1)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept_records)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-        initial_records = list(records or [])
         if not initial_records:
             initial_records = [
                 {
@@ -417,8 +463,10 @@ class CompletedReplacementDialog(QDialog):
                 self.add_row(record)
         else:
             self.add_row()
+        self._refresh_history_table()
 
     def add_row(self, record=None):
+        self._sync_selected_details()
         row = self.table.rowCount()
         self.table.insertRow(row)
         values = record or {}
@@ -432,42 +480,214 @@ class CompletedReplacementDialog(QDialog):
             spin.setSpecialValueText("")
             spin.setValue(int(value or 0))
             self.table.setCellWidget(row, column, spin)
+        self._row_records.append(dict(values))
+        self.table.selectRow(row)
+        self._show_selected_details()
+
+    def _sync_selected_details(self):
+        row = self._last_detail_row
+        if row < 0:
+            row = self.table.currentRow()
+        if row < 0 or row >= len(self._row_records):
+            return
+        record = self._row_records[row]
+        record["current_port"] = self.table.cellWidget(row, 0).value()
+        record["replacement_port"] = self.table.cellWidget(row, 1).value()
+        record["reason"] = self.reason_edit.text().strip()
+        record["operator"] = self.operator_edit.text().strip()
+        record["reason_details"] = self.details_edit.text().strip()
+
+    def _show_selected_details(self):
+        previous_row = self._last_detail_row
+        if 0 <= previous_row < len(self._row_records):
+            record = self._row_records[previous_row]
+            record["reason"] = self.reason_edit.text().strip()
+            record["operator"] = self.operator_edit.text().strip()
+            record["reason_details"] = self.details_edit.text().strip()
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self._row_records):
+            self.reason_edit.clear()
+            self.operator_edit.setText(self.default_operator)
+            self.details_edit.clear()
+            self._last_detail_row = -1
+            return
+        self._last_detail_row = row
+        record = self._row_records[row]
+        self.reason_edit.setText(str(record.get("reason") or ""))
+        self.operator_edit.setText(
+            str(record.get("operator") or self.default_operator or "")
+        )
+        self.details_edit.setText(str(record.get("reason_details") or ""))
+
+    def replace_again(self):
+        self._sync_selected_details()
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self._row_records):
+            return
+        previous = self._row_records[row]
+        if not previous.get("event_id"):
+            QMessageBox.information(
+                self,
+                "Replacement history unavailable",
+                "Save this replacement first, then use Replace Again.",
+            )
+            return
+        self.add_row(
+            {
+                "current_port": previous.get("replacement_port", 0),
+                "replacement_port": 0,
+                "root_port": previous.get("root_port", previous.get("current_port")),
+                "previous_record_id": previous.get("event_id"),
+            }
+        )
 
     def remove_selected_row(self):
+        self._sync_selected_details()
         row = self.table.currentRow()
         if row >= 0:
             self.table.removeRow(row)
+            self._row_records.pop(row)
 
-    def _records_from_table(self):
-        records = []
-        for row in range(self.table.rowCount()):
-            values = [
-                self.table.cellWidget(row, column).value()
-                for column in range(self.table.columnCount())
-            ]
-            if not any(values):
-                continue
-            if not all(values):
-                raise ValueError(
-                    "Complete both fields in each replacement row, "
-                    "or remove the blank row."
+    def _build_history(self):
+        self._sync_selected_details()
+        original_active = {
+            event_id: event
+            for event_id, event in self._original_events.items()
+            if event_id in {
+                record.get("event_id") for record in effective_replacements(self.history)
+            }
+        }
+        retained_ids = {
+            record.get("event_id")
+            for record in self._row_records
+            if record.get("event_id")
+        }
+        new_history = list(self.history)
+        for event_id, event in original_active.items():
+            if event_id not in retained_ids:
+                new_history.append(
+                    new_replacement_void_event(
+                        event_id,
+                        self.default_operator or "Not recorded",
+                        "Removed from active replacements",
+                    )
                 )
-            records.append(
-                {
-                    "current_port": values[0],
-                    "replacement_port": values[1],
-                }
+
+        for record in self._row_records:
+            current_port = record.get("current_port", 0)
+            replacement_port = record.get("replacement_port", 0)
+            if not current_port and not replacement_port:
+                continue
+            if not current_port or not replacement_port:
+                raise ValueError(
+                    "Complete both port fields in each replacement row, or remove the blank row."
+                )
+            event_id = record.get("event_id")
+            original = self._original_events.get(event_id) if event_id else None
+            if original:
+                unchanged = (
+                    int(original.get("root_port") or original["current_port"])
+                    == int(current_port)
+                    and int(original["replacement_port"]) == int(replacement_port)
+                    and str(original.get("reason") or "") == str(record.get("reason") or "")
+                    and str(original.get("operator") or "") == str(record.get("operator") or "")
+                    and str(original.get("reason_details") or "")
+                    == str(record.get("reason_details") or "")
+                )
+                if unchanged:
+                    continue
+                new_history.append(
+                    new_replacement_void_event(
+                        event_id,
+                        record.get("operator") or self.default_operator or "Not recorded",
+                        "Corrected replacement record",
+                    )
+                )
+                current_port = original["current_port"]
+                root_port = original.get("root_port", current_port)
+                previous_record_id = original.get("previous_record_id")
+            else:
+                root_port = record.get("root_port", current_port)
+                previous_record_id = record.get("previous_record_id")
+                if previous_record_id:
+                    previous_event = self._original_events.get(previous_record_id)
+                    if previous_event and int(previous_event["replacement_port"]) != int(current_port):
+                        raise ValueError(
+                            "A repeated replacement must start from the previous replacement port."
+                        )
+            new_history.append(
+                new_replacement_event(
+                    current_port,
+                    replacement_port,
+                    record.get("reason"),
+                    record.get("operator") or self.default_operator,
+                    reason_details=record.get("reason_details"),
+                    previous_record_id=previous_record_id,
+                    root_port=root_port,
+                    source_run_number=self.context.get("source_run_number"),
+                    main_board_serial=self.context.get("main_board_serial"),
+                    switch_serial=self.context.get("switch_serial"),
+                    record_id=event_id if not original else None,
+                )
             )
-        return normalise_completed_replacements(records)
+        return normalise_replacement_history(new_history)
 
     def accept_records(self):
         try:
-            self.records = self._records_from_table()
+            self.history = self._build_history()
+            self.records = effective_replacements(self.history)
+            normalise_completed_replacements(self.records)
             self.designated_spares = self._spares_from_edit()
+            replacement_ports = {
+                record["replacement_port"] for record in self.records
+            }
+            unlisted_spares = sorted(
+                replacement_ports.difference(self.designated_spares)
+            )
+            if self.designated_spares and unlisted_spares:
+                response = QMessageBox.question(
+                    self,
+                    "Replacement is not a designated spare",
+                    "Port(s) %s are used as replacements but are not designated "
+                    "spares. Add them to the designated-spare list?"
+                    % ", ".join(str(port) for port in unlisted_spares),
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes,
+                )
+                if response == QMessageBox.Yes:
+                    self.designated_spares = sorted(
+                        set(self.designated_spares).union(unlisted_spares)
+                    )
         except ValueError as error:
             QMessageBox.warning(self, "Invalid replacement or spare record", str(error))
             return
         self.accept()
+
+    def _refresh_history_table(self):
+        self.history_table.setRowCount(0)
+        for event in self.history:
+            row = self.history_table.rowCount()
+            self.history_table.insertRow(row)
+            if event.get("event_type") == "replacement_recorded":
+                values = (
+                    event.get("current_port", ""),
+                    event.get("replacement_port", ""),
+                    event.get("reason", ""),
+                    event.get("operator", ""),
+                    event.get("recorded_at_utc", "") or "Not recorded",
+                    "Recorded",
+                )
+            else:
+                values = (
+                    "",
+                    "",
+                    event.get("reason", ""),
+                    event.get("operator", ""),
+                    event.get("recorded_at_utc", "") or "Not recorded",
+                    "Voided",
+                )
+            for column, value in enumerate(values):
+                self.history_table.setItem(row, column, QTableWidgetItem(str(value)))
 
     def _spares_from_edit(self):
         values = []
@@ -614,6 +834,7 @@ class MainWindow(QMainWindow):
         self.unit_directory = None
         self.unit_record = {}
         self.replacement_analysis = None
+        self.replacement_history = []
         self.completed_replacements = []
         self.designated_spares = []
         self.hardware_session = HardwareRunSession()
@@ -1678,7 +1899,7 @@ class MainWindow(QMainWindow):
         self.replacement_analysis_button.setEnabled(False)
         self.completed_replacements_label = QLabel("No completed replacements recorded")
         self.completed_replacements_label.setWordWrap(True)
-        self.record_replacements_button = QPushButton("Record Replaced Ports...")
+        self.record_replacements_button = QPushButton("Manage Port Replacements...")
         self.record_replacements_button.clicked.connect(
             self.show_completed_replacements
         )
@@ -2733,6 +2954,7 @@ class MainWindow(QMainWindow):
         self.unit_directory = unit_directory
         if unit_directory is None:
             self.unit_record = {}
+            self.replacement_history = []
             self.completed_replacements = []
             self.designated_spares = []
             self.refresh_comparison_runs()
@@ -2741,9 +2963,10 @@ class MainWindow(QMainWindow):
             self.unit_record = self.unit_repository.load_record(unit_directory)
         except (OSError, ValueError, TypeError, KeyError):
             self.unit_record = {}
-        self.completed_replacements = list(
-            self.unit_record.get("completed_replacements", [])
+        self.replacement_history = list(
+            self.unit_record.get("replacement_history", [])
         )
+        self.completed_replacements = effective_replacements(self.replacement_history)
         self.designated_spares = list(
             self.unit_record.get("designated_spares", [])
         )
@@ -2858,25 +3081,41 @@ class MainWindow(QMainWindow):
 
     def persist_unit_record(self):
         """Persist device-level replacements, spares, and the active run index."""
-        if (
-            self.unit_directory is None
-            or self.run_data is None
-            or self.run_recorder is None
-            or not self.run_data.measurements
-        ):
+        if self.unit_directory is None:
             return
-        try:
-            run_number = int(self.run_data.metadata.get("Run number", 1))
-        except (TypeError, ValueError):
-            run_number = 1
+        metadata = (
+            self.run_data.metadata
+            if self.run_data is not None
+            else self._current_hardware_identity()
+        )
+        run_number = None
+        run_directory = None
+        switch_serial = metadata.get("Switch serial", "")
+        if self.run_data is not None:
+            try:
+                run_number = int(self.run_data.metadata.get("Run number", 1))
+            except (TypeError, ValueError):
+                run_number = None
+            switch_serial = self.run_data.metadata.get("Switch serial", switch_serial)
+            if self.run_recorder is not None:
+                run_directory = self.run_recorder.directory
+            elif self.run_data.source_path:
+                source_path = Path(self.run_data.source_path)
+                if (
+                    source_path.parent.is_dir()
+                    and source_path.parent.parent == Path(self.unit_directory)
+                    and source_path.parent.name.startswith("Run-")
+                ):
+                    run_directory = source_path.parent
         self.unit_repository.save_record(
             self.unit_directory,
-            self._unit_metadata(self.run_data.metadata),
+            self._unit_metadata(metadata),
             self.completed_replacements,
             self.designated_spares,
             run_number,
-            self.run_recorder.directory,
-            switch_serial=self.run_data.metadata.get("Switch serial", ""),
+            run_directory,
+            switch_serial=switch_serial,
+            replacement_history=self.replacement_history,
         )
         self.unit_record = self.unit_repository.load_record(self.unit_directory)
 
@@ -2976,12 +3215,18 @@ class MainWindow(QMainWindow):
             try:
                 payload = self.run_repository.load_json(json_path)
                 completed_replacements = payload.get("completed_replacements", [])
-                legacy_replacements = normalise_completed_replacements(
-                    completed_replacements
-                    if isinstance(completed_replacements, list)
-                    else []
-                )
+                saved_history = payload.get("replacement_history")
+                if isinstance(saved_history, list):
+                    saved_history = normalise_replacement_history(saved_history)
+                else:
+                    saved_history = legacy_replacement_history(
+                        completed_replacements
+                        if isinstance(completed_replacements, list)
+                        else []
+                    )
+                legacy_replacements = effective_replacements(saved_history)
                 if self.unit_directory is None and legacy_replacements:
+                    self.replacement_history = saved_history
                     self.completed_replacements = legacy_replacements
                     run_data.completed_replacements = list(legacy_replacements)
                 switch_test_sessions = payload.get("switch_test_sessions", [])
@@ -3124,6 +3369,7 @@ class MainWindow(QMainWindow):
         )
         self.replacement_analysis = None
         self.run_data.replacement_analysis = None
+        self.replacement_history = []
         self.completed_replacements = []
         self.designated_spares = []
         self.unit_directory = None
@@ -4640,7 +4886,9 @@ class MainWindow(QMainWindow):
         """Refresh the replacement-analysis status shown beside the table."""
         has_measurements = bool(self.run_data and self.run_data.measurements)
         self.replacement_analysis_button.setEnabled(has_measurements)
-        self.record_replacements_button.setEnabled(has_measurements)
+        self.record_replacements_button.setEnabled(
+            has_measurements or self.unit_directory is not None
+        )
         self.copy_replacement_notes_button.setEnabled(
             bool(self.completed_replacements)
         )
@@ -4725,19 +4973,27 @@ class MainWindow(QMainWindow):
         self.replacement_summary_label.setText("\n".join(lines))
 
     def show_completed_replacements(self):
-        """Record the physical-port replacements completed by the operator."""
-        if self.run_data is None or not self.run_data.measurements:
+        """Record manually completed replacements without using switch queries."""
+        identity = self._current_hardware_identity()
+        if not any(
+            str(identity.get(key) or "").strip()
+            for key in ("Main board serial", "Part number")
+        ):
             QMessageBox.information(
                 self,
-                "No measurements",
-                "Complete or load a run before recording replaced ports.",
+                "Unit information required",
+                "Enter a main board serial or part number before recording replacements.",
             )
             return
-
-        # A legacy timestamped CSV has no unit.json beside it. Establish the
-        # shared unit context before opening the dialog so its existing device
-        # replacements and spares can still be reused for future runs.
-        self.ensure_unit_state_for_current_fields()
+        if self.unit_directory is None:
+            self.ensure_unit_state_for_current_fields()
+        if self.unit_directory is None:
+            QMessageBox.information(
+                self,
+                "Unit information required",
+                "Enter a main board serial or load a unit before recording replacements.",
+            )
+            return
 
         recommendations = []
         if self.replacement_analysis:
@@ -4746,22 +5002,43 @@ class MainWindow(QMainWindow):
             self.completed_replacements,
             recommendations,
             self.designated_spares,
-            self,
+            history=self.replacement_history,
+            operator=self.hardware_tested_by.text().strip(),
+            context={
+                "source_run_number": (
+                    self.run_data.metadata.get("Run number")
+                    if self.run_data is not None
+                    else None
+                ),
+                "main_board_serial": self.hardware_main_board_serial.text().strip(),
+                "switch_serial": self.hardware_switch_serial.text().strip(),
+            },
+            parent=self,
         )
         if dialog.exec_() != QDialog.Accepted:
             return
 
-        self.completed_replacements = list(dialog.records)
+        self.replacement_history = list(dialog.history)
+        self.completed_replacements = effective_replacements(self.replacement_history)
         self.designated_spares = list(dialog.designated_spares)
-        self.run_data.completed_replacements = list(self.completed_replacements)
+        if self.run_data is not None:
+            self.run_data.completed_replacements = list(self.completed_replacements)
         self.persist_unit_record()
         self._record_support(
             SupportEventCategory.OPERATOR,
             "replacement.records_saved",
-            run_number=self.run_data.metadata.get("Run number"),
-            unit_serial=self.run_data.metadata.get("Main board serial"),
+            run_number=(
+                self.run_data.metadata.get("Run number")
+                if self.run_data is not None
+                else None
+            ),
+            unit_serial=(
+                self.run_data.metadata.get("Main board serial")
+                if self.run_data is not None
+                else self.hardware_main_board_serial.text().strip()
+            ),
             measurement_count=len(self.completed_replacements),
-            details="%d replacement(s); %d designated spare(s)."
+            details="%d active replacement(s); %d designated spare(s)."
             % (len(self.completed_replacements), len(self.designated_spares)),
             status="success",
         )
@@ -4774,11 +5051,20 @@ class MainWindow(QMainWindow):
         """Copy completed physical-port swaps for pasting into Unit Editor."""
         if not self.completed_replacements:
             return
-        notes = "Port replacements completed:\n" + "\n".join(
-            "%d \u2192 %d"
-            % (record["current_port"], record["replacement_port"])
-            for record in self.completed_replacements
-        )
+        lines = []
+        for record in self.completed_replacements:
+            line = "%d \u2192 %d" % (
+                record["current_port"],
+                record["replacement_port"],
+            )
+            if record.get("reason") or record.get("operator"):
+                line += " - %s - %s - %s" % (
+                    record.get("reason") or "Reason not recorded",
+                    record.get("operator") or "Operator not recorded",
+                    (record.get("recorded_at_utc") or "Date not recorded"),
+                )
+            lines.append(line)
+        notes = "Port replacements completed:\n" + "\n".join(lines)
         QApplication.clipboard().setText(notes)
         self.statusBar().showMessage(
             "Replacement notes copied. Paste them into the Unit Editor notes."
