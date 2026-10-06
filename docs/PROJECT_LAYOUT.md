@@ -9,7 +9,7 @@ packages.
 
 ```text
 ilm_app.py, ILMReadLoss.py       Application entry points
-application/                     Workflow controllers, persistent hardware ownership/leases, measurement workers, support logging, run-start boundaries, and diagnostic tracing
+application/                     Workflow controllers, persistent hardware ownership/leases, measurement workers, support logging, run-start preflight/planning boundaries, and diagnostic tracing
 config/                          Application paths and user-facing release metadata
 ui/                              Qt dialogs, status panels, and presentation workers
 tools/                           Optional dependency and environment diagnostics

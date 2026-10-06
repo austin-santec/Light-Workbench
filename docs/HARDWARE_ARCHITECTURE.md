@@ -198,6 +198,15 @@ insertion-loss value after four-decimal rounding remains visible for
 troubleshooting but cannot be written. These checks do not change laser order,
 settling delays, wavelength order, reference math, or native hardware commands.
 
+Before a production Start Run is allowed, the application runs a pure
+preflight over the selected channel mode, Hardware test setup values, managed
+connection readiness, and the authorized reference snapshot. This occurs before
+run persistence, switch routing, laser activation, or measurement. Normal
+operators must resolve every issue. Admin Mode can explicitly continue without
+descriptive metadata, but it cannot bypass disconnected hardware or a missing,
+invalidated, stale, or hardware-mismatched reference. Diagnostic tools and
+saved-run review retain their independent readiness requirements.
+
 ## Measurement pipeline
 
 The intended future pipeline is:

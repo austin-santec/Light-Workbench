@@ -22,6 +22,13 @@ Implementation note: model-specific controlled criteria and session-only Admin
 Mode are now implemented. The detailed requirement counts above should be
 re-audited against the full requirements document before a formal release.
 
+Start Run update: version 1.19.0 adds a centralized preflight. Normal operators
+must complete the required setup fields, select valid channels, connect the
+required hardware, and authorize a current reference. Admin Mode may continue
+with missing descriptive metadata through an explicit warning, but cannot
+bypass hardware or reference safeguards. Blocked starts occur before run files,
+switch routing, source activation, or readings.
+
 Metadata-entry update: connecting a supported OSX now fills Main board serial
 from its existing identity response and attempts part-number lookup in the
 background. Lookup failure does not change hardware readiness, and loaded or

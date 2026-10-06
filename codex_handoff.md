@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.18.1**. The single
+The current source release is **Light Workbench 1.19.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -53,6 +53,7 @@ support logs coalesce consecutive invalid samples into start/end episodes.
 | application/power_diagnostics_controller.py | Non-recording raw-power meter worker lifecycle for Power Measurement Diagnostics. |
 | application/hardware_planning.py | Normalizes channel-mode selections before a hardware run starts. |
 | application/run_start.py | Prepares normalized hardware-run plans and controller requests without UI or hardware access. |
+| application/run_preflight.py | Pure role-aware Start Run validation for setup metadata, channel selection, hardware readiness, and reference authorization. |
 | application/run_controller.py | Owns hardware-run worker lifecycle, requests, commands, and terminal cleanup. |
 | hardware/power_meter.py | Application-facing meter adapter. SantecPowerMeter wraps the OP815 driver; SimulatedPowerMeter is deterministic and hardware-free. |
 | power_meter.py | Compatibility facade for the hardware power-meter adapters and PowerMeter contract. |
@@ -198,8 +199,9 @@ short range.
    The GUI parser accepts entries such as 1, 9, 10-15, 27, removes duplicate
    channels while preserving first-entered order, and rejects malformed or
    non-positive values.
-3. Enter optional main-board serial, unrestricted full switch serial, operating band,
-   and the two reference powers. First use the header `Connect Hardware...`
+3. Enter the required main-board serial, unrestricted full switch serial, part
+   number, operating band, operator initials, and the numbered run. First use the
+   header `Connect Hardware...`
    menu; references default to 0.00 dBm until calculated or entered.
    `Calculate Reference` is
    enabled when measurement hardware is connected; it borrows that connection,
@@ -211,7 +213,11 @@ short range.
    already returned by `*IDN?` fills Main board serial and starts a background
    part-number lookup. Lookup failure leaves the hardware connected and allows
    manual entry; Switch serial is not changed.
-4. Choose `Start Run` and confirm the warning dialog.
+4. Calculate the authorized reference, then choose `Start Run`. The preflight
+   validates all setup fields, channel selection, connected hardware, and
+   reference authorization before the confirmation dialog. Normal operators
+   cannot bypass an unresolved item. Admin Mode can explicitly continue without
+   descriptive metadata, but cannot bypass hardware or reference safeguards.
 5. The worker leases the already-connected supported switch and OP815, reports
    their identity and lifecycle state, routes a logical channel, and
    emits operator_required(channel, physical_port).

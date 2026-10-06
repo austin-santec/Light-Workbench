@@ -92,6 +92,9 @@ used as the location for architecture decisions.
   indefinite retention, over-size warnings, redaction, bounded queues, fallback writing,
   trace fan-out, bundles, and UI dialogs without using real hardware.
 - Tests pass.
+- Production Start Run preflight tests cover normal-operator field blocking,
+  channel-mode validation, reference authorization, the Admin metadata-only
+  exception, and no-file/no-hardware-side-effect failures.
 - Build succeeds.
 - Packaged executable starts on a clean target machine.
 - Dependency check is included.

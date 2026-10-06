@@ -66,6 +66,10 @@ from application.run_start import (
     build_hardware_run_request,
     prepare_hardware_run,
 )
+from application.run_preflight import (
+    RunPreflightIssueCategory,
+    validate_run_preflight,
+)
 from application.admin_session import AdminSession
 from application.part_number_lookup import (
     PartNumberLookupController,
@@ -982,14 +986,13 @@ class MainWindow(QMainWindow):
             return
         run_available = (
             self.hardware_connection_manager.run_ready
-            and self.reference_session.is_valid
             and not self.hardware_run_active
         )
         self.start_hardware_button.setEnabled(run_available)
         self.start_hardware_button.setToolTip(
             "Start a run using the connected measurement hardware and optical switch."
             if run_available
-            else "Connect hardware and calculate a valid reference before starting a run."
+            else "Connect the measurement hardware and optical switch before starting a run."
         )
         reference_available = (
             self.hardware_connection_manager.measurement_ready
@@ -3440,24 +3443,7 @@ class MainWindow(QMainWindow):
     def start_hardware(self, channels=None, retest=False):
         if self.hardware_run_active:
             return
-        if not self.hardware_connection_manager.run_ready:
-            QMessageBox.warning(
-                self,
-                "Hardware not ready",
-                "Connect the measurement hardware and optical switch before "
-                "starting a run.",
-            )
-            return
-        if not self.reference_session.is_valid:
-            QMessageBox.warning(
-                self,
-                "Reference required",
-                "A valid reference is required before starting an IL run.\n\n"
-                "Connect the measurement hardware and select Calculate Reference."
-                "\n\nAdmin Mode may be used to apply an explicit manual reference.",
-            )
-            return
-        if not retest and not self.confirm_hardware_setup_complete():
+        if not self._authorize_hardware_start(retest=retest):
             return
         confirmation = QMessageBox.question(
             self,
@@ -3727,53 +3713,206 @@ class MainWindow(QMainWindow):
         self.begin_switch_test_session()
         self._update_hardware_readiness_controls()
 
-    def confirm_hardware_setup_complete(self):
-        """Validate setup metadata before connecting hardware."""
-        missing_metadata = []
-        if not self.hardware_part_number.currentText().strip():
-            missing_metadata.append("Part number")
-        if not self.hardware_main_board_serial.text().strip():
-            missing_metadata.append("Main board serial")
-        if not self.hardware_switch_serial.text().strip():
-            missing_metadata.append("Switch serial")
-        if not self.hardware_tested_by.text().strip():
-            missing_metadata.append("Tested by")
-        if (
-            self.hardware_channel_mode.currentIndex() == 2
-            and not self.hardware_channel_ranges.text().strip()
-        ):
-            missing_metadata.append("Channels/ranges")
+    def _run_start_preflight(self):
+        """Collect current UI state and validate it without side effects."""
+        reference = self.reference_session.snapshot
+        return validate_run_preflight(
+            admin_mode=self.admin_session.is_active,
+            metadata=self._current_hardware_identity(),
+            run_number=self.hardware_run_number.value(),
+            channel_mode=self.hardware_channel_mode.currentText(),
+            single_channel=self.hardware_single_channel.value(),
+            channel_ranges=self.hardware_channel_ranges.text(),
+            manual_channel_order=self.manual_channel_order_checkbox.isChecked(),
+            hardware_ready=self.hardware_connection_manager.run_ready,
+            reference_valid=self.reference_session.is_valid,
+            reference_state=self.reference_session.state,
+            reference_method=reference.method if reference is not None else "",
+            reference_hardware_matches=(
+                self._reference_hardware_matches_snapshot()
+                if reference is not None
+                else False
+            ),
+        )
 
-        if missing_metadata:
-            choice = QMessageBox(self)
-            choice.setWindowTitle("Hardware test setup incomplete")
-            choice.setText("Hardware test setup is incomplete.")
-            choice.setInformativeText(
-                "Missing: %s\n\n"
-                "Return to Hardware test setup to complete these fields, "
-                "or continue without saving this metadata?"
-                % ", ".join(missing_metadata)
-            )
-            return_button = choice.addButton(
-                "Return to Setup",
-                QMessageBox.RejectRole,
-            )
-            continue_button = choice.addButton(
-                "Continue Without Metadata",
-                QMessageBox.AcceptRole,
-            )
-            choice.setDefaultButton(return_button)
-            choice.exec_()
-            if choice.clickedButton() != continue_button:
-                return False
+    @staticmethod
+    def _preflight_issue_details(issues):
+        """Format structured issues for a technician-friendly popup."""
+        lines = []
+        seen = set()
+        for issue in issues:
+            detail = issue.label
+            if issue.category is not RunPreflightIssueCategory.METADATA:
+                detail = "%s: %s" % (issue.label, issue.message)
+            if detail not in seen:
+                lines.append("- " + detail)
+                seen.add(detail)
+        return "\n".join(lines)
+
+    def _focus_preflight_issue(self, issues):
+        focus_widgets = {
+            "main_board_serial": self.hardware_main_board_serial,
+            "switch_serial": self.hardware_switch_serial,
+            "part_number": self.hardware_part_number,
+            "operating_band": self.hardware_operating_band,
+            "tested_by": self.hardware_tested_by,
+            "run_number": self.hardware_run_number,
+            "channel_mode": self.hardware_channel_mode,
+            "single_channel": self.hardware_single_channel,
+            "channel_ranges": self.hardware_channel_ranges,
+            "reference_1310": self.reference_1310_spin,
+            "hardware": self.connect_hardware_button,
+        }
+        for issue in issues:
+            widget = focus_widgets.get(issue.field_id)
+            if widget is not None:
+                widget.setFocus()
+                break
+
+    def _show_preflight_blocked(self, result):
+        issues = result.issues
+        reference_only = all(
+            issue.category is RunPreflightIssueCategory.REFERENCE
+            for issue in issues
+        )
+        hardware_only = all(
+            issue.category is RunPreflightIssueCategory.HARDWARE
+            for issue in issues
+        )
+        if reference_only:
+            title = "Reference required"
+            intro = "Calculate an authorized reference before starting the run:"
+        elif hardware_only:
+            title = "Hardware not ready"
+            intro = "Connect the required hardware before starting the run:"
+        else:
+            title = "Hardware test setup incomplete"
+            intro = "Complete the following before starting the run:"
+        QMessageBox.warning(
+            self,
+            title,
+            "%s\n\n%s" % (intro, self._preflight_issue_details(issues)),
+            QMessageBox.Ok,
+        )
+        self._focus_preflight_issue(issues)
+
+    def _authorize_hardware_start(self, *, retest=False):
+        """Apply role policy to one production start before any side effect."""
+        result = self._run_start_preflight()
+        issue_codes = ", ".join(issue.code for issue in result.issues)
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "run.preflight_started",
+            admin_mode=self.admin_session.is_active,
+            run_number=self.hardware_run_number.value(),
+            channel_mode=self.hardware_channel_mode.currentText(),
+            retest=retest,
+            details=issue_codes,
+            status="started",
+        )
+
+        if result.non_metadata_issues:
             self._record_support(
-                SupportEventCategory.OPERATOR,
-                "validation.continued_without_metadata",
-                choice="continue_without_metadata",
-                details=", ".join(missing_metadata),
-                status="accepted",
+                SupportEventCategory.WORKFLOW,
+                "run.preflight_blocked",
+                admin_mode=self.admin_session.is_active,
+                run_number=self.hardware_run_number.value(),
+                channel_mode=self.hardware_channel_mode.currentText(),
+                retest=retest,
+                details=issue_codes,
+                status="blocked",
             )
+            self._show_preflight_blocked(result)
+            return False
 
+        if result.metadata_issues:
+            if not self.admin_session.is_active:
+                self._record_support(
+                    SupportEventCategory.WORKFLOW,
+                    "run.preflight_blocked",
+                    admin_mode=False,
+                    run_number=self.hardware_run_number.value(),
+                    channel_mode=self.hardware_channel_mode.currentText(),
+                    retest=retest,
+                    details=issue_codes,
+                    status="blocked",
+                )
+                self._show_preflight_blocked(result)
+                return False
+            if not self.confirm_hardware_setup_complete(result.metadata_issues):
+                self._record_support(
+                    SupportEventCategory.WORKFLOW,
+                    "run.preflight_blocked",
+                    admin_mode=True,
+                    run_number=self.hardware_run_number.value(),
+                    channel_mode=self.hardware_channel_mode.currentText(),
+                    retest=retest,
+                    details=issue_codes,
+                    status="blocked",
+                )
+                return False
+
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "run.preflight_passed",
+            admin_mode=self.admin_session.is_active,
+            run_number=self.hardware_run_number.value(),
+            channel_mode=self.hardware_channel_mode.currentText(),
+            retest=retest,
+            details=issue_codes,
+            status="success",
+        )
+        return True
+
+    def confirm_hardware_setup_complete(self, metadata_issues=None):
+        """Offer the metadata-only bypass to an authenticated administrator."""
+        if metadata_issues is None:
+            result = self._run_start_preflight()
+            metadata_issues = result.metadata_issues
+        if not metadata_issues:
+            return True
+        if not self.admin_session.is_active:
+            return False
+
+        missing_metadata = [issue.label for issue in metadata_issues]
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "run.admin_metadata_warning_shown",
+            admin_mode=True,
+            details=", ".join(missing_metadata),
+            status="shown",
+        )
+        choice = QMessageBox(self)
+        choice.setWindowTitle("Hardware test setup incomplete")
+        choice.setText("The following metadata is missing:")
+        choice.setInformativeText("\n".join("- %s" % item for item in missing_metadata))
+        return_button = choice.addButton(
+            "Return to Setup",
+            QMessageBox.RejectRole,
+        )
+        continue_button = choice.addButton(
+            "Continue Without Metadata",
+            QMessageBox.AcceptRole,
+        )
+        choice.setDefaultButton(return_button)
+        choice.exec_()
+        if choice.clickedButton() != continue_button:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "run.admin_returned_to_setup",
+                admin_mode=True,
+                details=", ".join(missing_metadata),
+                status="blocked",
+            )
+            return False
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "run.admin_continued_without_metadata",
+            admin_mode=True,
+            choice="continue_without_metadata",
+            details=", ".join(missing_metadata),
+            status="accepted",
+        )
         return True
 
     def begin_switch_test_session(self):

@@ -96,6 +96,17 @@ Admin Mode's explicit manual-apply action, or an explicit diagnostic Apply
 action can authorize a production run. Accepted readings persist the snapshot
 used for their calculation.
 
+`application/run_preflight.py` is the side-effect-free gate for production
+Start Run entry points. It normalizes channel selection through the existing
+planner and validates setup metadata, positive run number, connection
+readiness, and reference authorization before the UI can create a run or hand
+control to a worker. Normal operators must resolve every issue. Admin Mode may
+explicitly continue with missing descriptive metadata, but cannot bypass an
+unavailable instrument or an absent, invalidated, stale, or mismatched
+reference. The preflight result contains structured issue codes so the Qt UI
+can present one technician-friendly message and focus the first affected
+control without putting validation or side effects in the UI layer.
+
 `domain/replacements.py` owns replacement recommendations, designated-spare
 selection, and normalization of manually recorded replacements. It is kept
 independent of Qt, hardware adapters, and CSV/JSON file formats.

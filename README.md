@@ -252,7 +252,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.18.1**; an existing executable keeps its prior
+current source version is **1.19.0**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
@@ -320,8 +320,9 @@ then the latest complete reading is committed and the run advances. The red
 Live Write Mode is enabled by default on startup, lasts only for the current
 application session, and cannot be changed during an active run.
 
-The same panel includes a guarded `Start Run` path. It is disabled until the
-measurement hardware and switch are connected and available. The run borrows
+The same panel includes a guarded `Start Run` path. It is enabled after the
+measurement hardware and switch are connected and available so a missing setup
+item can be explained in one preflight message. The run borrows
 those persistent connections, asks the operator to move the cable before each
 reading, and releases exclusive access without disconnecting the instruments.
 Hardware-run results are currently displayed
@@ -345,11 +346,14 @@ pass, one channel, or specific channels and inclusive ranges. It also captures
 the main-board serial, switch serial, operating band, and operator initials in
 the run metadata.
 
-Before `Start Run` can be clicked, use **Connect Hardware...** to connect all
-required hardware and establish a valid reference. `Calculate Reference`
-requires only connected measurement hardware. A production run cannot start
-until a valid calculated or explicitly authorized Admin Mode reference exists.
-Missing setup metadata is still handled by its separate metadata prompt.
+Before a production run can start, use **Connect Hardware...** to connect all
+required hardware, complete the required Hardware test setup fields, and use
+`Calculate Reference`. A production run cannot start until a valid calculated
+reference exists for the connected measurement hardware. Admin Mode can
+explicitly continue without descriptive metadata, but it cannot bypass missing,
+invalidated, stale, or mismatched references or disconnected hardware. The
+preflight runs before run folders/files, switch routing, laser activation, or
+measurement.
 For initial hardware validation, use the one-channel or short-range modes.
 
 The setup panel only shows the selector needed by the chosen channel mode:

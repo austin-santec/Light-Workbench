@@ -1097,7 +1097,10 @@ class MainWindowTests(unittest.TestCase):
 
                 window.hardware_connection_manager.connect_switch().result(timeout=2)
                 QTest.qWait(25)
-                self.assertFalse(window.start_hardware_button.isEnabled())
+                # Start is clickable once hardware is connected so the
+                # centralized preflight can explain missing setup/reference
+                # requirements instead of silently disabling the action.
+                self.assertTrue(window.start_hardware_button.isEnabled())
                 window.apply_calculated_reference(-0.04, 0.14)
                 self.assertTrue(window.start_hardware_button.isEnabled())
                 window.run_data = RunData(
@@ -1196,6 +1199,7 @@ class MainWindowTests(unittest.TestCase):
 
     def test_start_run_uses_separate_metadata_and_reference_warnings(self):
         window = MainWindow()
+        window.admin_session.authenticate("lwb")
         metadata_dialog = MagicMock()
         metadata_return = object()
         metadata_continue = object()
@@ -1216,6 +1220,32 @@ class MainWindowTests(unittest.TestCase):
             "Continue Without Metadata",
         )
         window.close()
+
+    def test_normal_operator_cannot_bypass_missing_metadata(self):
+        window = MainWindow()
+        try:
+            with patch("ilm_app.QMessageBox.warning") as warning:
+                self.assertFalse(window.confirm_hardware_setup_complete())
+            warning.assert_not_called()
+        finally:
+            window.close()
+
+    def test_start_preflight_blocks_before_controller_or_persistence_side_effects(self):
+        window = MainWindow()
+        try:
+            window.hardware_controller.start = MagicMock()
+            with patch("ilm_app.QMessageBox.warning") as warning:
+                self.assertFalse(window._authorize_hardware_start())
+
+            warning.assert_called_once()
+            message = warning.call_args.args[2]
+            self.assertIn("Main board serial", message)
+            self.assertIn("Connect the measurement hardware", message)
+            window.hardware_controller.start.assert_not_called()
+            self.assertIsNone(window.run_data)
+            self.assertIsNone(window.run_recorder)
+        finally:
+            window.close()
 
     def test_part_number_and_operating_band_controls_support_selection_and_typing(self):
         window = MainWindow()
