@@ -148,6 +148,7 @@ redaction, and support-bundle details.
 | `run_data.py` | CSV loader and configurable over-limit analysis model |
 | `domain/models.py` | Typed vendor-neutral measurement, device, unit, run, reference, and workflow models |
 | `domain/run_data.py` | Domain run model and over-limit analysis rules |
+| `domain/measurement_attempts.py` | Typed append-only accepted-reading and retest history |
 | `domain/raw_export.py` | Pure tab-separated formatting for copying accepted readings to Excel |
 | `domain/coc_preparation.py` | Pure multi-run COC merge, provenance, completeness, port-map, and publication rules |
 | `domain/diagnostic_analysis.py` | In-memory diagnostic samples and variation statistics |
@@ -194,6 +195,7 @@ redaction, and support-bundle details.
 | `ui/red_light_test.py` | Separate VFL pre-test dialog presentation module |
 | `ui/support_logs.py` | Support logging status and bundle date-range dialogs |
 | `ui/coc_export_dialog.py` | Front-panel count, source-run selection, and COC validation preview |
+| `ui/reading_history.py` | Read-only current/superseded accepted-reading history viewer |
 | `tools/dependency_check.py` | Non-destructive prerequisite and connection diagnostics |
 | `hardware/interfaces.py` | Vendor-neutral power-meter, laser-source, and optical-switch contracts |
 | `domain/hardware_connection.py` | Vendor-neutral hardware capabilities, readiness snapshots, and connection errors |
@@ -252,7 +254,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.20.0**; an existing executable keeps its prior
+current source version is **1.21.0**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
@@ -280,7 +282,9 @@ warning limit, physical-port mappings, and switch-test timing metadata.
 
 Select one or more completed rows in the results table and choose `Retest
 Selected`. The latest accepted value replaces that channel in the CSV and
-table; only the latest written value is retained for the run.
+table, while the JSON run record keeps an append-only history of every
+accepted attempt. Open `View Reading History...` in the Run information box
+to review current and superseded readings without connecting hardware.
 
 Use `Select Over-Limit` to select every channel above the current warning
 limit. Each flagged row identifies whether 1310 nm, 1550 nm, or both

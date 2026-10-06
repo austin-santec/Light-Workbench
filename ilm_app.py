@@ -93,6 +93,11 @@ from domain.limit_profiles import (
     normalize_switch_model,
 )
 from domain.comparison import comparison_values, index_measurements
+from domain.measurement_attempts import (
+    latest_attempt_for_channel,
+    new_measurement_attempt,
+    normalise_attempts,
+)
 from domain.raw_export import format_raw_measurements
 from domain.coc_preparation import infer_front_panel_channel_count
 from domain.timing import SwitchTestTimer
@@ -129,6 +134,7 @@ from ui.power_measurement_diagnostics import PowerMeasurementDiagnosticsDialog
 from ui.hardware_status import HardwareStatusPanel
 from ui.support_logs import LoggingStatusDialog, SupportBundleDialog
 from ui.admin_config import AdminConfigDialog, AdminPasswordDialog
+from ui.reading_history import ReadingHistoryDialog
 from ui.coc_export_dialog import CocExportDialog, format_optimization_warning
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
@@ -1937,6 +1943,13 @@ class MainWindow(QMainWindow):
             label.setWordWrap(True)
             self.metadata_labels[key] = label
             metadata_layout.addRow(key + ":", label)
+        self.view_history_button = QPushButton("View Reading History...")
+        self.view_history_button.setToolTip(
+            "View every accepted reading and retest saved for this run."
+        )
+        self.view_history_button.clicked.connect(self.show_reading_history)
+        self.view_history_button.setEnabled(False)
+        metadata_layout.addRow(self.view_history_button)
         info_layout.addWidget(metadata_box)
         info_layout.addStretch()
         self.info_scroll_area = QScrollArea()
@@ -3210,10 +3223,26 @@ class MainWindow(QMainWindow):
         self.metadata_labels["Run number"].setText(
             str(self.hardware_run_number.value())
         )
+        loaded_run_id = ""
         json_path = self.run_repository.find_json_path(path)
         if json_path.is_file():
             try:
                 payload = self.run_repository.load_json(json_path)
+                loaded_run_id = str(payload.get("run_id") or "")
+                try:
+                    run_data.measurement_attempts = normalise_attempts(
+                        payload.get(
+                            "measurement_attempts",
+                            payload.get("attempts", []),
+                        ),
+                        run_data.measurements,
+                        run_id=str(Path(path).resolve()),
+                    )
+                except (ValueError, TypeError, KeyError):
+                    # An older diagnostic-only ``attempts`` list may not have
+                    # complete reading values. Keep the run loadable and
+                    # synthesize history from the accepted table below.
+                    run_data.measurement_attempts = []
                 completed_replacements = payload.get("completed_replacements", [])
                 saved_history = payload.get("replacement_history")
                 if isinstance(saved_history, list):
@@ -3279,6 +3308,15 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(
                     "Loaded CSV; the companion run.json could not be read."
                 )
+        if not run_data.measurement_attempts:
+            run_data.measurement_attempts = normalise_attempts(
+                [],
+                run_data.measurements,
+                run_id=str(Path(path).resolve()),
+            )
+        run_data.attempts = [
+            attempt.as_dict() for attempt in run_data.measurement_attempts
+        ]
         historical_reference = next(
             (
                 record.reference_snapshot
@@ -3308,7 +3346,8 @@ class MainWindow(QMainWindow):
             metadata=run_data.metadata,
             limit=self.limit_spin.value(),
             criteria_snapshot=run_data.criteria_snapshot,
-            attempts=run_data.attempts,
+            measurement_attempts=run_data.measurement_attempts,
+            run_id=loaded_run_id or None,
             replacement_analysis=run_data.replacement_analysis,
             switch_test_sessions=run_data.switch_test_sessions,
             completed_replacements=run_data.completed_replacements,
@@ -3424,15 +3463,7 @@ class MainWindow(QMainWindow):
             self.demo_measurement[1310],
             self.demo_measurement[1550],
         )
-        self.run_data.measurements = [
-            existing
-            for existing in self.run_data.measurements
-            if existing.channel != self.demo_channel
-        ]
-        self.run_data.measurements.append(record)
-        self.run_data.measurements.sort(key=lambda existing: existing.channel)
-        if self.run_recorder is not None:
-            self.run_recorder.save(self.run_data.measurements)
+        self._accept_measurement_record(record)
         if self.demo_channel >= self.demo_channel_count.value():
             self.demo_channel_label.setText("Demo run complete")
             self.measure_demo_button.setEnabled(False)
@@ -3487,15 +3518,7 @@ class MainWindow(QMainWindow):
                 self.demo_measurement[1310],
                 self.demo_measurement[1550],
             )
-            self.run_data.measurements = [
-                existing
-                for existing in self.run_data.measurements
-                if existing.channel != channel
-            ]
-            self.run_data.measurements.append(record)
-            self.run_data.measurements.sort(key=lambda existing: existing.channel)
-            if self.run_recorder is not None:
-                self.run_recorder.save(self.run_data.measurements)
+            self._accept_measurement_record(record, write_context="retest")
             self.demo_measurement = None
         self.refresh_analysis()
         self.retest_button.setEnabled(True)
@@ -3647,7 +3670,7 @@ class MainWindow(QMainWindow):
                         metadata=self.run_data.metadata,
                         limit=self.limit_spin.value(),
                         criteria_snapshot=self.run_data.criteria_snapshot,
-                        attempts=self.run_data.attempts,
+                        measurement_attempts=self.run_data.measurement_attempts,
                         replacement_analysis=self.run_data.replacement_analysis,
                         completed_replacements=self.run_data.completed_replacements,
                     )
@@ -3873,7 +3896,7 @@ class MainWindow(QMainWindow):
                     metadata=self.run_data.metadata,
                     limit=self.limit_spin.value(),
                     criteria_snapshot=self.run_data.criteria_snapshot,
-                    attempts=self.run_data.attempts,
+                    measurement_attempts=self.run_data.measurement_attempts,
                     replacement_analysis=self.run_data.replacement_analysis,
                     switch_test_sessions=self.run_data.switch_test_sessions,
                     completed_replacements=self.run_data.completed_replacements,
@@ -4464,16 +4487,7 @@ class MainWindow(QMainWindow):
             if self.active_run_reference_snapshot
             else None,
         )
-        updated_measurements = [
-            existing
-            for existing in self.run_data.measurements
-            if existing.channel != channel
-        ]
-        updated_measurements.append(record)
-        updated_measurements.sort(key=lambda existing: existing.channel)
-        if self.run_recorder is not None:
-            self.run_recorder.save(updated_measurements)
-        self.run_data.measurements = updated_measurements
+        attempt = self._accept_measurement_record(record)
         self._record_support(
             SupportEventCategory.MEASUREMENT,
             "measurement.written",
@@ -4490,15 +4504,60 @@ class MainWindow(QMainWindow):
             physical_port=physical_port,
             loss_1310_db=loss_1310,
             loss_1550_db=loss_1550,
+            attempt_id=attempt.attempt_id,
+            attempt_number=attempt.attempt_number,
+            replaces_attempt_id=attempt.replaces_attempt_id,
+            retest=attempt.attempt_number > 1,
             reading_state="written",
             both_wavelengths_complete=True,
-            measurement_count=len(updated_measurements),
+            measurement_count=len(self.run_data.measurements),
             status="success",
         )
         self.hardware_session.clear_pending()
         self.refresh_analysis()
         self.scroll_to_channel(channel)
         return True
+
+    def _accept_measurement_record(self, record, *, write_context="initial"):
+        """Append one accepted reading and atomically save its latest projection."""
+        if self.run_data is None:
+            raise ValueError("No run is loaded.")
+        prior = latest_attempt_for_channel(
+            self.run_data.measurement_attempts,
+            record.channel,
+        )
+        attempt = new_measurement_attempt(
+            record,
+            prior=prior,
+            operator_initials=self.run_data.metadata.get("Tested by", ""),
+            write_context=write_context,
+            run_id=(
+                self.run_recorder.run_id
+                if self.run_recorder is not None
+                else str(Path(self.run_data.source_path).resolve())
+            ),
+        )
+        updated_measurements = [
+            existing
+            for existing in self.run_data.measurements
+            if existing.channel != record.channel
+        ]
+        updated_measurements.append(record)
+        updated_measurements.sort(key=lambda existing: existing.channel)
+        updated_attempts = [
+            existing
+            for existing in self.run_data.measurement_attempts
+        ]
+        updated_attempts.append(attempt)
+        if self.run_recorder is not None:
+            self.run_recorder.save(
+                updated_measurements,
+                measurement_attempts=updated_attempts,
+            )
+        self.run_data.measurements = updated_measurements
+        self.run_data.measurement_attempts = updated_attempts
+        self.run_data.attempts = [attempt.as_dict() for attempt in updated_attempts]
+        return attempt
 
     def show_keybind_dialog(self):
         dialog = QDialog(self)
@@ -5223,6 +5282,10 @@ class MainWindow(QMainWindow):
     def refresh_coc_controls(self):
         """Enable current-run and persisted-unit outputs independently."""
         current_readings = bool(self.run_data and self.run_data.measurements)
+        history_available = bool(
+            self.run_data and self.run_data.measurement_attempts
+        )
+        self.view_history_button.setEnabled(history_available)
         persisted_readings = bool(
             current_readings
             and self.run_data is not None
@@ -5238,6 +5301,18 @@ class MainWindow(QMainWindow):
         self.write_coc_button.setEnabled(persisted_readings)
         self.copy_raw_data_button.setEnabled(current_readings)
         self.write_coc_action.setEnabled(persisted_readings)
+
+    def show_reading_history(self):
+        """Open the read-only accepted-reading history for the active run."""
+        if self.run_data is None or not self.run_data.measurement_attempts:
+            QMessageBox.information(
+                self,
+                "Reading History",
+                "This run has no accepted readings to display.",
+            )
+            return
+        dialog = ReadingHistoryDialog(self.run_data.measurement_attempts, self)
+        dialog.exec_()
 
     def offer_coc_export(self):
         """Offer the same validated preparation workflow used by Write COC."""
@@ -5262,7 +5337,7 @@ class MainWindow(QMainWindow):
                 self.run_data.source_path,
                 metadata=self.run_data.metadata,
                 limit=self.limit_spin.value(),
-                attempts=self.run_data.attempts,
+                measurement_attempts=self.run_data.measurement_attempts,
                 replacement_analysis=self.run_data.replacement_analysis,
                 switch_test_sessions=self.run_data.switch_test_sessions,
                 completed_replacements=self.completed_replacements,
@@ -5271,7 +5346,9 @@ class MainWindow(QMainWindow):
             self.run_recorder.metadata = dict(self.run_data.metadata)
             self.run_recorder.limit = self.limit_spin.value()
             self.run_recorder.criteria_snapshot = self.run_data.criteria_snapshot
-            self.run_recorder.attempts = list(self.run_data.attempts)
+            self.run_recorder.measurement_attempts = list(
+                self.run_data.measurement_attempts
+            )
             self.run_recorder.replacement_analysis = self.run_data.replacement_analysis
             self.run_recorder.completed_replacements = list(
                 self.completed_replacements
@@ -5385,7 +5462,11 @@ class MainWindow(QMainWindow):
             metadata=metadata,
             limit=float(warning_limit),
             criteria_snapshot=criteria,
-            attempts=payload.get("attempts", []),
+            measurement_attempts=payload.get(
+                "measurement_attempts",
+                payload.get("attempts", []),
+            ),
+            run_id=payload.get("run_id"),
             switch_test_sessions=payload.get("switch_test_sessions", []),
             completed_replacements=payload.get("completed_replacements", []),
         )

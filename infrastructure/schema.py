@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 
 
-CURRENT_RUN_SCHEMA_VERSION = 3
+CURRENT_RUN_SCHEMA_VERSION = 4
 CURRENT_UNIT_SCHEMA_VERSION = 3
 
 
@@ -32,6 +32,8 @@ def migrate_run_payload(payload: Mapping[str, object]) -> dict:
     migrated.setdefault("switch_test_sessions", [])
     migrated.setdefault("criteria", None)
     migrated.setdefault("reference_snapshots", [])
+    if "measurement_attempts" not in migrated:
+        migrated["measurement_attempts"] = migrated.get("attempts", [])
     migrated["schema_version"] = CURRENT_RUN_SCHEMA_VERSION
     return migrated
 

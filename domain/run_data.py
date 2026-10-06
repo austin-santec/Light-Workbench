@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .models import MeasurementRecord
+from .measurement_attempts import MeasurementAttempt, normalise_attempts
 
 
 @dataclass
@@ -19,11 +20,34 @@ class RunData:
     measurements: list[MeasurementRecord] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
     attempts: list[dict] = field(default_factory=list)
+    measurement_attempts: list[MeasurementAttempt] = field(default_factory=list)
     warning_limit: float | None = None
     replacement_analysis: dict | None = None
     switch_test_sessions: list[dict] = field(default_factory=list)
     completed_replacements: list[dict] = field(default_factory=list)
     criteria_snapshot: dict | None = None
+
+    def __post_init__(self):
+        """Keep the former dictionary field compatible while history is typed."""
+        if self.measurement_attempts:
+            self.attempts = [attempt.as_dict() for attempt in self.measurement_attempts]
+        elif self.attempts:
+            self.measurement_attempts = normalise_attempts(
+                self.attempts,
+                self.measurements,
+                run_id=str(self.source_path),
+            )
+            self.attempts = [attempt.as_dict() for attempt in self.measurement_attempts]
+
+    @property
+    def accepted_attempts(self) -> list[MeasurementAttempt]:
+        """Return the append-only accepted-reading history."""
+        return self.measurement_attempts
+
+    @property
+    def attempts_compatibility(self) -> list[dict]:
+        """Return the former dictionary representation for older callers."""
+        return [attempt.as_dict() for attempt in self.measurement_attempts]
 
     def analysis_with_profile(self, profile) -> dict:
         """Return model-specific quality counts for the active criteria."""

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtGui import QCloseEvent
-from PyQt5.QtWidgets import QApplication, QDialog, QMessageBox
+from PyQt5.QtWidgets import QApplication, QDialog, QGroupBox, QMessageBox
 from PyQt5.QtCore import QEventLoop, QObject, QTimer, Qt, pyqtSignal
 from PyQt5.QtTest import QTest
 
@@ -16,6 +16,7 @@ from application.coc_workflow import CocRunOption
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
 from domain.coc_preparation import CocSourceRun, prepare_coc
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
+from domain.measurement_attempts import new_measurement_attempt
 from ilm_app import (
     AboutDialog,
     CompletedReplacementDialog,
@@ -136,6 +137,28 @@ class MainWindowTests(unittest.TestCase):
             self.assertEqual(window.metadata_labels["Run number"].text(), "1")
             self.assertEqual(window.metric_labels["over_limit"].text(), "0")
             window.close()
+
+    def test_run_information_history_button_uses_saved_attempts(self):
+        window = MainWindow()
+        window.run_data = RunData(
+            Path("saved.csv"),
+            [MeasurementRecord(1, 0.9, 0.8, 1)],
+            {},
+            measurement_attempts=[
+                new_measurement_attempt(
+                    MeasurementRecord(1, 0.9, 0.8, 1),
+                    operator_initials="AB",
+                    run_id="run-1",
+                )
+            ],
+        )
+        window.refresh_analysis()
+
+        self.assertEqual(window.view_history_button.text(), "View Reading History...")
+        self.assertIsInstance(window.view_history_button.parentWidget(), QGroupBox)
+        self.assertEqual(window.view_history_button.parentWidget().title(), "Run information")
+        self.assertTrue(window.view_history_button.isEnabled())
+        window.close()
 
     def test_open_csv_starts_in_default_run_folder(self):
         window = MainWindow()

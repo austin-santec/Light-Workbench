@@ -50,6 +50,9 @@ be used as source locations. The release scripts keep deployment output in
   `application/hardware_connection.py` and `domain/hardware_connection.py`.
 - Calculations, validation, and rules that do not need Qt or hardware:
   `domain/`.
+- Accepted reading/retest identity, immutable attempt chains, and current
+  measurement projection: `domain/measurement_attempts.py` and
+  `domain/run_data.py`.
 - Multi-run COC merging and publication rules: `domain/coc_preparation.py`;
   repository coordination: `application/coc_workflow.py`; operator selection:
   `ui/coc_export_dialog.py`; workbook mechanics: `infrastructure/coc_export.py`.
@@ -61,6 +64,8 @@ be used as source locations. The release scripts keep deployment output in
 - Administrator criteria INI persistence: `infrastructure/limit_profile_repository.py`.
 - Session-only administrator authorization and dialogs:
   `application/admin_session.py` and `ui/admin_config.py`.
+- Read-only accepted-reading history presentation and clipboard/export actions:
+  `ui/reading_history.py`.
 - Reference authorization lifecycle:
   `application/reference_session.py` and `domain/reference.py`.
 - Typed support events: `domain/support_events.py`; queue/correlation ownership:

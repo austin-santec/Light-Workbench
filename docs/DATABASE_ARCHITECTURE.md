@@ -138,7 +138,10 @@ These are not authoritative permanent results:
 
 - Live IL readings that were not written.
 - Temporary current readings.
-- Retest attempts overwritten by a later accepted reading.
+- Temporary or superseded readings are not discarded locally. Accepted
+  superseded attempts are retained in the run's append-only history and can be
+  uploaded for later analysis; only temporary/unwritten readings stay out of
+  the authoritative production dataset.
 - Replacement recommendations.
 - Current reference offsets.
 - GUI filters and dialog state.
@@ -153,7 +156,8 @@ The database design requires stable identifiers:
 
 - `unit_id`: permanent internal identity for a device.
 - `run_id`: permanent internal identity for one run.
-- `measurement_id`: identity for an accepted measurement record.
+- `measurement_id`: identity for an accepted effective measurement record.
+- `attempt_id`: identity for every accepted reading attempt, including retests.
 - `replacement_id`: identity for a replacement record.
 
 Human-readable values remain available for searching and display:

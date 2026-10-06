@@ -409,8 +409,13 @@ runs add readable timing metadata for first start, latest stop, continuation
 times, session count, and accumulated duration; Live IL and Red Light Test do
 not affect these fields. The CSV remains compatible with `load_run_csv`, and
 the JSON stores the warning limit, metadata, current measurements, physical
-ports, and timing sessions. Retest attempts and calculated replacement
-recommendations are intentionally not persisted.
+ports, and timing sessions. Calculated replacement recommendations are
+intentionally not persisted. Run JSON schema version 4 also stores an
+append-only `measurement_attempts` history for every accepted Write IL result;
+the CSV and current-reading projection continue to show only the latest value
+per channel. `View Reading History...` in Run information displays current and
+superseded attempts. Temporary, rejected, and diagnostic readings remain
+outside this authoritative run history.
 
 The difference between project-local legacy output and Documents-based desktop
 output is intentional in the current code but should be resolved or clearly

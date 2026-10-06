@@ -6,9 +6,14 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from config.app_config import DEFAULT_RUN_ROOT
 from domain.models import MeasurementRecord
+from domain.measurement_attempts import (
+    MeasurementAttempt,
+    normalise_attempts,
+)
 from infrastructure.schema import CURRENT_RUN_SCHEMA_VERSION, migrate_run_payload
 from domain.support_events import SupportEventCategory, SupportLogLevel
 
@@ -144,6 +149,8 @@ class RunRecorder:
         limit=2.0,
         criteria_snapshot=None,
         directory: str | Path | None = None,
+        measurement_attempts=None,
+        run_id: str | None = None,
         support_logger=None,
     ):
         self.metadata = dict(metadata or {})
@@ -165,7 +172,8 @@ class RunRecorder:
             self.directory = directory
         self.csv_path = build_run_csv_path(directory)
         self.json_path = build_run_json_path(directory)
-        self.attempts = []
+        self.measurement_attempts = list(measurement_attempts or [])
+        self.run_id = str(run_id or uuid4().hex)
         self.replacement_analysis = None
         self.switch_test_sessions = []
         self.completed_replacements = []
@@ -179,6 +187,8 @@ class RunRecorder:
         limit=2.0,
         criteria_snapshot=None,
         attempts=None,
+        measurement_attempts=None,
+        run_id: str | None = None,
         replacement_analysis=None,
         switch_test_sessions=None,
         completed_replacements=None,
@@ -194,7 +204,10 @@ class RunRecorder:
         recorder.metadata = dict(metadata or {})
         recorder.limit = float(limit)
         recorder.criteria_snapshot = dict(criteria_snapshot) if criteria_snapshot else None
-        recorder.attempts = list(attempts or [])
+        recorder.measurement_attempts = list(
+            measurement_attempts if measurement_attempts is not None else (attempts or [])
+        )
+        recorder.run_id = str(run_id or uuid4().hex)
         recorder.replacement_analysis = replacement_analysis
         recorder.switch_test_sessions = list(switch_test_sessions or [])
         recorder.completed_replacements = list(completed_replacements or [])
@@ -202,7 +215,11 @@ class RunRecorder:
         recorder._directory_created = True
         return recorder
 
-    def save(self, measurements: list[MeasurementRecord]):
+    def save(
+        self,
+        measurements: list[MeasurementRecord],
+        measurement_attempts=None,
+    ):
         """Atomically save the current table and its audit history."""
         self._record(
             "persistence.run_save_requested",
@@ -213,7 +230,8 @@ class RunRecorder:
         )
         started = datetime.now()
         try:
-            self._save(measurements)
+            saved_attempts = self._save(measurements, measurement_attempts)
+            self.measurement_attempts = saved_attempts
         except Exception as error:
             self._record(
                 "persistence.run_save_failed",
@@ -234,21 +252,28 @@ class RunRecorder:
             status="success",
         )
 
-    def _save(self, measurements: list[MeasurementRecord]):
+    def _save(self, measurements: list[MeasurementRecord], measurement_attempts=None):
         """Perform the existing atomic CSV/JSON save."""
         # A newly started run is allowed to exist only in memory until the
         # first accepted measurement is written. This prevents abandoned runs
         # from leaving empty folders, CSV files, or JSON files behind.
         if not measurements and not self._directory_created:
-            return
+            return list(self.measurement_attempts)
         self._ensure_directory()
-        self._write_csv(measurements)
+        attempts = normalise_attempts(
+            self.measurement_attempts
+            if measurement_attempts is None
+            else measurement_attempts,
+            measurements,
+            run_id=self.run_id,
+        )
         stored_metadata = _run_metadata(self.metadata)
         payload = {
             "schema_version": CURRENT_RUN_SCHEMA_VERSION,
             "created_at": self.metadata.get(
                 "Created at", datetime.now().isoformat(timespec="seconds")
             ),
+            "run_id": self.run_id,
             "run_number": stored_metadata.get("Run number"),
             "warning_limit_db": self.limit,
             "criteria": self.criteria_snapshot,
@@ -264,15 +289,27 @@ class RunRecorder:
                 }
                 for record in measurements
             ],
+            "measurement_attempts": [attempt.as_dict() for attempt in attempts],
             "switch_test_sessions": self.switch_test_sessions,
         }
+        csv_temporary_path = self.csv_path.with_suffix(".csv.tmp")
         temporary_path = self.json_path.with_suffix(".json.tmp")
         try:
+            self._write_csv(measurements, destination=csv_temporary_path)
             with temporary_path.open("w", encoding="utf-8") as json_file:
                 json.dump(payload, json_file, indent=2)
                 json_file.write("\n")
                 json_file.flush()
                 os.fsync(json_file.fileno())
+            os.replace(csv_temporary_path, self.csv_path)
+            self._record(
+                "persistence.atomic_replace_completed",
+                file_type="csv",
+                destination=self.csv_path,
+                temporary_destination=csv_temporary_path,
+                measurement_count=len(measurements),
+                status="success",
+            )
             os.replace(temporary_path, self.json_path)
             self._record(
                 "persistence.atomic_replace_completed",
@@ -284,8 +321,11 @@ class RunRecorder:
                 status="success",
             )
         finally:
+            if csv_temporary_path.exists():
+                csv_temporary_path.unlink()
             if temporary_path.exists():
                 temporary_path.unlink()
+        return attempts
 
     def _ensure_directory(self):
         """Create the deferred run folder on the first real save."""
@@ -310,16 +350,38 @@ class RunRecorder:
         self._directory_created = True
 
     def record_attempt(self, channel, loss_1310, loss_1550, physical_port, retest=False):
-        self.attempts.append(
-            {
-                "timestamp": datetime.now().isoformat(timespec="seconds"),
-                "channel": channel,
-                "physical_port": physical_port,
-                "loss_1310_db": loss_1310,
-                "loss_1550_db": loss_1550,
-                "retest": retest,
-            }
+        prior = [
+            attempt
+            for attempt in self.measurement_attempts
+            if int(attempt.channel) == int(channel)
+        ]
+        attempt_number = max(
+            (attempt.attempt_number for attempt in prior),
+            default=0,
+        ) + 1
+        self.measurement_attempts.append(
+            MeasurementAttempt(
+                attempt_id="legacy-%s" % os.urandom(8).hex(),
+                run_id=self.run_id,
+                channel=int(channel),
+                physical_port=(int(physical_port) if physical_port is not None else None),
+                attempt_number=attempt_number,
+                loss_1310_db=float(loss_1310),
+                loss_1550_db=float(loss_1550),
+                accepted_at_utc=datetime.now().astimezone().isoformat(timespec="seconds"),
+                write_context="retest" if retest or prior else "initial",
+                replaces_attempt_id=prior[-1].attempt_id if prior else None,
+            )
         )
+
+    @property
+    def attempts(self):
+        """Compatibility view of the former in-memory attempt collection."""
+        return [attempt.as_dict() for attempt in self.measurement_attempts]
+
+    @attempts.setter
+    def attempts(self, values):
+        self.measurement_attempts = list(values or [])
 
     def rename_for_metadata(self, metadata):
         """Rename a loaded run and related files to match new serials."""
@@ -444,7 +506,7 @@ class RunRecorder:
         self.metadata = metadata
         return self.metadata
 
-    def _write_csv(self, measurements):
+    def _write_csv(self, measurements, *, destination=None):
         rows = [["channel", "1310 IL", "1550 IL"]]
         rows.extend(
             [record.channel, "%.4f" % record.loss_1310, "%.4f" % record.loss_1550]
@@ -455,7 +517,11 @@ class RunRecorder:
             list(item) for item in sorted(_run_metadata(self.metadata).items())
         )
         row_count = max(len(rows), len(metadata_rows))
-        temporary_path = self.csv_path.with_suffix(".csv.tmp")
+        temporary_path = (
+            Path(destination)
+            if destination is not None
+            else self.csv_path.with_suffix(".csv.tmp")
+        )
         try:
             with temporary_path.open("w", newline="", encoding="utf-8") as csv_file:
                 writer = csv.writer(csv_file)
@@ -490,17 +556,18 @@ class RunRecorder:
                     writer.writerow(measurement + [""] + metadata + [""] + reference_columns)
                 csv_file.flush()
                 os.fsync(csv_file.fileno())
-            os.replace(temporary_path, self.csv_path)
-            self._record(
-                "persistence.atomic_replace_completed",
-                file_type="csv",
-                destination=self.csv_path,
-                temporary_destination=temporary_path,
-                measurement_count=len(measurements),
-                status="success",
-            )
+            if destination is None:
+                os.replace(temporary_path, self.csv_path)
+                self._record(
+                    "persistence.atomic_replace_completed",
+                    file_type="csv",
+                    destination=self.csv_path,
+                    temporary_destination=temporary_path,
+                    measurement_count=len(measurements),
+                    status="success",
+                )
         finally:
-            if temporary_path.exists():
+            if destination is None and temporary_path.exists():
                 temporary_path.unlink()
 
     def _record(self, event, *, level=SupportLogLevel.INFO, **fields):

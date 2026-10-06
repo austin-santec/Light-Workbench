@@ -38,7 +38,7 @@ class RunPersistenceTests(unittest.TestCase):
                 )
             ])
             payload = load_run_json(recorder.json_path)
-            self.assertEqual(payload["schema_version"], 3)
+            self.assertEqual(payload["schema_version"], 4)
             self.assertEqual(payload["measurements"][0]["reference"], snapshot.as_dict())
             self.assertEqual(payload["reference_snapshots"], [snapshot.as_dict()])
             with recorder.csv_path.open(newline="", encoding="utf-8") as csv_file:
@@ -137,7 +137,7 @@ class RunPersistenceTests(unittest.TestCase):
             directory / "ILM-Run_260916_112653_test1-test1.csv",
         )
 
-    def test_save_writes_measurements_without_derived_analysis_or_attempt_history(self):
+    def test_save_writes_measurements_and_append_only_attempt_history(self):
         with tempfile.TemporaryDirectory() as directory:
             recorder = RunRecorder(
                 root=directory,
@@ -160,13 +160,19 @@ class RunPersistenceTests(unittest.TestCase):
             self.assertTrue(recorder.csv_path.is_file())
             self.assertTrue(recorder.json_path.is_file())
             payload = load_run_json(recorder.json_path)
-            self.assertEqual(payload["schema_version"], 3)
+            self.assertEqual(payload["schema_version"], 4)
             self.assertIsNone(payload["criteria"])
             self.assertEqual(payload["warning_limit_db"], 2.0)
             self.assertEqual(payload["measurements"][0]["physical_port"], 1)
             self.assertNotIn("replacement_analysis", payload)
             self.assertNotIn("completed_replacements", payload)
-            self.assertNotIn("attempts", payload)
+            self.assertEqual(len(payload["measurement_attempts"]), 2)
+            self.assertEqual(payload["measurement_attempts"][0]["attempt_number"], 1)
+            self.assertEqual(payload["measurement_attempts"][1]["attempt_number"], 2)
+            self.assertEqual(
+                payload["measurement_attempts"][1]["replaces_attempt_id"],
+                payload["measurement_attempts"][0]["attempt_id"],
+            )
             with recorder.csv_path.open(newline="", encoding="utf-8") as csv_file:
                 csv_rows = list(csv.reader(csv_file))
             self.assertEqual(csv_rows[1][:3], ["1", "1.7000", "1.8000"])

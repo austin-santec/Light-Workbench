@@ -10,6 +10,13 @@ from .coc_preparation import (
     prepare_coc,
 )
 from .run_data import RunData
+from .measurement_attempts import (
+    MeasurementAttempt,
+    latest_attempt_for_channel,
+    legacy_attempts_for_measurements,
+    new_measurement_attempt,
+    normalise_attempts,
+)
 from .reference import calculate_reference_offsets
 from .reporting import (
     MultiRunSummary,
@@ -57,6 +64,11 @@ __all__ = [
     "infer_front_panel_channel_count",
     "prepare_coc",
     "RunData",
+    "MeasurementAttempt",
+    "latest_attempt_for_channel",
+    "legacy_attempts_for_measurements",
+    "new_measurement_attempt",
+    "normalise_attempts",
     "calculate_reference_offsets",
     "RunSummary",
     "OperatorRunSummary",

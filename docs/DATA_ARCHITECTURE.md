@@ -40,7 +40,7 @@ The storage format should not determine how business logic represents data.
 
 The current CSV and JSON formats remain supported for compatibility. If a
 future schema changes, include a `schema_version` and provide a migration path.
-Run JSON currently uses schema version 3; unit JSON uses schema version 3.
+Run JSON currently uses schema version 4; unit JSON uses schema version 3.
 Migration helpers reject newer versions instead of silently dropping fields.
 
 ## Format responsibilities
@@ -67,6 +67,22 @@ Migration helpers reject newer versions instead of silently dropping fields.
   as `14 -> 41 -> 43` remains available for audit. COC and normal UI consumers
   receive a derived effective projection (`14 -> 43`). Void/correction events
   preserve the original record and do not query or command the switch.
+
+Accepted reading history is stored separately from the latest-reading
+projection. Run JSON schema version 4 contains `measurement_attempts`, an
+append-only record for every accepted two-wavelength Write IL result. Each
+record has a stable attempt ID, run ID, logical channel, physical port, attempt
+number, both losses, UTC acceptance time, operator, write context, reference
+snapshot, and the prior attempt ID when it supersedes a reading. The existing
+`measurements` collection remains the latest/effective value per channel and
+continues to drive the table, analysis, raw export, and COC workflows.
+
+`View Reading History...` in the Run information box is a read-only viewer for
+current and superseded attempts. It does not require connected hardware.
+Temporary live readings, rejected readings, failed readings, and diagnostic
+readings are not accepted attempts. Legacy runs without this collection are
+loaded by synthesizing one `legacy_import` attempt per existing effective row;
+the legacy file is not rewritten until a later save changes the run.
 
 ## Validated COC view
 

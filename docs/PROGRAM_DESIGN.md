@@ -133,6 +133,14 @@ file-backed CSV/JSON run storage and numbered-run lookup. The established
 facades, so the UI no longer needs to know which file-backed repository
 implementation is selected.
 
+Accepted measurement history is modeled by `domain/measurement_attempts.py`.
+The application appends an immutable attempt only after a complete two-
+wavelength reading is accepted with Write IL. The current `measurements`
+projection remains latest-only for existing table, analysis, CSV, raw-copy,
+and COC behavior. `ui/reading_history.py` presents the append-only history in
+the Run information box, while support JSONL remains diagnostic evidence and
+is not needed to reconstruct retests.
+
 `infrastructure/unit_repository.py` provides the corresponding boundary for
 unit JSON records, unit-level replacement/spare data, and numbered run-folder
 resolution. Unit identity remains separate from run-specific switch identity.
