@@ -319,6 +319,37 @@ class SupportLoggingServiceTests(unittest.TestCase):
         fanout({"event": "source_state"})
         self.assertEqual([item["event"] for item in received], ["read_power", "source_state"])
 
+    def test_switch_visa_classification_fields_are_written_to_support_logs(self):
+        writer = CapturingWriter()
+        service = SupportLoggingService(writer)
+        service.record_hardware_trace(
+            {
+                "event": "switch_communication_failed",
+                "operation": "routing logical channel 3",
+                "command": "CLOSe 3",
+                "status": "error",
+                "status_code": -1073807360,
+                "visa_status": "VI_ERROR_SYSTEM_ERROR",
+                "error_category": "system_error",
+                "disconnection_certainty": "suspected",
+                "error": "VI_ERROR_SYSTEM_ERROR (-1073807360)",
+            }
+        )
+        self.assertTrue(service.flush())
+        service.shutdown()
+
+        events = [
+            item
+            for item in writer.events
+            if item["event"] == "hardware.switch_communication_failed"
+        ]
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertEqual(event["status_code"], -1073807360)
+        self.assertEqual(event["visa_status"], "VI_ERROR_SYSTEM_ERROR")
+        self.assertEqual(event["error_category"], "system_error")
+        self.assertEqual(event["disconnection_certainty"], "suspected")
+
     def test_unhandled_exception_record_contains_sanitized_error_context(self):
         writer = CapturingWriter()
         service = SupportLoggingService(writer)

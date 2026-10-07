@@ -1464,6 +1464,36 @@ class MainWindowTests(unittest.TestCase):
             self.assertTrue(window.write_coc_action.isEnabled())
             window.close()
 
+    def test_hardware_lifecycle_does_not_start_coc_preparation(self):
+        window = MainWindow()
+        try:
+            with patch.object(window, "write_coc") as write_coc, patch(
+                "ilm_app.QMessageBox.critical"
+            ):
+                window.hardware_completed()
+                window.hardware_stopped()
+                window.hardware_failed("hardware failure")
+                window.hardware_thread_finished()
+                QApplication.processEvents()
+
+            write_coc.assert_not_called()
+        finally:
+            window.close()
+
+    def test_explicit_coc_button_and_menu_action_start_coc_workflow(self):
+        with patch.object(MainWindow, "write_coc") as write_coc:
+            window = MainWindow()
+            try:
+                window.write_coc_button.setEnabled(True)
+                window.write_coc_action.setEnabled(True)
+
+                window.write_coc_button.click()
+                window.write_coc_action.trigger()
+
+                self.assertEqual(write_coc.call_count, 2)
+            finally:
+                window.close()
+
     def test_write_coc_uses_persisted_preparation_without_hardware(self):
         with tempfile.TemporaryDirectory() as directory:
             run_path = Path(directory) / "Run-1.csv"

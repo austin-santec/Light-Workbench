@@ -52,6 +52,17 @@ transient diagnostics while safely closing the session and blocking routing.
 These details are hardware status only and do not alter run CSV/JSON data or
 measurement timing.
 
+Normal switch VISA failures are classified at the hardware boundary before
+they reach the workflow UI. Connection-lost, resource-not-found, timeout,
+invalid-session, busy/locked, invalid-resource, system-level, low-level I/O,
+and unknown conditions retain their VISA status name and numeric code. The
+operator message identifies the failed operation and gives recovery guidance;
+generic system errors state that disconnection is possible rather than
+claiming it as fact. The original exception and classification are also sent
+to the support trace. A communication failure marks the managed switch as
+errored and requires an explicit reconnect; it never automatically resumes a
+route or measurement.
+
 After a supported switch reaches the Connected state, the main window may use
 the serial already present in `DeviceInfo` as the setup's Main board serial and
 request a background part-number lookup. This is a presentation/application

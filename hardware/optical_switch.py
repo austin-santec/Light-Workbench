@@ -11,6 +11,10 @@ from datetime import datetime, timezone
 import pyvisa
 
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
+from hardware.visa_errors import (
+    SwitchCommunicationError,
+    classify_switch_visa_error,
+)
 
 
 SWITCH_SETTLING_TIME_SECONDS = 0.25
@@ -62,6 +66,11 @@ class SwitchConnectionDiagnostics:
     user_message: str = ""
     connection_warning: str = ""
     model_detection_method: str = ""
+    visa_status: str = ""
+    status_code: int | None = None
+    error_category: str = ""
+    disconnection_certainty: str = ""
+    recovery_action: str = ""
 
 
 class SwitchConnectionError(RuntimeError):
@@ -242,6 +251,37 @@ class SantecOpticalSwitch:
             except Exception:
                 continue
 
+    def _communication_error(
+        self,
+        error,
+        *,
+        operation: str,
+        command: str = "",
+        logical_channel: int | None = None,
+    ) -> SwitchCommunicationError:
+        """Translate one normal switch VISA failure at the hardware boundary."""
+        classification = classify_switch_visa_error(
+            error,
+            operation=operation,
+            command=command,
+            model=self.model,
+            resource_address=self.address or self.resource_address,
+        )
+        self._trace(
+            "switch_communication_failed",
+            operation=operation,
+            command=command,
+            logical_channel=logical_channel,
+            status="error",
+            status_code=classification.status_code,
+            visa_status=classification.status_name,
+            error_category=classification.category.value,
+            disconnection_certainty=classification.disconnection_certainty,
+            error=str(error),
+            details=classification.recovery_action,
+        )
+        return SwitchCommunicationError(classification)
+
     @staticmethod
     def _is_santec_usb_resource(address: object) -> bool:
         """Quickly filter VISA resources using Santec vendor/product IDs."""
@@ -303,6 +343,12 @@ class SantecOpticalSwitch:
         try:
             listed = self.resource_manager.list_resources(SANTEC_USB_RESOURCE_QUERY)
         except pyvisa.errors.VisaIOError as error:
+            classification = classify_switch_visa_error(
+                error,
+                operation="enumerating USB VISA resources",
+                command=SANTEC_USB_RESOURCE_QUERY,
+                model="Santec optical switch",
+            )
             self._enumeration_error = str(error)
             LOG.info("Santec USB VISA enumeration failed: %s", error)
             self._trace(
@@ -310,7 +356,12 @@ class SantecOpticalSwitch:
                 operation="list_resources",
                 command=SANTEC_USB_RESOURCE_QUERY,
                 status="error",
+                status_code=classification.status_code,
+                visa_status=classification.status_name,
+                error_category=classification.category.value,
+                disconnection_certainty=classification.disconnection_certainty,
                 error=str(error),
+                details=classification.recovery_action,
             )
             return
 
@@ -367,6 +418,17 @@ class SantecOpticalSwitch:
                     ),
                 )
             except pyvisa.errors.VisaIOError as error:
+                classification = classify_switch_visa_error(
+                    error,
+                    operation=(
+                        "opening the VISA resource"
+                        if candidate is None
+                        else "querying *IDN?"
+                    ),
+                    command="*IDN?" if candidate is not None else "",
+                    model="Santec optical switch",
+                    resource_address=address,
+                )
                 stage = (
                     SwitchConnectionStage.OPEN.value
                     if candidate is None
@@ -374,19 +436,27 @@ class SantecOpticalSwitch:
                 )
                 message = (
                     "A possible OSX switch was found at %s, but its VISA session "
-                    "could not be opened. Close Santec Terminal or other software "
-                    "that may be using the switch, then try again. Technical error: %s"
-                    % (address, error)
+                    "could not be opened.\n\n%s"
+                    % (address, classification.operator_message)
                     if candidate is None
                     else "The USB/VISA resource at %s opened, but the switch did "
-                    "not answer *IDN? using %s. Technical error: %s"
-                    % (address, "CRLF" if termination == "\r\n" else "LF", error)
+                    "not answer *IDN? using %s.\n\n%s"
+                    % (
+                        address,
+                        "CRLF" if termination == "\r\n" else "LF",
+                        classification.operator_message,
+                    )
                 )
                 self._last_failure = replace(
                     self._base_diagnostics(address, discovery_method),
                     failure_stage=stage,
                     failed_command="*IDN?" if candidate is not None else "",
                     user_message=message,
+                    visa_status=classification.status_name,
+                    status_code=classification.status_code,
+                    error_category=classification.category.value,
+                    disconnection_certainty=classification.disconnection_certainty,
+                    recovery_action=classification.recovery_action,
                 )
                 LOG.info(
                     "Switch identity probe failed at %s (%r): %s",
@@ -402,7 +472,12 @@ class SantecOpticalSwitch:
                     discovery_method=discovery_method,
                     write_termination=("CRLF" if termination == "\r\n" else "LF"),
                     status="error",
+                    status_code=classification.status_code,
+                    visa_status=classification.status_name,
+                    error_category=classification.category.value,
+                    disconnection_certainty=classification.disconnection_certainty,
                     error=str(error),
+                    details=classification.recovery_action,
                 )
             finally:
                 if candidate is not None and not keep_candidate:
@@ -453,18 +528,38 @@ class SantecOpticalSwitch:
                 status="success",
             )
         except pyvisa.errors.VisaIOError as error:
+            classification = classify_switch_visa_error(
+                error,
+                operation="reading the configured channel count",
+                command=command,
+                model=self.model,
+                resource_address=diagnostics.resource_address or self.address,
+            )
             self._trace(
                 "switch_channel_count",
                 operation="query",
                 command=command,
                 status="error",
+                status_code=classification.status_code,
+                visa_status=classification.status_name,
+                error_category=classification.category.value,
+                disconnection_certainty=classification.disconnection_certainty,
                 error=str(error),
+                details=classification.recovery_action,
+            )
+            diagnostics = replace(
+                diagnostics,
+                visa_status=classification.status_name,
+                status_code=classification.status_code,
+                error_category=classification.category.value,
+                disconnection_certainty=classification.disconnection_certainty,
+                recovery_action=classification.recovery_action,
             )
             raise self._configuration_error(
                 diagnostics,
                 "%s connected and identified itself, but Light Workbench could "
-                "not read its configured channel count. Command: %s. Technical "
-                "error: %s" % (self.model, command, error),
+                "not read its configured channel count.\n\n%s"
+                % (self.model, classification.operator_message),
             ) from error
 
         if SCPI_ERROR_RESPONSE_PATTERN.match(response):
@@ -754,14 +849,24 @@ class SantecOpticalSwitch:
         except Exception as error:
             LOG.warning("Could not remember detected switch address: %s", error)
 
-    def current_channel(self) -> int:
+    def current_channel(self, logical_channel: int | None = None) -> int:
         """Return the physical port after a channel-routing command."""
         self._require_connection()
-        response = self.instrument.query(self.profile.current_channel_query).strip()
+        command = self.profile.current_channel_query
+        try:
+            response = self.instrument.query(command).strip()
+        except pyvisa.errors.VisaIOError as error:
+            raise self._communication_error(
+                error,
+                operation="querying the active physical port",
+                command=command,
+                logical_channel=logical_channel,
+            ) from error
         self._trace(
             "switch_physical_port_query",
             operation="query",
-            command=self.profile.current_channel_query,
+            command=command,
+            logical_channel=logical_channel,
             raw_response=response,
             response_length=len(response),
             status="success",
@@ -772,7 +877,7 @@ class SantecOpticalSwitch:
             raise RuntimeError(
                 "%s did not confirm the routed physical port. Command: %s. "
                 "Response: %r"
-                % (self.model, self.profile.current_channel_query, response)
+                % (self.model, command, response)
             ) from error
 
     def configured_channel_count(self) -> int:
@@ -796,19 +901,31 @@ class SantecOpticalSwitch:
         started = time.perf_counter()
         try:
             self.instrument.write(command)
-        except Exception as error:
+        except pyvisa.errors.VisaIOError as error:
+            communication_error = self._communication_error(
+                error,
+                operation="routing logical channel %d" % channel,
+                command=command,
+                logical_channel=channel,
+            )
             self._trace(
                 "switch_route_failed",
                 operation="write",
                 command=command,
                 logical_channel=channel,
                 status="error",
+                status_code=communication_error.classification.status_code,
+                visa_status=communication_error.classification.status_name,
+                error_category=communication_error.classification.category.value,
+                disconnection_certainty=(
+                    communication_error.classification.disconnection_certainty
+                ),
                 error=str(error),
                 elapsed_ms=(time.perf_counter() - started) * 1000.0,
             )
-            raise
+            raise communication_error from error
         time.sleep(SWITCH_SETTLING_TIME_SECONDS)
-        physical_port = self.current_channel()
+        physical_port = self.current_channel(logical_channel=channel)
         self._trace(
             "switch_route_completed",
             operation="set_channel",
@@ -849,6 +966,7 @@ __all__ = [
     "SWITCH_SETTLING_TIME_SECONDS",
     "SwitchConnectionDiagnostics",
     "SwitchConnectionError",
+    "SwitchCommunicationError",
     "SwitchConnectionStage",
     "SwitchDiscoveryMethod",
     "SwitchModelDetection",

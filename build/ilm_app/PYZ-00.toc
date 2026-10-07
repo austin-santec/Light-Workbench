@@ -326,6 +326,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\measurement.py',
    'PYMODULE'),
+  ('domain.measurement_attempts',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\measurement_attempts.py',
+   'PYMODULE'),
   ('domain.models',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\models.py',
@@ -479,6 +483,10 @@
   ('hardware.simulated',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\hardware\\simulated.py',
+   'PYMODULE'),
+  ('hardware.visa_errors',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\hardware\\visa_errors.py',
    'PYMODULE'),
   ('hashlib',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\hashlib.py',
@@ -1453,6 +1461,10 @@
   ('ui.power_measurement_diagnostics',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\power_measurement_diagnostics.py',
+   'PYMODULE'),
+  ('ui.reading_history',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\reading_history.py',
    'PYMODULE'),
   ('ui.red_light_test',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '

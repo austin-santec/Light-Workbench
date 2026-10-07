@@ -6,7 +6,7 @@ See [`Requirements.md`](../Requirements.md) for the full wording, evidence, and 
 
 **Last reviewed:** 2026-10-06
 
-**Software baseline:** Light Workbench 1.21.0
+**Software baseline:** Light Workbench 1.21.2
 
 **RevB total:** 46 requirement rows
 
@@ -21,7 +21,7 @@ only to distinguish those duplicate rows. Requirements removed from RevB are no
 longer tracked here.
 
 The FUN-004 retest-history row below is retained for traceability to the
-original RevB assessment. It is implemented in the 1.21.0 baseline through
+original RevB assessment. It is implemented in the 1.21.2 baseline through
 append-only accepted-attempt storage and the Run information history viewer.
 
 ## Implemented
@@ -71,7 +71,7 @@ Each item already has useful behavior, but the noted work remains.
   - Next: add a formal pause/recovery state and guided arbitrary-channel restart.
 
 - [ ] **FUN-010 — Show ILM status, identity, and actionable errors.** `[MVP]`
-  - Works now: connection state, model, and serial are shown when available.
+  - Works now: connection state, model, and serial are shown when available; optical-switch VISA failures are classified with recovery guidance.
   - Next: standardize recovery guidance for every supported failure and firmware case.
 
 - [ ] **FUN-014a — Reject every stale, saturated, under-range, missing, or invalid reading.** `[MVP]`
@@ -135,7 +135,7 @@ Each item already has useful behavior, but the noted work remains.
   - Next: show active wavelength and a unified final disposition state.
 
 - [ ] **FUN-053 — Give device/channel-specific errors and corrective actions.** `[R2]`
-  - Works now: many errors identify the immediate device or channel and suggest recovery.
+  - Works now: switch VISA failures identify the operation, preserve the status code, and suggest recovery.
   - Next: create a reviewed error/recovery catalog and fault-test matrix.
 
 - [ ] **FUN-057 — Recover automatically after an unexpected application exit.** `[MVP]`

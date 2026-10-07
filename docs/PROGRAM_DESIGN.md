@@ -120,6 +120,10 @@ whole two-wavelength samples and provenance, validates physical-port changes
 against completed replacements, requires every front-panel channel, applies
 the strict `< 2.5000 dB` COC rule, and derives non-blocking optimization
 recommendations. It has no Qt, filesystem, workbook, or hardware dependency.
+COC preparation is operator-initiated only: the main window's explicit
+Write COC... button and File-menu action call the validated workflow. Run
+completion, manual stop, failure, and worker cleanup do not offer or prepare a
+COC automatically.
 
 `application/coc_workflow.py` loads candidate runs through repository
 interfaces and hydrates JSON-only physical-port and criteria details. The

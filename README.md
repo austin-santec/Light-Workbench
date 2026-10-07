@@ -254,7 +254,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.21.0**; an existing executable keeps its prior
+current source version is **1.21.2**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
@@ -451,6 +451,10 @@ pasting into the Unit Editor notes.
 `Write COC...` opens a preparation dialog instead of immediately exporting the
 active table. The operator confirms the front-panel channel count, chooses one
 persisted base run, and can optionally choose one replacement/retest run.
+COC preparation starts only when the operator explicitly clicks the Hardware
+Controls button or selects File > Write COC...; completing, stopping, or
+failing a hardware run does not automatically ask whether to create a COC.
+Saved readings remain available for a later explicit export.
 Supplemental readings replace complete 1310/1550 pairs by logical channel;
 the source run and reported physical port remain traceable. A changed physical
 port must match a completed Current Port -> Replacement Port record.

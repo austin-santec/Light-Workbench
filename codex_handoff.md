@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.20.0**. The single
+The current source release is **Light Workbench 1.21.2**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -285,6 +285,10 @@ default part lookup is
 `U:\Product Log\Units-COCs-Param Files\OSX-150`. `File > Part Number Lookup
 Folder` opens that fixed location in Windows File Explorer; it is not editable
 from the application.
+COC preparation is never offered automatically after a run completes, is
+stopped, fails, or is cleaned up. The operator must explicitly click the
+Hardware Controls Write COC... button or select File > Write COC...; saved
+readings remain available for that later export.
 
 13. `Tools > Red Light Test...` opens a non-recording VFL pre-test dialog. The
 menu item only opens the dialog; `Start Red Light Test` performs the connection
@@ -369,6 +373,15 @@ The raw identity, resolved model, detection method, serial, firmware, VISA
 address, discovery method, SCPI line ending, and configured channel count are
 retained in transient status and support traces. Unsupported or malformed
 identities are rejected before any channel command is sent.
+
+Normal VISA failures during switch communication are classified by
+`hardware/visa_errors.py` before reaching the workflow UI. The classification
+preserves the VISA status name/code, failed operation and command, and a
+confirmed/suspected/unknown disconnection assessment. A generic
+`VI_ERROR_SYSTEM_ERROR` therefore tells the operator that disconnection is
+possible rather than asserting it. The connection manager still marks the
+switch as Error and requires an explicit reconnect; it never resumes a failed
+route automatically.
 
 The switch applies its own replacement mapping. Python should request the
 logical test channel and record the reported physical port; it should not

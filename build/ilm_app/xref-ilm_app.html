@@ -49,6 +49,7 @@ imports:
  &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
@@ -223,6 +224,7 @@ imports:
  &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
+ &#8226;   <a href="#ui.reading_history">ui.reading_history</a>
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
  &#8226;   <a href="#ui.support_logs">ui.support_logs</a>
  &#8226;   <a href="#warnings">warnings</a>
@@ -415,6 +417,7 @@ imported by:
  &#8226;   <a href="#ui.admin_config">ui.admin_config</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
+ &#8226;   <a href="#ui.reading_history">ui.reading_history</a>
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
  &#8226;   <a href="#ui.support_logs">ui.support_logs</a>
 
@@ -466,6 +469,7 @@ imported by:
  &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
+ &#8226;   <a href="#ui.reading_history">ui.reading_history</a>
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
  &#8226;   <a href="#ui.support_logs">ui.support_logs</a>
 
@@ -3704,6 +3708,7 @@ imported by:
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
  &#8226;   <a href="#tools.dependency_check">tools.dependency_check</a>
+ &#8226;   <a href="#ui.reading_history">ui.reading_history</a>
 
   </div>
 
@@ -3910,6 +3915,7 @@ imported by:
  &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
@@ -3917,6 +3923,7 @@ imported by:
  &#8226;   <a href="#domain.run_data">domain.run_data</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
  &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
+ &#8226;   <a href="#hardware.visa_errors">hardware.visa_errors</a>
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
  &#8226;   <a href="#pprint">pprint</a>
@@ -3949,6 +3956,7 @@ imported by:
  &#8226;   <a href="#application.diagnostic_trace">application.diagnostic_trace</a>
  &#8226;   <a href="#application.support_logging">application.support_logging</a>
  &#8226;   <a href="#calendar">calendar</a>
+ &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
@@ -4040,6 +4048,7 @@ imports:
     <a href="#domain.coc_preparation">domain.coc_preparation</a>
  &#8226;   <a href="#domain.comparison">domain.comparison</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
@@ -4058,6 +4067,7 @@ imported by:
  &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
@@ -4224,6 +4234,33 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="domain.measurement_attempts"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/measurement_attempts.py" type="text/plain"><tt>domain.measurement_attempts</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#datetime">datetime</a>
+ &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#hashlib">hashlib</a>
+ &#8226;   <a href="#json">json</a>
+ &#8226;   <a href="#typing">typing</a>
+ &#8226;   <a href="#uuid">uuid</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#domain">domain</a>
+ &#8226;   <a href="#domain.run_data">domain.run_data</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
+ &#8226;   <a href="#ui.reading_history">ui.reading_history</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="domain.models"></a>
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/models.py" type="text/plain"><tt>domain.models</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -4248,6 +4285,7 @@ imported by:
  &#8226;   <a href="#domain.coc_preparation">domain.coc_preparation</a>
  &#8226;   <a href="#domain.comparison">domain.comparison</a>
  &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
+ &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.reporting">domain.reporting</a>
  &#8226;   <a href="#domain.run_data">domain.run_data</a>
@@ -4361,6 +4399,7 @@ imported by:
 imports:
     <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#pathlib">pathlib</a>
 
@@ -7423,6 +7462,7 @@ imported by:
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
  &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
+ &#8226;   <a href="#hardware.visa_errors">hardware.visa_errors</a>
  &#8226;   <a href="#http">http</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#inspect">inspect</a>
@@ -7843,6 +7883,7 @@ imported by:
  &#8226;   <a href="#hardware.power_meter">hardware.power_meter</a>
  &#8226;   <a href="#hardware.session">hardware.session</a>
  &#8226;   <a href="#hardware.simulated">hardware.simulated</a>
+ &#8226;   <a href="#hardware.visa_errors">hardware.visa_errors</a>
 
   </div>
 
@@ -7934,6 +7975,7 @@ imports:
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#enum">enum</a>
  &#8226;   <a href="#hardware">hardware</a>
+ &#8226;   <a href="#hardware.visa_errors">hardware.visa_errors</a>
  &#8226;   <a href="#logging">logging</a>
  &#8226;   <a href="#pyvisa">pyvisa</a>
  &#8226;   <a href="#re">re</a>
@@ -8012,6 +8054,25 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="hardware.visa_errors"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/hardware/visa_errors.py" type="text/plain"><tt>hardware.visa_errors</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#enum">enum</a>
+ &#8226;   <a href="#hardware">hardware</a>
+ &#8226;   <a href="#pyvisa.constants">pyvisa.constants</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#hardware.optical_switch">hardware.optical_switch</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="hashlib"></a>
   <a target="code" href="///C:/Users/Austin/AppData/Local/Programs/Python/Python311-32/Lib/hashlib.py" type="text/plain"><tt>hashlib</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -8029,7 +8090,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#hmac">hmac</a>
+    <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
+ &#8226;   <a href="#hmac">hmac</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
  &#8226;   <a href="#openpyxl.chartsheet.protection">openpyxl.chartsheet.protection</a>
  &#8226;   <a href="#random">random</a>
@@ -8167,7 +8229,6 @@ imports:
  &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib._bootstrap">importlib._bootstrap</a>
  &#8226;   <a href="#importlib._bootstrap_external">importlib._bootstrap_external</a>
- &#8226;   <a href="#importlib.machinery">importlib.machinery</a>
  &#8226;   <a href="#sys">sys</a>
  &#8226;   <a href="#warnings">warnings</a>
 
@@ -8302,7 +8363,6 @@ imports:
   <div class="import">
 imported by:
     <a href="#ctypes.util">ctypes.util</a>
- &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib.abc">importlib.abc</a>
  &#8226;   <a href="#inspect">inspect</a>
  &#8226;   <a href="#pkgutil">pkgutil</a>
@@ -8823,6 +8883,7 @@ imports:
     <a href="#config.app_config">config.app_config</a>
  &#8226;   <a href="#csv">csv</a>
  &#8226;   <a href="#datetime">datetime</a>
+ &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
  &#8226;   <a href="#infrastructure">infrastructure</a>
@@ -8831,6 +8892,7 @@ imports:
  &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#pathlib">pathlib</a>
  &#8226;   <a href="#re">re</a>
+ &#8226;   <a href="#uuid">uuid</a>
 
   </div>
   <div class="import">
@@ -9181,7 +9243,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
+    <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
+ &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
  &#8226;   <a href="#infrastructure.support_log_writer">infrastructure.support_log_writer</a>
@@ -9189,6 +9252,7 @@ imported by:
  &#8226;   <a href="#json.decoder">json.decoder</a>
  &#8226;   <a href="#json.encoder">json.encoder</a>
  &#8226;   <a href="#json.scanner">json.scanner</a>
+ &#8226;   <a href="#ui.reading_history">ui.reading_history</a>
 
   </div>
 
@@ -15394,6 +15458,7 @@ imported by:
  &#8226;   <a href="#tools.dependency_check">tools.dependency_check</a>
  &#8226;   <a href="#ui.coc_export_dialog">ui.coc_export_dialog</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
+ &#8226;   <a href="#ui.reading_history">ui.reading_history</a>
  &#8226;   <a href="#zipfile">zipfile</a>
 
   </div>
@@ -15729,7 +15794,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#pyvisa">pyvisa</a>
+    <a href="#hardware.visa_errors">hardware.visa_errors</a>
+ &#8226;   <a href="#pyvisa">pyvisa</a>
  &#8226;   <a href="#pyvisa.attributes">pyvisa.attributes</a>
  &#8226;   <a href="#pyvisa.ctwrapper.functions">pyvisa.ctwrapper.functions</a>
  &#8226;   <a href="#pyvisa.ctwrapper.highlevel">pyvisa.ctwrapper.highlevel</a>
@@ -17725,6 +17791,7 @@ imported by:
  &#8226;   <a href="#domain.diagnostic_analysis">domain.diagnostic_analysis</a>
  &#8226;   <a href="#domain.diagnostic_trace">domain.diagnostic_trace</a>
  &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
+ &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
  &#8226;   <a href="#functools">functools</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
@@ -17807,6 +17874,7 @@ imported by:
  &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
+ &#8226;   <a href="#ui.reading_history">ui.reading_history</a>
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
  &#8226;   <a href="#ui.support_logs">ui.support_logs</a>
 
@@ -17914,6 +17982,28 @@ imports:
  &#8226;   <a href="#hardware.device_identity">hardware.device_identity</a>
  &#8226;   <a href="#hardware.factory">hardware.factory</a>
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#ui">ui</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ui.reading_history"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/ui/reading_history.py" type="text/plain"><tt>ui.reading_history</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
+ &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#csv">csv</a>
+ &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
+ &#8226;   <a href="#json">json</a>
  &#8226;   <a href="#pathlib">pathlib</a>
  &#8226;   <a href="#ui">ui</a>
 
@@ -18136,8 +18226,10 @@ imported by:
     <a href="#application.diagnostic_trace">application.diagnostic_trace</a>
  &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
  &#8226;   <a href="#application.support_logging">application.support_logging</a>
+ &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
+ &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
 
   </div>
 

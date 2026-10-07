@@ -4772,7 +4772,6 @@ class MainWindow(QMainWindow):
         self.retest_button.setEnabled(True)
         self.active_run_reference_snapshot = None
         self.statusBar().showMessage("Hardware run complete. CSV and JSON are saved.")
-        QTimer.singleShot(0, self.offer_coc_export)
 
     def hardware_stopped(self):
         self._record_support(
@@ -4795,7 +4794,6 @@ class MainWindow(QMainWindow):
         self.retest_button.setEnabled(bool(self.run_data and self.run_data.measurements))
         self.active_run_reference_snapshot = None
         self.statusBar().showMessage("Hardware run stopped. Completed readings remain visible.")
-        QTimer.singleShot(0, self.offer_coc_export)
 
     def hardware_failed(self, message):
         self._record_support(
@@ -4819,7 +4817,6 @@ class MainWindow(QMainWindow):
         self.stop_hardware_button.setEnabled(False)
         self.active_run_reference_snapshot = None
         QMessageBox.critical(self, "Hardware run stopped", message)
-        QTimer.singleShot(0, self.offer_coc_export)
 
     def stop_hardware(self):
         if self.hardware_controller.is_active:
@@ -5313,20 +5310,6 @@ class MainWindow(QMainWindow):
             return
         dialog = ReadingHistoryDialog(self.run_data.measurement_attempts, self)
         dialog.exec_()
-
-    def offer_coc_export(self):
-        """Offer the same validated preparation workflow used by Write COC."""
-        if self.run_data is None or not self.run_data.measurements:
-            return
-        answer = QMessageBox.question(
-            self,
-            "Write to COC?",
-            "Prepare a validated COC workbook from this unit's saved runs now?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
-        )
-        if answer == QMessageBox.Yes:
-            self.write_coc()
 
     def persist_run_metadata(self):
         """Save metadata changes without changing the current measurement rows."""

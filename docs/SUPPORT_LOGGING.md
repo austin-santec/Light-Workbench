@@ -79,6 +79,9 @@ Depending on the event, logs may contain:
   discovery method, and lease owner.
 - Sanitized OP815 DLL and switch SCPI events, status codes, bounded responses,
   source state, requested/verified wavelengths, and command timing.
+- Classified switch VISA failures, including the VISA status name and code,
+  failed operation/command, error category, and whether physical
+  disconnection is confirmed, suspected, or unknown.
 - Logical channel, reported physical port, raw optical power, reference power,
   calculated insertion loss, and whether both wavelengths completed.
 - Whether a reading was temporary, repeated, accepted, written, overwritten,
