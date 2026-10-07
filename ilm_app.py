@@ -85,7 +85,11 @@ from domain.measurement import (
     validate_reference_measurements,
 )
 from domain.reference import ReferenceMethod, new_reference_snapshot
-from domain.hardware_connection import HardwareCapability
+from domain.hardware_connection import (
+    HardwareBusyError,
+    HardwareCapability,
+    HardwareNotReadyError,
+)
 from domain.models import ConnectionState, DeviceCategory
 from domain.limit_profiles import (
     LimitProfile,
@@ -137,6 +141,7 @@ from ui.support_logs import LoggingStatusDialog, SupportBundleDialog
 from ui.admin_config import AdminConfigDialog, AdminPasswordDialog
 from ui.reading_history import ReadingHistoryDialog
 from ui.coc_export_dialog import CocExportDialog, format_optimization_warning
+from ui.switch_ip import SwitchIpAddressDialog
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
 
@@ -796,6 +801,9 @@ class MainWindow(QMainWindow):
         self.hardware_connection_manager.operation_finished.connect(
             self._hardware_connection_operation_finished
         )
+        self.hardware_connection_manager.switch_ip_query_finished.connect(
+            self._switch_ip_query_finished
+        )
         self.coc_exporter = FileCocExporter(self.support_logger)
         self.part_lookup_controller = part_lookup_controller or PartNumberLookupController(
             self.coc_exporter.find_part_number,
@@ -807,6 +815,7 @@ class MainWindow(QMainWindow):
         self.part_lookup_controller.failed.connect(self._automatic_part_lookup_failed)
         self._device_connection_states = {}
         self._connected_switch_serial = ""
+        self._switch_ip_query_operation_id = ""
         self._active_part_lookup_request = None
         self._part_lookup_requests = {}
         self.run_repository = FileRunRepository(self.support_logger)
@@ -1376,6 +1385,12 @@ class MainWindow(QMainWindow):
         switch_address_action = QAction("Switch VISA Address...", self)
         switch_address_action.triggered.connect(self.choose_switch_visa_address)
         tools_menu.addAction(switch_address_action)
+        self.get_switch_ip_action = QAction("Get IP...", self)
+        self.get_switch_ip_action.setToolTip(
+            "Read the LAN address from the already-connected optical switch."
+        )
+        self.get_switch_ip_action.triggered.connect(self.show_switch_ip)
+        tools_menu.addAction(self.get_switch_ip_action)
         dependency_action = QAction("Check Dependencies...", self)
         dependency_action.triggered.connect(self.show_dependency_check)
         tools_menu.addAction(dependency_action)
@@ -2587,6 +2602,114 @@ class MainWindow(QMainWindow):
             workflow_type="live_il",
             status="closed",
         )
+
+    def show_switch_ip(self):
+        """Read the connected switch LAN address through the manager."""
+        if self._switch_ip_query_operation_id:
+            return
+
+        snapshot = self.hardware_connection_manager.snapshot(
+            HardwareCapability.OPTICAL_SWITCH
+        )
+        if snapshot.owner:
+            QMessageBox.information(
+                self,
+                "Optical switch busy",
+                "The optical switch is currently in use by %s. Stop or close "
+                "that operation before querying its IP address." % snapshot.owner,
+            )
+            return
+        if not snapshot.connected:
+            QMessageBox.information(
+                self,
+                "Optical switch not connected",
+                "Connect the optical switch first, then choose Tools > Get IP...",
+            )
+            return
+
+        operation_id = (
+            self.support_logger.new_operation_id("switch-ip")
+            if self.support_logger is not None
+            else "switch-ip-%s" % uuid.uuid4().hex
+        )
+        self._switch_ip_query_operation_id = operation_id
+        self.get_switch_ip_action.setEnabled(False)
+        info = snapshot.device_info
+        command = ":SYSTem:COMMunicate:LAN:ADDRess?"
+        self._record_support(
+            SupportEventCategory.CONNECTION,
+            "switch.ip_query_started",
+            operation_id=operation_id,
+            model=info.model,
+            device_serial=info.serial_number,
+            resource_address=info.resource_address,
+            command=command,
+            status="started",
+        )
+        self.hardware_connection_manager.query_switch_ip(operation_id)
+
+    def _switch_ip_query_finished(self, operation_id, address, error):
+        """Present one manager-owned IP result on the GUI thread."""
+        if operation_id != self._switch_ip_query_operation_id:
+            return
+        self._switch_ip_query_operation_id = ""
+        self.get_switch_ip_action.setEnabled(True)
+        snapshot = self.hardware_connection_manager.snapshot(
+            HardwareCapability.OPTICAL_SWITCH
+        )
+        info = snapshot.device_info
+        fields = {
+            "operation_id": operation_id,
+            "model": info.model,
+            "device_serial": info.serial_number,
+            "resource_address": info.resource_address,
+            "command": ":SYSTem:COMMunicate:LAN:ADDRess?",
+        }
+        if error is not None:
+            if isinstance(error, HardwareNotReadyError):
+                message = (
+                    "The optical switch is no longer connected. Reconnect it and "
+                    "try again."
+                )
+            elif isinstance(error, HardwareBusyError):
+                message = str(error)
+            else:
+                message = "Could not read the optical switch LAN IP address.\n\n%s" % error
+            self._record_support(
+                SupportEventCategory.CONNECTION,
+                "switch.ip_query_failed",
+                level=SupportLogLevel.WARNING,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+                **fields,
+            )
+            QMessageBox.warning(self, "Get IP", message)
+            return
+
+        self._record_support(
+            SupportEventCategory.CONNECTION,
+            "switch.ip_query_completed",
+            network_address=address,
+            status="success",
+            **fields,
+        )
+        dialog = SwitchIpAddressDialog(
+            address,
+            model=info.model,
+            serial_number=info.serial_number,
+            parent=self,
+        )
+        dialog.copied.connect(
+            lambda: self._record_support(
+                SupportEventCategory.CONNECTION,
+                "switch.ip_query_copied_to_clipboard",
+                network_address=address,
+                status="success",
+                **fields,
+            )
+        )
+        dialog.exec_()
 
     def show_power_measurement_diagnostics(self):
         """Open the non-recording raw-power diagnostic tool."""

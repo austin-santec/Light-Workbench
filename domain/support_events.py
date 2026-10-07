@@ -50,6 +50,7 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "device_serial",
         "firmware",
         "resource_address",
+        "network_address",
         "raw_identity",
         "discovery_method",
         "connection_state",

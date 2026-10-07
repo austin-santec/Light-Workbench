@@ -91,6 +91,14 @@ class ChannelRouter(OpticalSwitch, Protocol):
     pass
 
 
+@runtime_checkable
+class OpticalSwitchNetworkInfo(Protocol):
+    """Optional capability for switches that expose a LAN address query."""
+
+    def get_ip_address(self) -> str:
+        """Return the configured network address without changing routing."""
+
+
 def validate_wavelength_readings(
     readings: Mapping[int, float],
     wavelengths: Sequence[int] = WAVELENGTHS_NM,

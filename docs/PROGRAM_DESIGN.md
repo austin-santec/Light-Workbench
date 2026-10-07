@@ -213,6 +213,14 @@ session. This allows normal runs, reference calculation, Live IL, Red Light,
 and Power Diagnostics to reuse one connection without exposing native handles
 across worker threads or allowing simultaneous control.
 
+The optional switch network-information capability is exposed through the
+persistent manager as an asynchronous `Tools > Get IP...` operation. It acquires
+a short-lived lease against the existing switch session, performs
+`:SYSTem:COMMunicate:LAN:ADDRess?` on the hardware executor, validates the
+address at the adapter boundary, and releases the lease without changing
+routing or persistence. The UI only presents the result and owns clipboard
+interaction.
+
 `application/part_number_lookup.py` owns background execution for the optional
 network-backed part-number lookup. The main window projects the serial from a
 newly connected supported switch into the setup form only when no run is

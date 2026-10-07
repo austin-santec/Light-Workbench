@@ -57,6 +57,8 @@ class SwitchVisaErrorClassification:
 class SwitchCommunicationError(RuntimeError):
     """A translated VISA failure from an already identified optical switch."""
 
+    communication_failure = True
+
     def __init__(self, classification: SwitchVisaErrorClassification):
         self.classification = classification
         super().__init__(classification.operator_message)

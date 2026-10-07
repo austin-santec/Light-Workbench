@@ -12,6 +12,7 @@ from hardware.optical_switch import (
     SwitchConnectionError,
     SwitchConnectionStage,
     SwitchDiscoveryMethod,
+    SwitchIpAddressError,
     SwitchModelDetection,
     resolve_santec_switch_profile,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "SwitchConnectionError",
     "SwitchConnectionStage",
     "SwitchDiscoveryMethod",
+    "SwitchIpAddressError",
     "SwitchModelDetection",
     "resolve_santec_switch_profile",
 ]

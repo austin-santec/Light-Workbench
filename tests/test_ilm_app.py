@@ -633,6 +633,7 @@ class MainWindowTests(unittest.TestCase):
             [action.text() for action in menus["Tools"].actions()],
             [
                 "Switch VISA Address...",
+                "Get IP...",
                 "Check Dependencies...",
                 "Red Light Test...",
                 "Live IL Reading...",

@@ -67,6 +67,10 @@ class FakeSwitch:
             raise RuntimeError("switch communication lost")
         return channel
 
+    def get_ip_address(self):
+        self.call_threads.append(threading.get_ident())
+        return "192.0.2.15"
+
     def close(self):
         self.call_threads.append(threading.get_ident())
         self.close_count += 1
@@ -126,6 +130,19 @@ class HardwareConnectionManagerTests(unittest.TestCase):
         self.assertEqual(meter.connect_count, 1)
         self.assertEqual(switch.connect_count, 1)
         self.assertTrue(self.manager.run_ready)
+
+    def test_query_switch_ip_reuses_persistent_connection_and_releases_lease(self):
+        self.manager, _, switch = self.make_manager()
+        self.manager.connect_switch().result(timeout=2)
+
+        self.assertEqual(
+            self.manager.query_switch_ip("switch-ip-test").result(timeout=2),
+            "192.0.2.15",
+        )
+        self.assertTrue(self.manager.switch_ready)
+        self.assertEqual(switch.connect_count, 1)
+        self.assertEqual(switch.close_count, 0)
+        self.assertEqual(len(set(switch.call_threads)), 1)
 
     def test_logging_failure_does_not_change_connection_or_lease_behavior(self):
         class BrokenLogger:

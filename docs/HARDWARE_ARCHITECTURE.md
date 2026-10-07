@@ -63,6 +63,16 @@ to the support trace. A communication failure marks the managed switch as
 errored and requires an explicit reconnect; it never automatically resumes a
 route or measurement.
 
+The switch profiles also expose the optional LAN address query
+`:SYSTem:COMMunicate:LAN:ADDRess?`. `Tools > Get IP...` uses the already-connected
+persistent switch session and the same selected LF/CRLF termination. The adapter
+strips normal SCPI quoting, validates IPv4 or IPv6 syntax with the standard
+library, and rejects empty, malformed, or unspecified addresses. The query does
+not route a channel, change a mapping, connect automatically, or write run data.
+Transport failures use the existing VISA classification; a firmware-level SCPI
+rejection or invalid address is reported as an unsupported/invalid IP response
+without claiming that the switch was physically disconnected.
+
 After a supported switch reaches the Connected state, the main window may use
 the serial already present in `DeviceInfo` as the setup's Main board serial and
 request a background part-number lookup. This is a presentation/application

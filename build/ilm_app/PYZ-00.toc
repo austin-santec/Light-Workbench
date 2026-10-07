@@ -1474,6 +1474,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\support_logs.py',
    'PYMODULE'),
+  ('ui.switch_ip',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\switch_ip.py',
+   'PYMODULE'),
   ('urllib',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\urllib\\__init__.py',
    'PYMODULE'),

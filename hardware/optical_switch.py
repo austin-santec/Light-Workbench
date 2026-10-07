@@ -1,5 +1,6 @@
 """PyVISA adapter for supported Santec optical switches."""
 
+import ipaddress
 import logging
 import re
 import time
@@ -89,6 +90,11 @@ class SantecSwitchProfile:
     current_channel_query: str = "CLOSe?"
     configured_channel_query: str = "CFG:SWT:END?"
     channel_command: str = "CLOSe %d"
+    ip_address_query: str = ":SYSTem:COMMunicate:LAN:ADDRess?"
+
+
+class SwitchIpAddressError(RuntimeError):
+    """The switch answered the IP query without a usable network address."""
 
 
 class SwitchModelDetection(str, Enum):
@@ -880,6 +886,66 @@ class SantecOpticalSwitch:
                 % (self.model, command, response)
             ) from error
 
+    def get_ip_address(self) -> str:
+        """Read and validate the connected switch's configured LAN address."""
+        self._require_connection()
+        command = self.profile.ip_address_query
+        try:
+            response = self.instrument.query(command).strip()
+        except pyvisa.errors.VisaIOError as error:
+            raise self._communication_error(
+                error,
+                operation="querying the switch LAN IP address",
+                command=command,
+            ) from error
+
+        self._trace(
+            "switch_ip_query",
+            operation="query",
+            command=command,
+            raw_response=response,
+            response_length=len(response),
+            status="response_received",
+        )
+        if SCPI_ERROR_RESPONSE_PATTERN.match(response):
+            raise SwitchIpAddressError(
+                "%s is connected, but it rejected the LAN IP query.\n\n"
+                "Command: %s\nResponse: %s\n\n"
+                "The switch may not support this command on its current firmware."
+                % (self.model, command, response)
+            )
+
+        address_text = response.strip().strip('"').strip()
+        if not address_text:
+            raise SwitchIpAddressError(
+                "%s returned an empty LAN IP address for command %s."
+                % (self.model, command)
+            )
+        try:
+            address = ipaddress.ip_address(address_text)
+        except ValueError as error:
+            raise SwitchIpAddressError(
+                "%s returned an invalid LAN IP address: %r.\n\n"
+                "Command: %s" % (self.model, address_text, command)
+            ) from error
+        if address.is_unspecified:
+            raise SwitchIpAddressError(
+                "%s returned an unspecified LAN IP address (%s). Configure the "
+                "switch network settings before trying again."
+                % (self.model, address)
+            )
+
+        normalized = str(address)
+        self._trace(
+            "switch_ip_query",
+            operation="query",
+            command=command,
+            network_address=normalized,
+            response_length=len(response),
+            status="success",
+        )
+        return normalized
+
     def configured_channel_count(self) -> int:
         """Return the positive channel count validated during connection."""
         self._require_connection()
@@ -967,6 +1033,7 @@ __all__ = [
     "SwitchConnectionDiagnostics",
     "SwitchConnectionError",
     "SwitchCommunicationError",
+    "SwitchIpAddressError",
     "SwitchConnectionStage",
     "SwitchDiscoveryMethod",
     "SwitchModelDetection",

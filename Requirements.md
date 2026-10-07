@@ -2,7 +2,7 @@
 
 **Source:** [OSX_IL_Test_Software_Requirements_RevB.xlsx](temp%20docs/OSX_IL_Test_Software_Requirements_RevB.xlsx), `Requirements` worksheet, rows 5–50. The workbook's Document Control sheet identifies the document as **version 0.1 Draft**, dated **2026-09-30**, and prepared for Santec California engineering, production, software, and quality stakeholders.
 
-**Assessment date:** 2026-10-07. **Software baseline:** Light Workbench 1.21.3 (`config/app_info.py`).
+**Assessment date:** 2026-10-07. **Software baseline:** Light Workbench 1.22.0 (`config/app_info.py`).
 
 **Assessment method:** Source-code, automated-test, and project-documentation review. This is an engineering gap assessment, not formal approval, hardware qualification, or user acceptance.
 

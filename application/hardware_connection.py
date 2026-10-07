@@ -30,6 +30,7 @@ class HardwareConnectionManager(QObject):
     device_status_changed = pyqtSignal(object)
     snapshot_changed = pyqtSignal(object)
     operation_finished = pyqtSignal(str, object)
+    switch_ip_query_finished = pyqtSignal(str, object, object)
 
     def __init__(self, hardware_factory: HardwareFactory, parent=None, support_logger=None):
         super().__init__(parent)
@@ -109,6 +110,21 @@ class HardwareConnectionManager(QObject):
             (HardwareCapability.OPTICAL_SWITCH,),
         )
 
+    def query_switch_ip(self, operation_id: str = "") -> Future:
+        """Query the already-connected switch without opening another session."""
+        future = self._submit(self._query_switch_ip)
+
+        def notify(completed):
+            try:
+                address = completed.result()
+            except Exception as error:
+                self.switch_ip_query_finished.emit(operation_id, "", error)
+            else:
+                self.switch_ip_query_finished.emit(operation_id, address, None)
+
+        future.add_done_callback(notify)
+        return future
+
     def disconnect_all(self) -> Future:
         return self._disconnect_capabilities(
             "Disconnect all hardware",
@@ -142,6 +158,38 @@ class HardwareConnectionManager(QObject):
     ) -> Future:
         selected = tuple(capabilities)
         return self._submit(self._disconnect_many, operation_name, selected)
+
+    def _query_switch_ip(self):
+        owner_token = object()
+        acquired = False
+        device = None
+        capability = HardwareCapability.OPTICAL_SWITCH
+        try:
+            self._acquire(
+                capability,
+                owner_token,
+                "Get switch IP",
+                connect_if_needed=False,
+            )
+            acquired = True
+            with self._lock:
+                device = self._devices.get(capability)
+            if device is None:
+                raise HardwareNotReadyError("Optical switch is no longer connected.")
+            method = getattr(device, "get_ip_address", None)
+            if method is None:
+                raise RuntimeError(
+                    "The connected optical switch adapter does not support LAN IP queries."
+                )
+            try:
+                return method()
+            except Exception as error:
+                if getattr(error, "communication_failure", False):
+                    self._mark_failed(capability, device, error)
+                raise
+        finally:
+            if acquired:
+                self._release(capability, owner_token)
 
     def _submit(self, function, *args) -> Future:
         with self._lock:
@@ -762,6 +810,9 @@ class ManagedOpticalSwitch(_ManagedDevice):
 
     def set_channel(self, channel):
         return self._invoke("set_channel", channel)
+
+    def get_ip_address(self):
+        return self._invoke("get_ip_address")
 
     def set_trace_metadata(self, **metadata):
         if not self._acquired:

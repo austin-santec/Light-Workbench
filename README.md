@@ -114,6 +114,13 @@ When available, the trace session also includes the detected meter and switch
 manufacturer, model, serial, raw identification string, and VISA resource
 address.
 
+From `Tools > Get IP...`, the operator can read the configured LAN address from
+an already-connected OSX-100 or OSX-150. The tool never opens a second VISA
+session or connects the switch automatically. It uses the persistent connection,
+validates the response as a usable IPv4 or IPv6 address, and displays it in a
+selectable dialog with an explicit `Copy to Clipboard` button. It does not
+change switch routing or save run data.
+
 Diagnostic exports default to local-time names such as
 `diagnostic-history-20260930-110405.csv` (or `.json`). If that automatically
 suggested name already exists, a deterministic `-01`, `-02`, and so on is
@@ -254,7 +261,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.21.3**; an existing executable keeps its prior
+current source version is **1.22.0**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see

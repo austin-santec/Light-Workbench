@@ -7,6 +7,8 @@ from domain.models import ConnectionState, DeviceCategory
 from hardware.optical_switch import (
     OSX150 as HardwareOSX150,
     SANTEC_USB_RESOURCE_QUERY,
+    SantecSwitchProfile,
+    SwitchIpAddressError,
     SwitchConnectionError,
     detect_santec_switch_model,
     resolve_santec_switch_profile,
@@ -84,6 +86,8 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
                     return "48"
                 if command == "CLOSe?":
                     return "2"
+                if command == ":SYSTem:COMMunicate:LAN:ADDRess?":
+                    return '"192.0.2.15"'
                 raise AssertionError("Unexpected VISA query: %s" % command)
 
             def write(self, command):
@@ -117,6 +121,7 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         self.assertEqual(info.configured_channel_count, 48)
         self.assertEqual(switch.resource_manager.query, SANTEC_USB_RESOURCE_QUERY)
         self.assertEqual(switch.write_termination, "\n")
+        self.assertEqual(switch.get_ip_address(), "192.0.2.15")
         with patch("hardware.optical_switch.time.sleep"):
             self.assertEqual(switch.set_channel(2), 2)
         names = [item["event"] for item in trace_events]
@@ -125,6 +130,39 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         self.assertIn("switch_connected", names)
         self.assertIn("switch_route_completed", names)
         switch.close()
+
+    def test_ip_query_accepts_ipv6_and_rejects_unspecified_or_malformed_values(self):
+        class Instrument:
+            def __init__(self, response):
+                self.response = response
+
+            def query(self, command):
+                self.command = command
+                return self.response
+
+        switch = HardwareOSX150()
+        switch.model = "OSX-150"
+        switch.profile = SantecSwitchProfile(model="OSX-150")
+        switch.instrument = Instrument("2001:db8::15")
+        self.assertEqual(switch.get_ip_address(), "2001:db8::15")
+
+        for response in ("0.0.0.0", "", "not-an-ip"):
+            with self.subTest(response=response):
+                switch.instrument = Instrument(response)
+                with self.assertRaises(SwitchIpAddressError):
+                    switch.get_ip_address()
+
+    def test_ip_query_reports_scpi_rejection_without_treating_it_as_visa_loss(self):
+        class Instrument:
+            def query(self, _command):
+                return '-113,"Undefined header"'
+
+        switch = HardwareOSX150()
+        switch.model = "OSX-100"
+        switch.profile = SantecSwitchProfile(model="OSX-100")
+        switch.instrument = Instrument()
+        with self.assertRaisesRegex(SwitchIpAddressError, "rejected the LAN IP query"):
+            switch.get_ip_address()
 
     def test_crlf_firmware_reopens_after_lf_timeout_and_retains_ending(self):
         class Instrument:
