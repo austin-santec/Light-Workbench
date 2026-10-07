@@ -34,6 +34,11 @@ identity fields are present and is shown as a legacy-generic warning. Explicit
 unsupported or malformed identities are rejected. The root `power_meter.py`
 and `osx150_driver.py` modules are compatibility facades.
 
+The complete OP815M.dll inventory, verified exports, diagnostic candidates, and
+functions prohibited in production measurements are maintained in
+[`ILM_DLL_FUNCTION_REFERENCE.md`](ILM_DLL_FUNCTION_REFERENCE.md). Future DLL
+changes must follow that document before adding bindings.
+
 The Santec optical-switch adapter tries addresses in a bounded order: the optional manual
 address, a separately stored last-known automatic address, then resources from
 `list_resources("USB?*::INSTR")` filtered to Santec's USB VID/PID. This avoids

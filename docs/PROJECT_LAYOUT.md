@@ -30,6 +30,7 @@ existing imports need to remain compatible.
 assets/                          Application images and icon
 Templates/                       COC templates used by the exporter
 docs/                            Architecture and contributor documentation
+docs/ILM_DLL_FUNCTION_REFERENCE.md  OP815M.dll command inventory and usage rules
 dist/LightWorkbench/             Generated one-folder executable distribution
 build/                           Generated PyInstaller intermediates
 releases/                        Generated versioned deployment ZIPs

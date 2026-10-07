@@ -41,6 +41,10 @@ requirement into completed, partial, and not-yet-implemented work.
   engineering logs, redaction, rotation, support bundles, and audit-trail
   limitations.
 
+- [`ILM_DLL_FUNCTION_REFERENCE.md`](ILM_DLL_FUNCTION_REFERENCE.md) documents
+  OP815M.dll exports, verified diagnostics, and commands prohibited in
+  production measurements.
+
 Model-specific quality criteria are defined in `domain/limit_profiles.py`,
 stored through `infrastructure/limit_profile_repository.py`, and edited from
 the session-only `Edit > Admin Mode...` / `Edit > Admin Config...` workflow.

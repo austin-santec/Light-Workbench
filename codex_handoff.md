@@ -78,6 +78,7 @@ support logs coalesce consecutive invalid samples into start/end episodes.
 | infrastructure/unit_persistence.py | Atomic unit JSON records and numbered-run paths; root `unit_persistence.py` is a compatibility facade. |
 | infrastructure/coc_export.py | COC template lookup, XLSX writing, and drawing preservation; root `coc_export.py` is a compatibility facade. |
 | op815_driver.py | ctypes wrapper around the 32-bit OP815M.dll. Owns DLL discovery, function signatures, device selection, source control, wavelength selection, measurements, and cleanup. |
+| docs/ILM_DLL_FUNCTION_REFERENCE.md | OP815M.dll export inventory, verified hardware observations, approved diagnostic candidates, and prohibited production functions. |
 | hardware/optical_switch.py | Extensible Santec switch identity registry and verified OSX-100/OSX-150 PyVISA/SCPI adapter. |
 | hardware/device_identity.py | Compatibility-safe identity reporting for hardware adapters. |
 | ui/hardware_status.py | Compact Connected hardware status panel presented in the main header. |
@@ -335,6 +336,11 @@ It handles Ctrl+C and preserves accepted rows in its partial CSV.
 op815_driver.py binds the vendor functions with ctypes, checks process bitness
 before loading the DLL, discovers devices described as OP815, and prompts for
 an index if multiple devices are present. DLL source IDs are zero-based:
+
+Read `docs/ILM_DLL_FUNCTION_REFERENCE.md` before adding a DLL binding. The
+application deliberately does not use the DLL's internal reference/loss
+functions, source-power/gain controls, unvalidated module-selection functions,
+or OP831/OP925-specific measurement functions in the normal IL workflow.
 
     source 0 -> 1310 nm
     source 1 -> 1550 nm

@@ -203,6 +203,12 @@ class OP815:
 
         Declaring signatures is important: it tells ctypes how to safely
         convert Python values and where the DLL will write returned values.
+
+        The complete export inventory and intentionally prohibited production
+        functions are documented in ``docs/ILM_DLL_FUNCTION_REFERENCE.md``.
+        Do not add internal-reference, relative-loss, gain, source-power, or
+        unvalidated module-selection calls here as shortcuts for the
+        application measurement workflow.
         """
         int_pointer = ctypes.POINTER(ctypes.c_int)
         double_pointer = ctypes.POINTER(ctypes.c_double)
