@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-Light Workbench 1.16.1 includes always-on, local engineering support logs. Their
+Light Workbench 1.21.3 includes always-on, local engineering support logs. Their
 purpose is to help engineering reconstruct operator workflows, hardware
 communication, two-wavelength measurements, insertion-loss calculations,
 connection ownership, persistence, exports, and failures.
@@ -65,6 +65,28 @@ Select-String -Path "$env:LOCALAPPDATA\LightWorkbench\logs\*.jsonl" `
 
 Python and common JSONL tools can parse one line at a time without loading an
 entire day into memory.
+
+### COC attempt diagnostics
+
+Every explicit **Write COC...** action receives a `coc_attempt_id`. All
+application-level COC events for that action carry the ID as both the
+`operation_id` and `coc_attempt_id`, so a support engineer can reconstruct one
+attempt without relying on popup text or timestamps alone. The workflow ends
+with exactly one `export.coc_attempt_completed` event containing:
+
+- `outcome`: `success`, `blocked`, `canceled`, `failed`, or `partial_success`.
+- `failure_stage`: the precondition, source discovery, preparation, validation,
+  optimization confirmation, template selection, workbook export, or metadata
+  persistence stage where the attempt ended.
+- `reason_code` and bounded validation evidence such as missing channels,
+  validation issue codes, failing channel/wavelength values, selected runs,
+  front-panel count, and template capacity.
+
+Validation blocks and operator cancellations are separate from technical
+failures. If the workbook is created but provenance metadata cannot be saved,
+the attempt is recorded as `partial_success` and the operator is shown the
+created file path. The support log never contains workbook contents, free-form
+notes, passwords, or clipboard data.
 
 ## Categories and collected data
 

@@ -144,6 +144,24 @@ class CocExportDialogTests(unittest.TestCase):
         self.assertNotEqual(dialog.result(), dialog.Accepted)
         dialog.close()
 
+    def test_unexpected_preparation_error_is_retained_for_workflow_boundary(self):
+        dialog = CocExportDialog(
+            [CocRunOption(run(1, 1))],
+            lambda base, count, supplemental: prepare_coc(
+                base, count, supplemental_run=supplemental
+            ),
+            initial_channel_count=1,
+        )
+
+        dialog.prepare_callback = lambda *_args: (_ for _ in ()).throw(
+            RuntimeError("repository unavailable")
+        )
+        dialog.refresh_summary()
+        self.assertIsInstance(dialog.preparation_error, RuntimeError)
+        self.assertIn("repository unavailable", dialog.summary.toPlainText())
+        self.assertFalse(dialog.write_button.isEnabled())
+        dialog.close()
+
 
 if __name__ == "__main__":
     unittest.main()

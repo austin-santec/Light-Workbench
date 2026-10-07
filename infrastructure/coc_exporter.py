@@ -55,6 +55,7 @@ class FileCocExporter:
         tested_by: str = "",
         front_panel_channel_count: int = 48,
         export_timestamp=None,
+        coc_attempt_id: str | None = None,
     ) -> Path:
         """Create a COC workbook from the template without altering it."""
         try:
@@ -72,10 +73,16 @@ class FileCocExporter:
         except Exception as error:
             self._record(
                 "export.coc_failed",
+                operation_id=coc_attempt_id,
                 level="error",
                 destination=output_directory,
                 measurement_count=len(measurements),
                 unit_serial=main_board_serial,
+                **(
+                    {"coc_attempt_id": coc_attempt_id}
+                    if coc_attempt_id is not None
+                    else {}
+                ),
                 error_type=type(error).__name__,
                 error_message=str(error),
                 status="error",
@@ -83,20 +90,31 @@ class FileCocExporter:
             raise
         self._record(
             "export.coc_completed",
+            operation_id=coc_attempt_id,
             destination=result,
             file_type="xlsx",
             measurement_count=len(measurements),
             unit_serial=main_board_serial,
             operator_initials=tested_by,
+            **(
+                {"coc_attempt_id": coc_attempt_id}
+                if coc_attempt_id is not None
+                else {}
+            ),
             status="success",
         )
         return result
 
-    def _record(self, event, **fields):
+    def _record(self, event, operation_id=None, **fields):
         if self.support_logger is None:
             return
         try:
-            self.support_logger.record("export", event, **fields)
+            if operation_id is None:
+                self.support_logger.record("export", event, **fields)
+            else:
+                self.support_logger.record(
+                    "export", event, operation_id=operation_id, **fields
+                )
         except Exception:
             pass
 

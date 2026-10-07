@@ -1570,6 +1570,151 @@ class MainWindowTests(unittest.TestCase):
             self.assertFalse(window.hardware_controller.is_active)
             window.close()
 
+    def test_coc_validation_log_fields_include_bounded_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = CocSourceRun(
+                7,
+                Path(directory) / "Run-7.csv",
+                (MeasurementRecord(1, 2.6, 2.7, 41),),
+                {"Main board serial": "MB7"},
+                {"model": "OSX-150", "warning_above_db": 2.25, "fail_above_db": 2.5},
+            )
+            result = prepare_coc(source, 1)
+            window = MainWindow()
+            try:
+                fields = window._coc_result_log_fields(result)
+                self.assertEqual(fields["run_number"], 7)
+                self.assertEqual(fields["missing_channels"], "")
+                self.assertIn("channel=1,wavelength=1310", fields["failure_details"])
+                self.assertIn("channel=1,wavelength=1550", fields["failure_details"])
+                self.assertLessEqual(len(fields["failure_details"]), 3000)
+            finally:
+                window.close()
+
+    def test_coc_export_failure_reports_stage_and_actionable_message(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_path = Path(directory) / "Run-1.csv"
+            source = CocSourceRun(
+                1,
+                run_path,
+                (MeasurementRecord(1, 0.8, 0.9, 1),),
+                {"Main board serial": "MB1", "Part number": "OSX-150-1A-001-01"},
+                {"model": "OSX-150", "warning_above_db": 2.25, "fail_above_db": 2.5},
+            )
+            result = prepare_coc(source, 1)
+
+            class AcceptedDialog:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_result = result
+                    self.base_run = source
+
+                def exec_(self):
+                    return QDialog.Accepted
+
+            window = MainWindow()
+            window.run_data = RunData(run_path, list(source.measurements), dict(source.metadata))
+            window.coc_exporter.export = MagicMock(
+                side_effect=PermissionError("workbook is open")
+            )
+            terminal = MagicMock()
+            try:
+                with patch.object(window, "_coc_run_options", return_value=[CocRunOption(source)]), \
+                    patch("ilm_app.CocExportDialog", AcceptedDialog), \
+                    patch.object(window, "_select_coc_template", return_value=Path(directory) / "template.xlsx"), \
+                    patch.object(window, "_record_coc_terminal", terminal), \
+                    patch("ilm_app.QMessageBox.critical") as critical:
+                    window.write_coc()
+
+                self.assertEqual(terminal.call_args.args[1:3], ("failed", "workbook_export"))
+                self.assertEqual(terminal.call_args.kwargs["reason_code"], "coc_export_failed")
+                self.assertIn("PermissionError", critical.call_args.args[2])
+                self.assertIn("Close any open workbook", critical.call_args.args[2])
+            finally:
+                window.close()
+
+    def test_coc_metadata_failure_is_reported_as_partial_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_path = Path(directory) / "Run-1.csv"
+            output_path = Path(directory) / "COC.xlsx"
+            source = CocSourceRun(
+                1,
+                run_path,
+                (MeasurementRecord(1, 0.8, 0.9, 1),),
+                {"Main board serial": "MB1", "Part number": "OSX-150-1A-001-01"},
+                {"model": "OSX-150", "warning_above_db": 2.25, "fail_above_db": 2.5},
+            )
+            result = prepare_coc(source, 1)
+
+            class AcceptedDialog:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_result = result
+                    self.base_run = source
+
+                def exec_(self):
+                    return QDialog.Accepted
+
+            def export_workbook(*_args, **_kwargs):
+                output_path.write_text("created", encoding="utf-8")
+                return output_path
+
+            window = MainWindow()
+            window.run_data = RunData(run_path, list(source.measurements), dict(source.metadata))
+            window.coc_exporter.export = MagicMock(side_effect=export_workbook)
+            terminal = MagicMock()
+            try:
+                with patch.object(window, "_coc_run_options", return_value=[CocRunOption(source)]), \
+                    patch("ilm_app.CocExportDialog", AcceptedDialog), \
+                    patch.object(window, "_select_coc_template", return_value=Path(directory) / "template.xlsx"), \
+                    patch.object(window, "_persist_coc_export_metadata", side_effect=OSError("metadata store unavailable")), \
+                    patch.object(window, "_record_coc_terminal", terminal), \
+                    patch("ilm_app.QMessageBox.warning") as warning:
+                    window.write_coc()
+
+                self.assertTrue(output_path.exists())
+                self.assertEqual(terminal.call_args.args[1:3], ("partial_success", "metadata_persistence"))
+                self.assertTrue(terminal.call_args.kwargs["partial_success"])
+                self.assertIn("metadata", warning.call_args.args[2].lower())
+            finally:
+                window.close()
+
+    def test_coc_template_selection_cancel_is_a_canceled_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_path = Path(directory) / "Run-1.csv"
+            source = CocSourceRun(
+                1,
+                run_path,
+                (MeasurementRecord(1, 0.8, 0.9, 1),),
+                {"Main board serial": "MB1"},
+                {"model": "OSX-150", "warning_above_db": 2.25, "fail_above_db": 2.5},
+            )
+            result = prepare_coc(source, 1)
+
+            class AcceptedDialog:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_result = result
+                    self.base_run = source
+
+                def exec_(self):
+                    return QDialog.Accepted
+
+            window = MainWindow()
+            window.run_data = RunData(run_path, list(source.measurements), dict(source.metadata))
+            terminal = MagicMock()
+            try:
+                with patch.object(window, "_coc_run_options", return_value=[CocRunOption(source)]), \
+                    patch("ilm_app.CocExportDialog", AcceptedDialog), \
+                    patch.object(window, "_select_coc_template", return_value=None), \
+                    patch.object(window, "_record_coc_terminal", terminal):
+                    window.write_coc()
+
+                self.assertEqual(terminal.call_args.args[1:3], ("canceled", "template_selection"))
+                self.assertEqual(
+                    terminal.call_args.kwargs["reason_code"],
+                    "operator_canceled_template_selection",
+                )
+            finally:
+                window.close()
+
     def test_return_from_optimization_warning_creates_no_workbook(self):
         with tempfile.TemporaryDirectory() as directory:
             run_path = Path(directory) / "Run-1.csv"

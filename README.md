@@ -254,7 +254,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.21.2**; an existing executable keeps its prior
+current source version is **1.21.3**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
@@ -454,6 +454,14 @@ persisted base run, and can optionally choose one replacement/retest run.
 COC preparation starts only when the operator explicitly clicks the Hardware
 Controls button or selects File > Write COC...; completing, stopping, or
 failing a hardware run does not automatically ask whether to create a COC.
+
+If COC preparation or export cannot complete, the dialog explains whether the
+attempt was blocked by validation, canceled, or failed technically. Technical
+failures include the failed stage, the exception type/message, and a suggested
+operator action. Each explicit attempt is also correlated in the local support
+logs with a `coc_attempt_id`; if the workbook was created but provenance
+metadata could not be saved, the operator is told where the partially saved
+workbook is located.
 Saved readings remain available for a later explicit export.
 Supplemental readings replace complete 1310/1550 pairs by logical channel;
 the source run and reported physical port remain traceable. A changed physical

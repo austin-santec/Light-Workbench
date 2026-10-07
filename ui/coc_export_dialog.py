@@ -44,6 +44,7 @@ class CocExportDialog(QDialog):
             Path(current_run_path).resolve() if current_run_path else None
         )
         self.preparation_result: CocPreparationResult | None = None
+        self.preparation_error: Exception | None = None
 
         layout = QVBoxLayout(self)
         explanation = QLabel(
@@ -179,19 +180,26 @@ class CocExportDialog(QDialog):
     def refresh_summary(self, *_args):
         base = self.base_run
         if base is None:
+            self.preparation_error = None
             self.preparation_result = None
             self.summary.setPlainText("No persisted run with written readings is available.")
             self.write_button.setEnabled(False)
             return
+        self.preparation_error = None
         try:
             result = self.prepare_callback(
                 base,
                 self.channel_count_spin.value(),
                 self.supplemental_run,
             )
-        except (TypeError, ValueError) as error:
+        except Exception as error:
+            # Preparation is a deliberate UI boundary: show the error in the
+            # dialog while allowing the caller to record it with its attempt ID.
+            self.preparation_error = error
             self.preparation_result = None
-            self.summary.setPlainText(str(error))
+            self.summary.setPlainText(
+                "COC preparation could not be evaluated:\n\n%s" % error
+            )
             self.write_button.setEnabled(False)
             return
         self.preparation_result = result

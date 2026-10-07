@@ -273,6 +273,31 @@ class SupportLoggingServiceTests(unittest.TestCase):
         self.assertEqual(event["operation_id"], operation)
         self.assertTrue(writer.closed)
 
+    def test_coc_attempt_fields_are_allowlisted_and_correlated(self):
+        writer = CapturingWriter()
+        service = SupportLoggingService(writer)
+        service.record(
+            "export",
+            "export.coc_attempt_completed",
+            operation_id="coc-test",
+            coc_attempt_id="coc-test",
+            outcome="failed",
+            failure_stage="workbook_export",
+            reason_code="coc_export_failed",
+            missing_channels="3,4",
+            validation_issue_codes="missing_channel",
+            private_debug_value="must be dropped",
+        )
+        self.assertTrue(service.flush())
+        service.shutdown()
+
+        event = writer.events[0]
+        self.assertEqual(event["operation_id"], "coc-test")
+        self.assertEqual(event["coc_attempt_id"], "coc-test")
+        self.assertEqual(event["outcome"], "failed")
+        self.assertEqual(event["failure_stage"], "workbook_export")
+        self.assertNotIn("private_debug_value", event)
+
     def test_concurrent_producers_are_serialized(self):
         writer = CapturingWriter()
         service = SupportLoggingService(writer, queue_capacity=500)

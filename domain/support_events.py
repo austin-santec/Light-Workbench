@@ -94,6 +94,7 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "reading_state",
         "both_wavelengths_complete",
         "measurement_count",
+        "recommendation_count",
         "file_type",
         "destination",
         "schema_version_written",
@@ -145,6 +146,20 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "part_number",
         "lookup_mode",
         "lookup_request_id",
+        "coc_attempt_id",
+        "outcome",
+        "failure_stage",
+        "reason_code",
+        "supplemental_run_number",
+        "front_panel_channel_count",
+        "template_capacity",
+        "missing_channels",
+        "failure_details",
+        "validation_issue_codes",
+        "validation_issue_details",
+        "template_path",
+        "source_runs",
+        "operator_choice",
     }
 )
 

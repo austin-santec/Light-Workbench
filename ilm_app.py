@@ -1,6 +1,7 @@
 """PyQt5 desktop viewer for insertion-loss run data."""
 
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -5455,13 +5456,151 @@ class MainWindow(QMainWindow):
         )
         recorder.save(list(base_run.measurements))
 
+    def _new_coc_attempt_id(self):
+        """Create a support-log correlation ID for one explicit COC attempt."""
+        try:
+            if self.support_logger is not None:
+                return self.support_logger.new_operation_id("coc")
+        except Exception:
+            pass
+        return "coc-" + uuid.uuid4().hex
+
+    def _record_coc_event(
+        self,
+        event,
+        attempt_id,
+        *,
+        level=SupportLogLevel.INFO,
+        **fields,
+    ):
+        """Record a COC event with the attempt ID as its operation correlation."""
+        fields["coc_attempt_id"] = attempt_id
+        return self._record_support(
+            SupportEventCategory.EXPORT,
+            event,
+            level=level,
+            operation_id=attempt_id,
+            **fields,
+        )
+
+    def _record_coc_terminal(self, attempt_id, outcome, stage, **fields):
+        """Record the one canonical terminal outcome for a COC attempt."""
+        level = (
+            SupportLogLevel.ERROR
+            if outcome == "failed"
+            else SupportLogLevel.WARNING
+            if outcome in ("blocked", "partial_success")
+            else SupportLogLevel.INFO
+        )
+        self._record_coc_event(
+            "export.coc_attempt_completed",
+            attempt_id,
+            level=level,
+            outcome=outcome,
+            failure_stage=stage,
+            **fields,
+        )
+
+    @staticmethod
+    def _bounded_coc_text(value, limit=3000):
+        """Keep validation details useful without allowing unbounded log text."""
+        return str(value or "")[:limit]
+
+    def _coc_result_log_fields(self, result):
+        """Return bounded, structured validation evidence for support logging."""
+        failure_details = [
+            "channel=%d,wavelength=%d,value=%.4f,run=%d,physical_port=%d"
+            % (
+                failure.channel,
+                failure.wavelength_nm,
+                failure.value_db,
+                failure.source_run_number,
+                failure.physical_port,
+            )
+            for failure in result.failures[:50]
+        ]
+        issues = list(result.invalid_readings) + list(result.validation_issues)
+        return {
+            "run_number": result.base_run_number,
+            "supplemental_run_number": result.supplemental_run_number,
+            "front_panel_channel_count": result.front_panel_channel_count,
+            "template_capacity": result.template_capacity,
+            "measurement_count": len(result.measurements),
+            "missing_channels": ",".join(
+                str(channel) for channel in result.missing_channels[:48]
+            ),
+            "failure_details": self._bounded_coc_text("; ".join(failure_details)),
+            "validation_issue_codes": self._bounded_coc_text(
+                ",".join(issue.code for issue in issues[:50])
+            ),
+            "validation_issue_details": self._bounded_coc_text(
+                "; ".join(
+                    "%s: %s" % (issue.code, issue.message)
+                    for issue in issues[:50]
+                )
+            ),
+        }
+
+    def _coc_failure_message(self, stage, error):
+        """Format a technician-friendly export error with technical details."""
+        if isinstance(error, PermissionError):
+            guidance = "Close any open workbook and verify write permissions."
+        elif isinstance(error, FileNotFoundError):
+            guidance = "Verify that the selected template and output folder still exist."
+        elif stage == "template_selection":
+            guidance = "Select a valid template with the required channel capacity."
+        else:
+            guidance = "Verify the template, output folder, and available disk space."
+        technical_error = "%s: %s" % (type(error).__name__, error)
+        return (
+            "The COC operation could not continue during %s.\n\n"
+            "Reason: %s\n\n"
+            "Suggested action: %s\n\n"
+            "Technical error: %s"
+            % (stage.replace("_", " "), technical_error, guidance, technical_error)
+        )
+
     def write_coc(self):
         """Prepare, validate, and write a complete COC from persisted runs."""
+        attempt_id = self._new_coc_attempt_id()
         if self.run_data is None:
+            self._record_coc_terminal(
+                attempt_id,
+                "blocked",
+                "precondition",
+                reason_code="no_run_loaded",
+                reason="Load or start a run before preparing a COC.",
+            )
             QMessageBox.information(self, "No run loaded", "Load or start a run first.")
             return
-        options = self._coc_run_options()
+        try:
+            options = self._coc_run_options()
+        except Exception as error:
+            self._record_coc_terminal(
+                attempt_id,
+                "failed",
+                "source_discovery",
+                reason_code="source_discovery_failed",
+                error_type=type(error).__name__,
+                error_message=str(error),
+            )
+            QMessageBox.critical(
+                self,
+                "Could not prepare COC",
+                self._coc_failure_message("source_discovery", error),
+            )
+            return
         if not options:
+            self._record_coc_terminal(
+                attempt_id,
+                "blocked",
+                "precondition",
+                reason_code="no_persisted_written_data",
+                reason=(
+                    "No persisted run with written readings is available "
+                    "for this unit."
+                ),
+            )
             QMessageBox.information(
                 self,
                 "No written run data",
@@ -5469,10 +5608,13 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._record_support(
-            SupportEventCategory.EXPORT,
+        self._record_coc_event(
             "export.coc_preparation_started",
+            attempt_id,
             measurement_count=sum(len(option.source.measurements) for option in options),
+            source_runs=",".join(
+                str(option.source.run_number) for option in options[:50]
+            ),
             status="started",
         )
 
@@ -5486,64 +5628,141 @@ class MainWindow(QMainWindow):
             )
 
         def record_blocked_validation(result):
-            self._record_support(
-                SupportEventCategory.EXPORT,
+            self._record_coc_event(
                 "export.coc_validation_blocked",
-                run_number=result.base_run_number,
-                measurement_count=len(result.channels),
-                reason=(
-                    "missing=%d; failures=%d; invalid=%d; compatibility=%d"
-                    % (
-                        len(result.missing_channels),
-                        len(result.failures),
-                        len(result.invalid_readings),
-                        len(result.validation_issues),
-                    )
-                ),
+                attempt_id,
+                **self._coc_result_log_fields(result),
                 status="blocked",
             )
 
-        dialog = CocExportDialog(
-            options,
-            prepare,
-            initial_channel_count=self._default_coc_channel_count(options),
-            current_run_path=self.run_data.source_path,
-            validation_blocked_callback=record_blocked_validation,
-            parent=self,
-        )
-        if dialog.exec_() != QDialog.Accepted:
-            self._record_support(
-                SupportEventCategory.EXPORT,
+        try:
+            dialog = CocExportDialog(
+                options,
+                prepare,
+                initial_channel_count=self._default_coc_channel_count(options),
+                current_run_path=self.run_data.source_path,
+                validation_blocked_callback=record_blocked_validation,
+                parent=self,
+            )
+        except Exception as error:
+            self._record_coc_terminal(
+                attempt_id,
+                "failed",
+                "preparation",
+                reason_code="preparation_dialog_failed",
+                error_type=type(error).__name__,
+                error_message=str(error),
+            )
+            QMessageBox.critical(
+                self,
+                "Could not prepare COC",
+                self._coc_failure_message("preparation", error),
+            )
+            return
+        try:
+            dialog_result = dialog.exec_()
+        except Exception as error:
+            self._record_coc_terminal(
+                attempt_id,
+                "failed",
+                "preparation",
+                reason_code="preparation_dialog_failed",
+                error_type=type(error).__name__,
+                error_message=str(error),
+            )
+            QMessageBox.critical(
+                self,
+                "Could not prepare COC",
+                self._coc_failure_message("preparation", error),
+            )
+            return
+        if dialog_result != QDialog.Accepted:
+            preparation_error = getattr(dialog, "preparation_error", None)
+            if preparation_error is not None:
+                error = preparation_error
+                self._record_coc_terminal(
+                    attempt_id,
+                    "failed",
+                    "preparation",
+                    reason_code="preparation_failed",
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                )
+                QMessageBox.critical(
+                    self,
+                    "Could not prepare COC",
+                    self._coc_failure_message("preparation", error),
+                )
+                return
+            self._record_coc_event(
                 "export.coc_preparation_canceled",
-                choice="cancel",
+                attempt_id,
+                operator_choice="cancel",
                 status="canceled",
+            )
+            self._record_coc_terminal(
+                attempt_id,
+                "canceled",
+                "preparation",
+                reason_code="operator_canceled",
+                operator_choice="cancel",
             )
             return
         result = dialog.preparation_result
         base_run = dialog.base_run
-        if result is None or base_run is None or not result.eligible:
-            self._record_support(
-                SupportEventCategory.EXPORT,
-                "export.coc_validation_blocked",
-                reason="preparation_not_eligible",
-                status="blocked",
+        if result is None or base_run is None:
+            self._record_coc_terminal(
+                attempt_id,
+                "failed",
+                "preparation",
+                reason_code="missing_preparation_result",
+            )
+            QMessageBox.critical(
+                self,
+                "Could not prepare COC",
+                (
+                    "The COC preparation did not produce a complete result. "
+                    "Review the saved run data and try again."
+                ),
+            )
+            return
+        if not result.eligible:
+            self._record_coc_terminal(
+                attempt_id,
+                "blocked",
+                "validation",
+                reason_code="preparation_not_eligible",
+                **self._coc_result_log_fields(result),
+            )
+            QMessageBox.warning(
+                self,
+                "COC cannot be written",
+                "The selected COC data is not eligible for export.",
             )
             return
 
         if result.optimization_recommendations:
-            self._record_support(
-                SupportEventCategory.EXPORT,
+            self._record_coc_event(
                 "export.coc_optimization_confirmation_shown",
-                run_number=result.base_run_number,
-                measurement_count=len(result.optimization_recommendations),
+                attempt_id,
+                **self._coc_result_log_fields(result),
+                recommendation_count=len(result.optimization_recommendations),
                 status="warning",
             )
             if not self._confirm_coc_optimization(result):
-                self._record_support(
-                    SupportEventCategory.EXPORT,
+                self._record_coc_event(
                     "export.coc_preparation_canceled",
-                    choice="return_to_run",
+                    attempt_id,
+                    operator_choice="return_to_run",
                     status="canceled",
+                )
+                self._record_coc_terminal(
+                    attempt_id,
+                    "canceled",
+                    "optimization_confirmation",
+                    reason_code="operator_returned_to_run",
+                    operator_choice="return_to_run",
+                    **self._coc_result_log_fields(result),
                 )
                 return
 
@@ -5559,18 +5778,38 @@ class MainWindow(QMainWindow):
             except (OSError, LookupError, ValueError):
                 pass
 
+        template = None
+        output_path = None
         try:
             template = self._select_coc_template(
                 result.front_panel_channel_count
             )
             if template is None:
+                self._record_coc_event(
+                    "export.coc_preparation_canceled",
+                    attempt_id,
+                    operator_choice="template_selection_cancel",
+                    status="canceled",
+                )
+                self._record_coc_terminal(
+                    attempt_id,
+                    "canceled",
+                    "template_selection",
+                    reason_code="operator_canceled_template_selection",
+                    operator_choice="cancel",
+                    **self._coc_result_log_fields(result),
+                )
                 return
-            self._record_support(
-                SupportEventCategory.EXPORT,
+            self._record_coc_event(
                 "export.coc_started",
+                attempt_id,
                 run_number=result.base_run_number,
                 measurement_count=len(result.measurements),
                 destination=base_run.source_path.parent,
+                template_path=template,
+                front_panel_channel_count=result.front_panel_channel_count,
+                template_capacity=result.template_capacity,
+                supplemental_run_number=result.supplemental_run_number,
                 status="started",
             )
             output_path = self.coc_exporter.export(
@@ -5581,6 +5820,7 @@ class MainWindow(QMainWindow):
                 serial,
                 tested_by=tested_by,
                 front_panel_channel_count=result.front_panel_channel_count,
+                coc_attempt_id=attempt_id,
             )
             override_text = "; ".join(
                 "Channel %d = Run %d / Physical Port %d"
@@ -5620,18 +5860,72 @@ class MainWindow(QMainWindow):
                 self.run_data.metadata.update(metadata)
                 if self.run_recorder is not None:
                     self.run_recorder.metadata = dict(metadata)
-        except (OSError, RuntimeError, ValueError, KeyError) as error:
-            self._record_support(
-                SupportEventCategory.EXPORT,
-                "export.coc_failed",
-                level=SupportLogLevel.ERROR,
-                error_type=type(error).__name__,
-                error_message=str(error),
-                status="error",
-            )
-            QMessageBox.critical(self, "Could not write COC", str(error))
+        except Exception as error:
+            error_fields = {
+                "error_type": type(error).__name__,
+                "error_message": str(error),
+                "destination": output_path or base_run.source_path.parent,
+                "template_path": template or "",
+                "status": "error",
+                **self._coc_result_log_fields(result),
+            }
+            if output_path is not None and Path(output_path).is_file():
+                self._record_coc_event(
+                    "export.coc_metadata_persistence_failed",
+                    attempt_id,
+                    level=SupportLogLevel.ERROR,
+                    **error_fields,
+                )
+                self._record_coc_terminal(
+                    attempt_id,
+                    "partial_success",
+                    "metadata_persistence",
+                    reason_code="metadata_persistence_failed",
+                    partial_success=True,
+                    **error_fields,
+                )
+                QMessageBox.warning(
+                    self,
+                    "COC partially saved",
+                    (
+                        "The COC workbook was created here:\n%s\n\n"
+                        "However, the COC provenance metadata could not be saved. "
+                        "Keep this file and contact engineering support.\n\n"
+                        "Technical error: %s"
+                    ) % (output_path, error_fields["error_message"]),
+                )
+            else:
+                self._record_coc_event(
+                    "export.coc_failed",
+                    attempt_id,
+                    level=SupportLogLevel.ERROR,
+                    **error_fields,
+                )
+                failure_stage = (
+                    "template_selection" if template is None else "workbook_export"
+                )
+                self._record_coc_terminal(
+                    attempt_id,
+                    "failed",
+                    failure_stage,
+                    reason_code="coc_export_failed",
+                    **error_fields,
+                )
+                QMessageBox.critical(
+                    self,
+                    "Could not write COC",
+                    self._coc_failure_message(failure_stage, error),
+                )
             return
 
+        self._record_coc_terminal(
+            attempt_id,
+            "success",
+            "completed",
+            destination=output_path,
+            template_path=template,
+            **self._coc_result_log_fields(result),
+        )
         QMessageBox.information(
             self,
             "COC written",

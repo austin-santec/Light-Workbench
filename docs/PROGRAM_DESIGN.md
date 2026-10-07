@@ -125,6 +125,16 @@ Write COC... button and File-menu action call the validated workflow. Run
 completion, manual stop, failure, and worker cleanup do not offer or prepare a
 COC automatically.
 
+The COC UI also owns a support-diagnostics boundary. Each explicit COC attempt
+gets one correlation ID and ends with one canonical terminal event describing
+whether it succeeded, was blocked by validation, was canceled by the
+operator, failed technically, or produced a workbook with metadata persistence
+incomplete. Validation evidence is structured and bounded; export failures
+include the stage, exception type/message, selected template/output context,
+and actionable operator guidance. These diagnostics do not change COC
+eligibility rules, workbook contents, run persistence, or the explicit-only
+COC workflow.
+
 `application/coc_workflow.py` loads candidate runs through repository
 interfaces and hydrates JSON-only physical-port and criteria details. The
 `ui/coc_export_dialog.py` dialog owns only source selection and validation
