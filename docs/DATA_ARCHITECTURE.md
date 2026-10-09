@@ -40,10 +40,10 @@ The storage format should not determine how business logic represents data.
 
 The current CSV and JSON formats remain supported for compatibility. If a
 future schema changes, include a `schema_version` and provide a migration path.
-Run JSON currently uses schema version 5; unit JSON uses schema version 3.
+Run JSON currently uses schema version 6; unit JSON uses schema version 3.
 Migration helpers reject newer versions instead of silently dropping fields.
 
-Schema version 5 stores wavelength-aware measurements without assigning SM
+Schema version 6 stores wavelength-aware measurements without assigning SM
 names to MM values. Each reading and accepted attempt records the operator-
 selected mode, ordered OPM wavelengths, nominal source wavelengths and source
 IDs, classification metadata, and a wavelength-keyed loss map. New records do
@@ -80,7 +80,7 @@ continue to load as native SM 1310/1550 runs.
   preserve the original record and do not query or command the switch.
 
 Accepted reading history is stored separately from the latest-reading
-projection. Run JSON schema version 5 contains `measurement_attempts`, an
+projection. Run JSON schema version 6 contains `measurement_attempts`, an
 append-only record for every accepted two-wavelength Write IL result. Each
 record has a stable attempt ID, run ID, logical channel, physical port, attempt
 number, both losses, UTC acceptance time, operator, write context, reference
@@ -158,8 +158,13 @@ read-only; diagnostic tools may use temporary values, and only an explicit
 diagnostic Apply action can authorize a calculated diagnostic snapshot.
 
 Every accepted measurement stores the snapshot used for its IL calculation in
-JSON and in the extended CSV audit columns. The JSON also contains a unique
-run-level `reference_snapshots` history. Loaded historical references are
+JSON. The CSV uses a run-local `Reference used` value such as `Ref 1` and
+stores each complete immutable snapshot once in a reference catalog beside the
+metadata. A run can therefore use `Ref 1`, `Ref 2`, and later references
+without repeating the values, method, timestamp, or device identity on every
+measurement row. The JSON contains both the labeled `reference_snapshots`
+history and an explicit `reference_catalog`; superseded accepted attempts keep
+their references available for audit. Loaded historical references are
 displayed for audit context but never authorize new hardware acquisition or
 replace the active session reference.
 
@@ -170,6 +175,8 @@ replace the active session reference.
 - Write files atomically where possible.
 - Validate serials and path components before using them in filenames.
 - Preserve older run layouts while loading them.
+- Keep legacy per-row reference CSVs readable while writing new runs with a
+  deduplicated run-level reference catalog.
 - Replacement records are unit-level documentation. The replacement workflow
   does not use `CLOSe?`, change switch mappings, identify routed logical
   channels, or verify a manually performed hardware change. General

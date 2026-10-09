@@ -44,7 +44,7 @@ support logs coalesce consecutive invalid samples into start/end episodes.
 The current integrated ILM uses source ID 0 for 1310 nm and source ID 1 for
 1550 nm. SM/MM is selected manually by the operator; hardware identity,
 product options, power readings, and cached history are not used to infer the
-mode. Run schema version 5 stores wavelength-keyed losses plus OPM/source
+mode. Run schema version 6 stores wavelength-keyed losses plus OPM/source
 pairs, selected mode, selection method, profile origin, and classification
 metadata; legacy files remain readable. SM and MM have independent model/mode
 limit profiles. MM supports normal analysis and replacement analysis, while
@@ -450,7 +450,7 @@ times, session count, and accumulated duration; Live IL and Red Light Test do
 not affect these fields. The CSV remains compatible with `load_run_csv`, and
 the JSON stores the warning limit, metadata, current measurements, physical
 ports, and timing sessions. Calculated replacement recommendations are
-intentionally not persisted. Run JSON schema version 5 also stores an
+intentionally not persisted. Run JSON schema version 6 also stores an
 append-only `measurement_attempts` history for every accepted Write IL result;
 the CSV and current-reading projection continue to show only the latest value
 per channel. `View Reading History...` in Run information displays current and
@@ -466,8 +466,10 @@ UI only. Manually completed replacements and designated spare ports are stored
 in the shared `unit.json`, so they carry across numbered runs without changing
 the measurement table. Replacement history is append-only and does not use
 `CLOSe?`, send mapping commands, or verify the external hardware change. The
-CSV measurement table remains three columns so it stays compatible with Excel
-and older CSV loading.
+CSV measurement rows retain their first three columns so they stay compatible
+with Excel. New desktop CSVs add a run-local `Reference used` key and one
+reference catalog containing each complete immutable reference once; legacy
+per-row reference columns remain loadable.
 
 The UI table has an optional `Compare with` selector populated from the active
 unit's numbered-run index. Selecting a previous run adds two read-only columns

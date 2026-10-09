@@ -27,6 +27,7 @@ from domain.wavelengths import (
     measurement_configuration,
 )
 from infrastructure.csv_run_loader import load_run_csv
+from infrastructure.schema import CURRENT_RUN_SCHEMA_VERSION
 from infrastructure.diagnostic_export import export_diagnostic_history
 from infrastructure.run_persistence import RunRecorder, load_run_json
 from op815_driver import OP815
@@ -186,7 +187,7 @@ class WavelengthPersistenceTests(unittest.TestCase):
                 header = next(csv.reader(stream))
 
         saved = payload["measurements"][0]
-        self.assertEqual(payload["schema_version"], 5)
+        self.assertEqual(payload["schema_version"], CURRENT_RUN_SCHEMA_VERSION)
         self.assertNotIn("loss_1310_db", saved)
         self.assertEqual(saved["losses_by_wavelength"], {"850": 0.65, "1300": 0.5})
         self.assertEqual(header[:3], ["channel", "850 IL", "1300 IL"])

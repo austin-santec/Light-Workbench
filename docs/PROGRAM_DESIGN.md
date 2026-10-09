@@ -102,6 +102,11 @@ action can authorize a production run. Accepted readings persist the snapshot
 used for their calculation. Loading historical runs never changes this bank;
 a confirmed ILM/power-meter disconnect clears it.
 
+`domain/reference_catalog.py` owns run-local `Ref N` labels for immutable
+reference snapshots. The infrastructure persistence layer writes each unique
+reference once in the CSV catalog and keeps a compact reference key on each
+measurement row, while legacy per-row reference CSVs remain loadable.
+
 `application/run_preflight.py` is the side-effect-free gate for production
 Start Run entry points. It normalizes channel selection through the existing
 planner and validates setup metadata, positive run number, connection

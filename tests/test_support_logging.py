@@ -241,6 +241,46 @@ class SupportLogWriterTests(unittest.TestCase):
         self.assertNotIn("clipboard_contents", payload)
         self.assertEqual(len(payload["raw_response"]), RAW_RESPONSE_LIMIT)
 
+    def test_sanitization_redacts_windows_paths_across_platforms(self):
+        profile = Path(r"C:\Users\TestUser")
+        payload = sanitize_event_payload(
+            {
+                "forward_slashes": r"C:/Users/TestUser/Documents/run.json",
+                "backslashes": r"C:\Users\TestUser\Documents\run.json",
+                "mixed_case": r"c:/users/testuser/Documents/run.json",
+                "embedded": r"Failed: C:/Users/TestUser/Documents/run.json",
+            },
+            user_profile=profile,
+        )
+        self.assertEqual(
+            payload["forward_slashes"], "%USERPROFILE%/Documents/run.json"
+        )
+        self.assertEqual(
+            payload["backslashes"], r"%USERPROFILE%\Documents\run.json"
+        )
+        self.assertEqual(payload["mixed_case"], "%USERPROFILE%/Documents/run.json")
+        self.assertEqual(
+            payload["embedded"], "Failed: %USERPROFILE%/Documents/run.json"
+        )
+
+    def test_sanitization_does_not_redact_profile_prefix_collisions(self):
+        profile = Path("C:/Users/TestUser")
+        payload = sanitize_event_payload(
+            {
+                "matching": "C:/Users/TestUser/run.json",
+                "different_user": "C:/Users/TestUser2/run.json",
+                "already_redacted": "%USERPROFILE%/run.json",
+            },
+            user_profile=profile,
+        )
+        self.assertEqual(payload["matching"], "%USERPROFILE%/run.json")
+        self.assertEqual(
+            payload["different_user"], "C:/Users/TestUser2/run.json"
+        )
+        self.assertEqual(
+            payload["already_redacted"], "%USERPROFILE%/run.json"
+        )
+
     def test_sanitization_drops_unknown_object_representations(self):
         payload = sanitize_event_payload(
             {"details": object(), "status": "safe"}

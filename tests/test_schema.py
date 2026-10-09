@@ -16,6 +16,7 @@ class SchemaMigrationTests(unittest.TestCase):
         self.assertEqual(payload["metadata"], {})
         self.assertEqual(payload["switch_test_sessions"], [])
         self.assertEqual(payload["measurement_attempts"], [])
+        self.assertEqual(payload["reference_catalog"], [])
 
     def test_legacy_attempts_key_is_mapped_to_new_history_key(self):
         legacy = [{"channel": 1, "loss_1310_db": 1.0, "loss_1550_db": 0.9}]
