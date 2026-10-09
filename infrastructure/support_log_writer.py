@@ -35,13 +35,49 @@ PROHIBITED_KEY_PARTS = (
 
 
 def redact_path(value: object, user_profile: Path | None = None) -> str:
-    """Replace a user-profile prefix in a path or message when present."""
+    """Replace a user-profile prefix in a path or message when present.
+
+    Keep the caller's original profile spelling in addition to resolved local
+    paths.  This matters when a Windows path is sanitized on another platform
+    (for example, in a Linux CI runner), where ``Path.resolve()`` cannot
+    resolve the Windows drive path meaningfully.
+    """
     text = str(value or "")
-    profile = str((user_profile or Path.home()).resolve())
-    variants = {profile, profile.replace("\\", "/")}
-    for candidate in sorted(variants, key=len, reverse=True):
-        if candidate:
-            text = re.sub(re.escape(candidate), "%USERPROFILE%", text, flags=re.I)
+    supplied_profile = user_profile or Path.home()
+    raw_profile = str(supplied_profile).rstrip("/\\")
+    variants = {raw_profile}
+    if raw_profile:
+        variants.update(
+            {
+                raw_profile.replace("\\", "/"),
+                raw_profile.replace("/", "\\"),
+            }
+        )
+
+    # A native profile path may resolve to a canonical spelling, but a foreign
+    # Windows path must still be handled from its raw representation above.
+    try:
+        resolved_profile = str(Path(supplied_profile).resolve()).rstrip("/\\")
+    except (OSError, RuntimeError, TypeError, ValueError):
+        resolved_profile = ""
+    if resolved_profile:
+        variants.update(
+            {
+                resolved_profile,
+                resolved_profile.replace("\\", "/"),
+                resolved_profile.replace("/", "\\"),
+            }
+        )
+
+    for candidate in sorted(
+        (item for item in variants if item and item != "%USERPROFILE%"),
+        key=len,
+        reverse=True,
+    ):
+        # The boundary prevents a profile such as TestUser from redacting a
+        # different account/path beginning with TestUser2.
+        pattern = re.compile(re.escape(candidate) + r"(?=$|[\\/])", re.I)
+        text = pattern.sub("%USERPROFILE%", text)
     return text
 
 
