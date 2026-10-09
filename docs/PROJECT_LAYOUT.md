@@ -75,7 +75,8 @@ be used as source locations. The release scripts keep deployment output in
 - Read-only accepted-reading history presentation and clipboard/export actions:
   `ui/reading_history.py`.
 - Reference authorization lifecycle:
-  `application/reference_session.py` and `domain/reference.py`.
+  `application/reference_session.py` and `domain/reference.py`; run-local
+  reference labels and deduplication: `domain/reference_catalog.py`.
 - Typed support events: `domain/support_events.py`; queue/correlation ownership:
   `application/support_logging.py`; rotation/redaction/bundles:
   `infrastructure/support_log_writer.py` and `infrastructure/support_bundle.py`;

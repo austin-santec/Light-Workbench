@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 
 
-CURRENT_RUN_SCHEMA_VERSION = 5
+CURRENT_RUN_SCHEMA_VERSION = 6
 CURRENT_UNIT_SCHEMA_VERSION = 3
 
 
@@ -32,6 +32,17 @@ def migrate_run_payload(payload: Mapping[str, object]) -> dict:
     migrated.setdefault("switch_test_sessions", [])
     migrated.setdefault("criteria", None)
     migrated.setdefault("reference_snapshots", [])
+    if "reference_catalog" not in migrated:
+        migrated["reference_catalog"] = [
+            {
+                "reference_key": str(
+                    snapshot.get("reference_key") or "Ref %d" % (index + 1)
+                ),
+                "snapshot": dict(snapshot),
+            }
+            for index, snapshot in enumerate(migrated["reference_snapshots"])
+            if isinstance(snapshot, Mapping)
+        ]
     migrated.setdefault("wavelength_configuration", None)
     if "measurement_attempts" not in migrated:
         migrated["measurement_attempts"] = migrated.get("attempts", [])

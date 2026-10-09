@@ -168,6 +168,7 @@ redaction, and support-bundle details.
 | `domain/part_numbers.py` | Validated OSX part-number parsing and front-panel channel-count resolution |
 | `domain/run_data.py` | Domain run model and over-limit analysis rules |
 | `domain/measurement_attempts.py` | Typed append-only accepted-reading and retest history |
+| `domain/reference_catalog.py` | Stable run-local reference labels and snapshot deduplication |
 | `domain/raw_export.py` | Pure tab-separated formatting for copying accepted readings to Excel |
 | `domain/coc_preparation.py` | Pure multi-run COC merge, provenance, completeness, port-map, and publication rules |
 | `domain/diagnostic_analysis.py` | In-memory diagnostic samples and variation statistics |
@@ -724,8 +725,10 @@ is preserved until a replacement reading is written.
 
 Each accepted reading stores the immutable reference snapshot used for its
 calculation, including values, method, timestamp, snapshot ID, and connected
-measurement-device identity. Loading an old run displays its historical
-reference for review but never authorizes it for a new acquisition.
+measurement-device identity. The CSV represents that relationship with a
+run-local `Ref N` key and a single reference catalog. Loading an old run
+displays its historical reference for review but never authorizes it for a new
+acquisition.
 
 ## How insertion loss is calculated
 
@@ -824,6 +827,15 @@ The insertion-loss columns are in dB. The file can be opened directly in Excel
 for averages, charts, conditional formatting, outlier analysis, or additional
 test documentation. The extra timestamped folder is intentionally available
 for other files associated with that test run.
+
+Modern desktop run CSVs also include a `Reference used` field for each current
+measurement, such as `Ref 1` or `Ref 2`. The complete reference values, method,
+timestamp, snapshot ID, and available device identity are written once in the
+same file's reference catalog. This keeps the CSV readable when many channels
+share one reference while preserving the exact reference used by every row.
+Older CSVs that repeat the complete reference fields on every row remain
+loadable. JSON retains the detailed labeled reference history, including
+references used only by superseded retest attempts.
 
 The operating band is currently hardcoded to `O band`. A `TODO` comment in
 `ILMReadLoss.py` marks this as something to query or prompt for later.

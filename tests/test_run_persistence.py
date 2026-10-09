@@ -1,5 +1,4 @@
 import csv
-import csv
 import tempfile
 import unittest
 from datetime import datetime
@@ -17,6 +16,7 @@ from run_persistence import (
     load_run_json,
 )
 from infrastructure.run_persistence import RunRecorder as InfrastructureRunRecorder
+from infrastructure.schema import CURRENT_RUN_SCHEMA_VERSION
 
 
 class RunPersistenceTests(unittest.TestCase):
@@ -38,14 +38,24 @@ class RunPersistenceTests(unittest.TestCase):
                 )
             ])
             payload = load_run_json(recorder.json_path)
-            self.assertEqual(payload["schema_version"], 5)
-            self.assertEqual(payload["measurements"][0]["reference"], snapshot.as_dict())
-            self.assertEqual(payload["reference_snapshots"], [snapshot.as_dict()])
+            self.assertEqual(payload["schema_version"], CURRENT_RUN_SCHEMA_VERSION)
+            self.assertEqual(
+                payload["measurements"][0]["reference"]["snapshot_id"],
+                snapshot.snapshot_id,
+            )
+            self.assertEqual(
+                payload["measurements"][0]["reference_key"], "Ref 1"
+            )
+            self.assertEqual(payload["reference_snapshots"][0]["reference_key"], "Ref 1")
+            self.assertEqual(payload["reference_catalog"][0]["reference_key"], "Ref 1")
             with recorder.csv_path.open(newline="", encoding="utf-8") as csv_file:
                 csv_rows = list(csv.reader(csv_file))
-            self.assertEqual(csv_rows[1][7], "-0.04")
-            self.assertEqual(csv_rows[1][8], "0.14")
-            self.assertEqual(csv_rows[1][9], "calculated")
+            header = csv_rows[0]
+            row = csv_rows[1]
+            self.assertEqual(row[header.index("Reference used")], "Ref 1")
+            self.assertEqual(row[header.index("First reference dBm")], "-0.04")
+            self.assertEqual(row[header.index("Second reference dBm")], "0.14")
+            self.assertEqual(row[header.index("Method")], "calculated")
             loaded = load_run_csv(recorder.csv_path)
             self.assertEqual(
                 loaded.measurements[0].reference_snapshot["snapshot_id"],
@@ -160,7 +170,7 @@ class RunPersistenceTests(unittest.TestCase):
             self.assertTrue(recorder.csv_path.is_file())
             self.assertTrue(recorder.json_path.is_file())
             payload = load_run_json(recorder.json_path)
-            self.assertEqual(payload["schema_version"], 5)
+            self.assertEqual(payload["schema_version"], CURRENT_RUN_SCHEMA_VERSION)
             self.assertIsNone(payload["criteria"])
             self.assertEqual(payload["warning_limit_db"], 2.0)
             self.assertEqual(payload["measurements"][0]["physical_port"], 1)

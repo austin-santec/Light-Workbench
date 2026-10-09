@@ -14,6 +14,7 @@ from domain.measurement_attempts import (
     MeasurementAttempt,
     normalise_attempts,
 )
+from domain.reference_catalog import ReferenceCatalog, build_reference_catalog
 from infrastructure.schema import CURRENT_RUN_SCHEMA_VERSION, migrate_run_payload
 from domain.support_events import SupportEventCategory, SupportLogLevel
 
@@ -126,21 +127,19 @@ def find_run_json_path(csv_path):
     return same_named_path
 
 
-def _reference_snapshots(measurements):
-    """Return unique per-reading reference snapshots for the run audit."""
-    snapshots = {}
-    for record in measurements:
-        reference = record.reference_snapshot
-        if not isinstance(reference, dict):
-            continue
-        snapshot_id = str(reference.get("snapshot_id") or "")
-        if snapshot_id:
-            snapshots[snapshot_id] = dict(reference)
-    return list(snapshots.values())
+def _snapshot_with_key(snapshot, reference_key):
+    """Copy a snapshot while adding its run-local display key."""
+    if not isinstance(snapshot, dict) or not reference_key:
+        return snapshot
+    values = dict(snapshot)
+    values["reference_key"] = reference_key
+    return values
 
 
-def _measurement_payload(record):
+def _measurement_payload(record, catalog: ReferenceCatalog):
     """Serialize a reading without assigning SM names to MM values."""
+    reference_key = catalog.label_for(record.reference_snapshot)
+    reference = _snapshot_with_key(record.reference_snapshot, reference_key)
     values = {
         "channel": record.channel,
         "physical_port": record.physical_port,
@@ -153,11 +152,32 @@ def _measurement_payload(record):
             str(wavelength): loss
             for wavelength, loss in record.losses_by_wavelength.items()
         },
-        "reference": record.reference_snapshot,
+        "reference": reference,
+        "reference_key": reference_key,
+        "reference_snapshot_id": (
+            reference.get("snapshot_id")
+            if isinstance(reference, dict)
+            else None
+        ),
     }
     if record.wavelength_mode == "SM":
         values["loss_1310_db"] = record.loss_1310
         values["loss_1550_db"] = record.loss_1550
+    return values
+
+
+def _attempt_payload(attempt, catalog: ReferenceCatalog):
+    """Serialize an accepted attempt with a compact reference link."""
+    values = attempt.as_dict()
+    reference = values.get("reference_snapshot")
+    reference_key = catalog.label_for(reference)
+    values["reference_snapshot"] = _snapshot_with_key(reference, reference_key)
+    values["reference_key"] = reference_key
+    values["reference_snapshot_id"] = (
+        reference.get("snapshot_id")
+        if isinstance(reference, dict)
+        else None
+    )
     return values
 
 
@@ -305,6 +325,7 @@ class RunRecorder:
             measurements,
             run_id=self.run_id,
         )
+        reference_catalog = build_reference_catalog(attempts, measurements)
         stored_metadata = _run_metadata(self.metadata)
         payload = {
             "schema_version": CURRENT_RUN_SCHEMA_VERSION,
@@ -318,16 +339,27 @@ class RunRecorder:
             "wavelength_configuration": _wavelength_configuration(
                 measurements, stored_metadata
             ),
-            "reference_snapshots": _reference_snapshots(measurements),
+            "reference_snapshots": reference_catalog.snapshots(),
+            "reference_catalog": reference_catalog.persisted_entries(),
             "metadata": stored_metadata,
-            "measurements": [_measurement_payload(record) for record in measurements],
-            "measurement_attempts": [attempt.as_dict() for attempt in attempts],
+            "measurements": [
+                _measurement_payload(record, reference_catalog)
+                for record in measurements
+            ],
+            "measurement_attempts": [
+                _attempt_payload(attempt, reference_catalog)
+                for attempt in attempts
+            ],
             "switch_test_sessions": self.switch_test_sessions,
         }
         csv_temporary_path = self.csv_path.with_suffix(".csv.tmp")
         temporary_path = self.json_path.with_suffix(".json.tmp")
         try:
-            self._write_csv(measurements, destination=csv_temporary_path)
+            self._write_csv(
+                measurements,
+                catalog=reference_catalog,
+                destination=csv_temporary_path,
+            )
             with temporary_path.open("w", encoding="utf-8") as json_file:
                 json.dump(payload, json_file, indent=2)
                 json_file.write("\n")
@@ -538,7 +570,7 @@ class RunRecorder:
         self.metadata = metadata
         return self.metadata
 
-    def _write_csv(self, measurements, *, destination=None):
+    def _write_csv(self, measurements, *, catalog=None, destination=None):
         wavelengths = (
             measurements[0].opm_wavelengths_nm
             if measurements
@@ -553,19 +585,75 @@ class RunRecorder:
             "%d IL" % wavelengths[0],
             "%d IL" % wavelengths[1],
         ]]
-        rows.extend(
-            [
-                record.channel,
-                "%.4f" % record.loss_for(wavelengths[0]),
-                "%.4f" % record.loss_for(wavelengths[1]),
-            ]
-            for record in measurements
-        )
+        catalog = catalog or build_reference_catalog((), measurements)
+        rows.extend([
+            record.channel,
+            "%.4f" % record.loss_for(wavelengths[0]),
+            "%.4f" % record.loss_for(wavelengths[1]),
+        ] for record in measurements)
         metadata_rows = [["Metadata", "Value"]]
-        metadata_rows.extend(
-            list(item) for item in sorted(_run_metadata(self.metadata).items())
-        )
-        row_count = max(len(rows), len(metadata_rows))
+        metadata_values = _run_metadata(self.metadata)
+        metadata_values.setdefault("CSV format version", "2")
+        metadata_rows.extend(list(item) for item in sorted(metadata_values.items()))
+        catalog_headers = [
+            "Reference",
+            "Wavelength mode",
+            "First wavelength nm",
+            "First reference dBm",
+            "Second wavelength nm",
+            "Second reference dBm",
+            "Method",
+            "Established UTC",
+            "Snapshot ID",
+            "Operator initials",
+            "Meter model",
+            "Meter serial",
+            "Laser model",
+            "Laser serial",
+            "Measurement classification",
+            "Source profile ID",
+            "Source profile origin",
+        ]
+        catalog_rows = [catalog_headers]
+        for entry in catalog.entries():
+            reference = entry.snapshot
+            configured = tuple(
+                int(value)
+                for value in reference.get(
+                    "opm_wavelengths_nm", wavelengths
+                )
+            )
+            if len(configured) != 2:
+                configured = wavelengths
+            references = reference.get("references_by_wavelength", {})
+            if not isinstance(references, dict):
+                references = {}
+            first_reference = references.get(str(configured[0]))
+            second_reference = references.get(str(configured[1]))
+            catalog_rows.append([
+                entry.reference_key,
+                reference.get("wavelength_mode", ""),
+                configured[0],
+                "%.2f" % float(first_reference)
+                if first_reference is not None
+                else "",
+                configured[1],
+                "%.2f" % float(second_reference)
+                if second_reference is not None
+                else "",
+                reference.get("method", ""),
+                reference.get("established_at", ""),
+                reference.get("snapshot_id", ""),
+                reference.get("operator_initials", ""),
+                reference.get("meter_model", ""),
+                reference.get("meter_serial", ""),
+                reference.get("laser_model", ""),
+                reference.get("laser_serial", ""),
+                reference.get("measurement_classification", ""),
+                reference.get("source_profile_id", ""),
+                reference.get("source_profile_origin", ""),
+            ])
+        row_count = max(len(rows), len(metadata_rows), len(catalog_rows))
         temporary_path = (
             Path(destination)
             if destination is not None
@@ -577,46 +665,32 @@ class RunRecorder:
                 for index in range(row_count):
                     measurement = rows[index] if index < len(rows) else ["", "", ""]
                     metadata = metadata_rows[index] if index < len(metadata_rows) else ["", ""]
+                    reference_key = ""
+                    if index > 0 and index - 1 < len(measurements):
+                        reference_key = catalog.label_for(
+                            measurements[index - 1].reference_snapshot
+                        ) or ""
+                    catalog_row = (
+                        catalog_rows[index]
+                        if index < len(catalog_rows)
+                        else [""] * len(catalog_headers)
+                    )
                     if index == 0:
                         writer.writerow(
                             measurement
                             + [""]
                             + metadata
-                            + [
-                                "",
-                                "Reference %d dBm" % wavelengths[0],
-                                "Reference %d dBm" % wavelengths[1],
-                                "Reference method",
-                                "Reference timestamp",
-                                "Reference snapshot ID",
-                            ]
+                            + ["", "Reference used", ""]
+                            + catalog_row
                         )
                         continue
-                    reference = None
-                    if index > 0 and index - 1 < len(measurements):
-                        reference = measurements[index - 1].reference_snapshot
-                    reference_values = (
-                        reference.get("references_by_wavelength", {})
-                        if isinstance(reference, dict)
-                        else {}
+                    writer.writerow(
+                        measurement
+                        + [""]
+                        + metadata
+                        + ["", reference_key, ""]
+                        + catalog_row
                     )
-                    if isinstance(reference, dict) and not reference_values:
-                        reference_values = {
-                            "1310": reference.get("reference_1310_dbm"),
-                            "1550": reference.get("reference_1550_dbm"),
-                        }
-                    reference_columns = [
-                        "%.2f" % float(reference_values[str(wavelengths[0])]),
-                        "%.2f" % float(reference_values[str(wavelengths[1])]),
-                        reference.get("method", ""),
-                        reference.get("established_at", ""),
-                        reference.get("snapshot_id", ""),
-                    ] if (
-                        isinstance(reference, dict)
-                        and reference_values.get(str(wavelengths[0])) is not None
-                        and reference_values.get(str(wavelengths[1])) is not None
-                    ) else ["", "", "", "", ""]
-                    writer.writerow(measurement + [""] + metadata + [""] + reference_columns)
                 csv_file.flush()
                 os.fsync(csv_file.fileno())
             if destination is None:
