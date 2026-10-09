@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -14,11 +15,11 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
 )
 
 from domain.coc_preparation import CocPreparationResult, CocSourceRun
+from domain.part_numbers import infer_front_panel_channel_count
 
 
 class CocExportDialog(QDialog):
@@ -29,7 +30,10 @@ class CocExportDialog(QDialog):
         run_options,
         prepare_callback,
         *,
-        initial_channel_count: int = 1,
+        front_panel_count_resolver=None,
+        # Retained as an ignored keyword for callers from older releases. The
+        # UI no longer accepts or uses an operator-supplied count.
+        initial_channel_count=None,
         current_run_path: str | Path | None = None,
         validation_blocked_callback=None,
         parent=None,
@@ -39,6 +43,9 @@ class CocExportDialog(QDialog):
         self.resize(650, 520)
         self.run_options = list(run_options)
         self.prepare_callback = prepare_callback
+        self.front_panel_count_resolver = (
+            front_panel_count_resolver or infer_front_panel_channel_count
+        )
         self.validation_blocked_callback = validation_blocked_callback
         self.current_run_path = (
             Path(current_run_path).resolve() if current_run_path else None
@@ -48,20 +55,19 @@ class CocExportDialog(QDialog):
 
         layout = QVBoxLayout(self)
         explanation = QLabel(
-            "Choose the front-panel channel count and the persisted runs that "
-            "will supply the final COC readings."
+            "The front-panel channel count is read from the selected base run's "
+            "part number. Choose the persisted runs that will supply the final "
+            "COC readings."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
 
         form = QFormLayout()
-        self.channel_count_spin = QSpinBox()
-        self.channel_count_spin.setRange(1, 48)
-        self.channel_count_spin.setValue(max(1, min(48, int(initial_channel_count))))
-        self.channel_count_spin.setToolTip(
-            "Only logical channels 1 through this front-panel count are written."
-        )
-        form.addRow("Front panel channels:", self.channel_count_spin)
+        self.part_number_label = QLabel("Not selected")
+        self.part_number_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        form.addRow("Part number:", self.part_number_label)
+        self.front_panel_count_label = QLabel("Unavailable")
+        form.addRow("Front-panel channels:", self.front_panel_count_label)
 
         self.base_run_combo = QComboBox()
         for option in self.run_options:
@@ -95,7 +101,6 @@ class CocExportDialog(QDialog):
 
         self._choose_defaults()
         self._rebuild_supplemental_options()
-        self.channel_count_spin.valueChanged.connect(self.refresh_summary)
         self.base_run_combo.currentIndexChanged.connect(
             self._base_selection_changed
         )
@@ -118,9 +123,11 @@ class CocExportDialog(QDialog):
         return self.supplemental_run_combo.currentData()
 
     def _choose_defaults(self):
-        count = self.channel_count_spin.value()
-
         def coverage(option):
+            try:
+                count = self._front_panel_count_for(option.source)
+            except (TypeError, ValueError):
+                return (0, 0, -option.source.run_number)
             channels = {
                 record.channel
                 for record in option.source.measurements
@@ -136,6 +143,17 @@ class CocExportDialog(QDialog):
         if self.run_options:
             best = max(range(len(self.run_options)), key=lambda index: coverage(self.run_options[index]))
             self.base_run_combo.setCurrentIndex(best)
+
+    def _front_panel_count_for(self, source):
+        """Resolve the selected source run's count from its saved part number."""
+        part_number = str(source.metadata.get("Part number") or "").strip()
+        count = self.front_panel_count_resolver(part_number)
+        if count is None:
+            raise ValueError(
+                "The selected base run does not contain a valid OSX part number "
+                "with a three-digit front-panel channel field."
+            )
+        return int(count)
 
     def _rebuild_supplemental_options(self):
         previous = self.supplemental_run_combo.currentData()
@@ -180,6 +198,8 @@ class CocExportDialog(QDialog):
     def refresh_summary(self, *_args):
         base = self.base_run
         if base is None:
+            self.part_number_label.setText("Not selected")
+            self.front_panel_count_label.setText("Unavailable")
             self.preparation_error = None
             self.preparation_result = None
             self.summary.setPlainText("No persisted run with written readings is available.")
@@ -187,9 +207,13 @@ class CocExportDialog(QDialog):
             return
         self.preparation_error = None
         try:
+            part_number = str(base.metadata.get("Part number") or "").strip()
+            count = self._front_panel_count_for(base)
+            self.part_number_label.setText(part_number or "Not recorded")
+            self.front_panel_count_label.setText(str(count))
             result = self.prepare_callback(
                 base,
-                self.channel_count_spin.value(),
+                count,
                 self.supplemental_run,
             )
         except Exception as error:
@@ -197,8 +221,13 @@ class CocExportDialog(QDialog):
             # dialog while allowing the caller to record it with its attempt ID.
             self.preparation_error = error
             self.preparation_result = None
+            if not str(base.metadata.get("Part number") or "").strip():
+                self.part_number_label.setText("Not recorded")
+            self.front_panel_count_label.setText("Unavailable")
             self.summary.setPlainText(
-                "COC preparation could not be evaluated:\n\n%s" % error
+                "COC preparation could not be evaluated:\n\n%s\n\n"
+                "Use Lookup Part Number or correct the saved part number before continuing."
+                % error
             )
             self.write_button.setEnabled(False)
             return

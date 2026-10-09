@@ -22,8 +22,8 @@ class MeasurementAttempt:
     attempt_id: str
     channel: int
     attempt_number: int
-    loss_1310_db: float
-    loss_1550_db: float
+    loss_1310_db: float | None
+    loss_1550_db: float | None
     physical_port: int | None = None
     accepted_at_utc: str = ""
     operator_initials: str = ""
@@ -31,14 +31,30 @@ class MeasurementAttempt:
     replaces_attempt_id: str | None = None
     reference_snapshot: dict | None = None
     run_id: str = ""
+    wavelength_mode: str = "SM"
+    losses_by_wavelength: dict[int, float] | None = None
+    measurement_classification: str = "native"
+    opm_wavelengths_nm: tuple[int, int] = (1310, 1550)
+    source_wavelengths_nm: tuple[int, int] = (1310, 1550)
+    source_ids: tuple[int, int] = (0, 1)
 
     def __post_init__(self):
         if not str(self.attempt_id).strip():
             raise ValueError("A measurement attempt ID is required.")
         if int(self.channel) <= 0 or int(self.attempt_number) <= 0:
             raise ValueError("Measurement channel and attempt number must be positive.")
-        float(self.loss_1310_db)
-        float(self.loss_1550_db)
+        losses = {
+            int(wavelength): float(value)
+            for wavelength, value in (self.losses_by_wavelength or {}).items()
+        }
+        if not losses:
+            if self.loss_1310_db is None or self.loss_1550_db is None:
+                raise ValueError("Both configured wavelength losses are required.")
+            losses = {
+                int(self.opm_wavelengths_nm[0]): float(self.loss_1310_db),
+                int(self.opm_wavelengths_nm[1]): float(self.loss_1550_db),
+            }
+        object.__setattr__(self, "losses_by_wavelength", losses)
 
     @property
     def is_legacy(self) -> bool:
@@ -46,14 +62,21 @@ class MeasurementAttempt:
 
     def as_dict(self) -> dict[str, object]:
         """Return the stable JSON/database DTO shape."""
-        return {
+        values = {
             "attempt_id": str(self.attempt_id),
             "run_id": str(self.run_id or ""),
             "channel": int(self.channel),
             "physical_port": self.physical_port,
             "attempt_number": int(self.attempt_number),
-            "loss_1310_db": float(self.loss_1310_db),
-            "loss_1550_db": float(self.loss_1550_db),
+            "wavelength_mode": str(self.wavelength_mode),
+            "losses_by_wavelength": {
+                str(wavelength): value
+                for wavelength, value in self.losses_by_wavelength.items()
+            },
+            "measurement_classification": str(self.measurement_classification),
+            "opm_wavelengths_nm": list(self.opm_wavelengths_nm),
+            "source_wavelengths_nm": list(self.source_wavelengths_nm),
+            "source_ids": list(self.source_ids),
             "accepted_at_utc": str(self.accepted_at_utc or ""),
             "operator_initials": str(self.operator_initials or ""),
             "write_context": str(self.write_context or "initial"),
@@ -62,6 +85,10 @@ class MeasurementAttempt:
             if isinstance(self.reference_snapshot, Mapping)
             else None,
         }
+        if self.wavelength_mode == "SM":
+            values["loss_1310_db"] = float(self.losses_by_wavelength[1310])
+            values["loss_1550_db"] = float(self.losses_by_wavelength[1550])
+        return values
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, object], *, fallback_id: str = ""):
@@ -75,6 +102,20 @@ class MeasurementAttempt:
         context = values.get("write_context")
         if not context:
             context = "retest" if values.get("retest") else "initial"
+        mode = str(values.get("wavelength_mode") or "SM").upper()
+        configured = values.get("opm_wavelengths_nm")
+        if not isinstance(configured, (list, tuple)) or len(configured) != 2:
+            configured = (1310, 1550) if mode == "SM" else (850, 1300)
+        raw_losses = values.get("losses_by_wavelength")
+        if isinstance(raw_losses, Mapping):
+            losses = {int(key): float(value) for key, value in raw_losses.items()}
+        else:
+            losses = {
+                1310: float(values["loss_1310_db"]),
+                1550: float(values["loss_1550_db"]),
+            }
+        source_wavelengths = values.get("source_wavelengths_nm", (1310, 1550))
+        source_ids = values.get("source_ids", (0, 1))
         return cls(
             attempt_id=attempt_id,
             run_id=str(values.get("run_id") or ""),
@@ -85,8 +126,8 @@ class MeasurementAttempt:
                 else None
             ),
             attempt_number=attempt_number,
-            loss_1310_db=float(values["loss_1310_db"]),
-            loss_1550_db=float(values["loss_1550_db"]),
+            loss_1310_db=losses.get(1310),
+            loss_1550_db=losses.get(1550),
             accepted_at_utc=str(timestamp or ""),
             operator_initials=str(
                 values.get("operator_initials", values.get("operator", "")) or ""
@@ -102,6 +143,14 @@ class MeasurementAttempt:
                 if isinstance(values.get("reference_snapshot"), Mapping)
                 else None
             ),
+            wavelength_mode=mode,
+            losses_by_wavelength=losses,
+            measurement_classification=str(
+                values.get("measurement_classification") or "native"
+            ),
+            opm_wavelengths_nm=tuple(int(value) for value in configured),
+            source_wavelengths_nm=tuple(int(value) for value in source_wavelengths),
+            source_ids=tuple(int(value) for value in source_ids),
         )
 
 
@@ -113,8 +162,7 @@ def _legacy_id(run_id: str, record: MeasurementRecord, index: int) -> str:
             "index": index,
             "channel": record.channel,
             "physical_port": record.physical_port,
-            "loss_1310_db": record.loss_1310,
-            "loss_1550_db": record.loss_1550,
+            "losses_by_wavelength": record.losses_by_wavelength,
         },
         sort_keys=True,
     ).encode("utf-8")
@@ -140,6 +188,12 @@ def legacy_attempts_for_measurements(
                 if isinstance(record.reference_snapshot, Mapping)
                 else None
             ),
+            wavelength_mode=record.wavelength_mode,
+            losses_by_wavelength=dict(record.losses_by_wavelength),
+            measurement_classification=record.measurement_classification,
+            opm_wavelengths_nm=record.opm_wavelengths_nm,
+            source_wavelengths_nm=record.source_wavelengths_nm,
+            source_ids=record.source_ids,
         )
         for index, record in enumerate(measurements)
     ]
@@ -164,8 +218,8 @@ def normalise_attempts(
                 ).hexdigest()[:32],
             )
         if not attempt.run_id and run_id:
-            attempt = MeasurementAttempt(
-                **{**attempt.as_dict(), "run_id": run_id}
+            attempt = MeasurementAttempt.from_mapping(
+                {**attempt.as_dict(), "run_id": run_id}
             )
         attempts.append(attempt)
 
@@ -240,6 +294,12 @@ def new_measurement_attempt(
             if isinstance(record.reference_snapshot, Mapping)
             else None
         ),
+        wavelength_mode=record.wavelength_mode,
+        losses_by_wavelength=dict(record.losses_by_wavelength),
+        measurement_classification=record.measurement_classification,
+        opm_wavelengths_nm=record.opm_wavelengths_nm,
+        source_wavelengths_nm=record.source_wavelengths_nm,
+        source_ids=record.source_ids,
     )
 
 

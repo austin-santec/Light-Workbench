@@ -4,17 +4,17 @@ This is the short working checklist for
 [`OSX_IL_Test_Software_Requirements_RevB.xlsx`](../temp%20docs/OSX_IL_Test_Software_Requirements_RevB.xlsx).
 See [`Requirements.md`](../Requirements.md) for the full wording, evidence, and roadmap.
 
-**Last reviewed:** 2026-10-06
+**Last reviewed:** 2026-10-08
 
-**Software baseline:** Light Workbench 1.22.0
+**Software baseline:** Light Workbench 1.27.0
 
 **RevB total:** 46 requirement rows
 
 ## Quick status
 
-- [x] **18 implemented**
+- [x] **19 implemented**
 - [ ] **24 partially implemented**
-- [ ] **4 not implemented**
+- [ ] **3 not implemented**
 
 RevB uses `FUN-009` twice and `FUN-014` twice. This checklist adds `a` and `b`
 only to distinguish those duplicate rows. Requirements removed from RevB are no
@@ -30,6 +30,8 @@ These capabilities exist in the current production path. Hardware-dependent
 items still need representative equipment testing before formal acceptance.
 
 - [x] **FUN-002 — Test channels sequentially.** `[MVP]`
+- [x] **FUN-005 — Select 1310/1550 or 850/1300 measurement wavelengths.** `[MVP]`
+  - SM and MM are manually selected before referencing/testing. New records use the selected mode and its independent model/mode limits; older compatibility records remain readable.
 - [x] **FUN-008 — Block a final report when required channels are untested.** `[MVP]`
 - [x] **FUN-009a — Connect the ILM-100 through the OP815 interface and keep it remote.** `[MVP]`
 - [x] **FUN-009b — Let the user disconnect the ILM and return it to local operation.** `[MVP]`
@@ -153,7 +155,6 @@ Each item already has useful behavior, but the noted work remains.
 ## Not implemented
 
 - [ ] **FUN-004 — Preserve every retest attempt and choose the active/final result.** `[MVP]`
-- [ ] **FUN-005 — Select 1310/1550 or 850/1300 measurement wavelengths.** `[MVP]`
 - [ ] **FUN-022 — Define criteria by family, channel-count range, and wavelength.** `[MVP]`
 - [ ] **FUN-032 — Force a new two-wavelength test after a mapping change.** `[MVP]`
 - [ ] **FUN-036 — Link and retain pre- and post-optimization measurements.** `[R1]`

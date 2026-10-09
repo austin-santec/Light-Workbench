@@ -69,7 +69,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.22.0; an existing executable keeps its prior version until rebuilt.
+1.27.0; an existing executable keeps its prior version until rebuilt.
 
 
 3. VERIFY VISA
@@ -99,7 +99,10 @@ folder; install VISA through the approved vendor installer.
   3. Start LightWorkbench.exe, then click Connect Hardware... to connect the
      measurement hardware and switch. Use the arrow menu when only one device
      should be connected. Successful connections remain available between runs.
-  4. Select Single channel and choose one channel for the first test.
+  4. Select SM (1310/1550) or MM (850/1300), then select Single channel and
+     choose one channel for the first test. SM/MM is manually selected rather
+     than inferred from hardware identity; MM results are reviewable but are
+     not eligible for the current SM-only COC generation.
   5. Enter the serial numbers. References start at 0.00 dBm. After measurement
      hardware is connected, click Calculate Reference, which reads both wavelengths from the ILM/OP815 and
      applies the measured offsets automatically; the values remain manually
@@ -141,6 +144,10 @@ program asks whether to update the saved metadata and whether to rename the run
 folder, CSV/JSON files, and existing COC workbook. The original run timestamp
 is preserved and existing files are never overwritten.
 
+The front-panel channel count is derived automatically from the three-digit
+channel field in the part number. It is displayed read-only; COC preparation
+and replacement analysis do not accept a manually entered count.
+
 Real switch runs also record start time, stop time, continuation times, session
 count, and accumulated switch-test duration in the CSV metadata. Live IL and
 Red Light Test are not included in this timing.
@@ -153,7 +160,7 @@ switch controls borrow existing connections or connect each device independently
 Route a logical channel if needed, then click
 Read Measured Power. The window shows the measured dBm values, the selected
 references, and the exact calculation `reference - measured = insertion loss`.
-Calculate Reference and Apply to Main Setup are available when a new baseline
+Calculate Reference and Apply to the active session are available when a new baseline
 is needed. The diagnostic history remains in memory only and is never written
 to CSV, JSON, COC, or another output file.
 
@@ -201,8 +208,9 @@ from another numbered run for the same unit. Choose No comparison to hide those
 columns again. Comparison data is display-only and does not change analysis or
 saved run files.
 
-Write COC... asks for the front-panel channel count and a persisted base run,
-with an optional replacement/retest run. It requires every front-panel channel
+Write COC... derives the front-panel channel count from the selected base run's
+part number and lets the operator choose a persisted base run, with an optional
+replacement/retest run. It requires every front-panel channel
 and blocks any 1310/1550 value at or above 2.5000 dB. Supplemental readings
 replace complete wavelength pairs and changed physical ports must match the
 unit's recorded replacements. A passing result above 2.2500 dB produces an
@@ -222,9 +230,16 @@ fills Main board serial and the lookup starts automatically in the background.
 Lookup failure does not disconnect the hardware or change the separately
 entered Switch serial.
 Template graphics are preserved in exported files when present.
+The three-digit field in an OSX-100/OSX-150 part number defines the front-panel
+count. Missing or invalid part numbers block COC preparation; the application
+does not guess from the switch capacity or number of readings.
 Replacement recommendations are calculated for the selected run but are not
 stored as permanent results. Completed replacements and designated spare ports
 are stored in the shared unit.json record.
+After a successful full configured pass with every planned channel written, the
+operator is offered the same advisory replacement analysis. This offer does
+not appear for partial, selected, stopped, failed, retest-only, loaded-only,
+or unsupported MM runs.
 Hardware test setup also provides an editable standard-part-number list and an
 O band/C band operating-band selector.
 

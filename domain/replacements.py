@@ -266,11 +266,11 @@ def parse_extra_readings(value: str) -> list[ReplacementReading]:
     return readings
 
 
-def _production_reading(record):
+def _production_reading(record, wavelengths=(1310, 1550)):
     return ReplacementReading(
         record.physical_port if record.physical_port is not None else record.channel,
-        record.loss_1310,
-        record.loss_1550,
+        record.loss_for(wavelengths[0]),
+        record.loss_for(wavelengths[1]),
     )
 
 
@@ -299,6 +299,7 @@ def analyze_replacements(
     fail_limit=None,
     model="",
     too_good_limit=None,
+    wavelengths=(1310, 1550),
 ):
     """Recommend worthwhile one-to-one replacements and designated spares.
 
@@ -324,7 +325,7 @@ def analyze_replacements(
     optimization_limit = warning_limit
 
     production = {
-        record.channel: _production_reading(record)
+        record.channel: _production_reading(record, wavelengths)
         for record in production_records
         if 1 <= record.channel <= designed_channel_count
     }
@@ -351,6 +352,7 @@ def analyze_replacements(
         "optimization_limit_db": float(optimization_limit),
         "fail_limit_db": float(fail_limit),
         "model": model,
+        "wavelengths_nm": tuple(int(value) for value in wavelengths),
         "too_good_below_db": too_good_limit,
         "minimum_improvement_db": float(minimum_improvement),
         "bottom_spare_count": int(bottom_spare_count),

@@ -14,6 +14,11 @@ from domain.measurement import (
     validate_insertion_loss,
 )
 from domain.models import ConnectionState, DeviceCategory
+from domain.wavelengths import (
+    MeasurementConfiguration,
+    SM_SOURCE_PROFILE,
+    measurement_configuration,
+)
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from hardware.device_identity import device_info_for
 from hardware.interfaces import OpticalSwitch, PowerMeter
@@ -53,6 +58,7 @@ class MeasurementWorker(QObject):
         live_write_interval=LIVE_WRITE_INTERVAL_SECONDS,
         support_logger=None,
         workflow_id="",
+        measurement_configuration_value: MeasurementConfiguration | None = None,
     ):
         super().__init__()
         self.power_meter = power_meter
@@ -68,6 +74,11 @@ class MeasurementWorker(QObject):
         self.live_write_interval = max(0.1, float(live_write_interval))
         self.support_logger = support_logger
         self.workflow_id = str(workflow_id or "")
+        self.measurement_configuration = (
+            measurement_configuration_value
+            if measurement_configuration_value is not None
+            else measurement_configuration("SM", SM_SOURCE_PROFILE)
+        )
         self._stop_event = threading.Event()
         self._operator_ready = threading.Event()
         self._channel_selection_event = threading.Event()
@@ -98,6 +109,9 @@ class MeasurementWorker(QObject):
             )
             self._emit_device_status(ConnectionState.CONNECTING)
             self.hardware_session.connect()
+            configure = getattr(self.power_meter, "configure_measurement", None)
+            if configure is not None:
+                configure(self.measurement_configuration)
             self._emit_device_status(ConnectionState.CONNECTED)
             configured_count = None
             if self.channels is not None:
@@ -341,21 +355,45 @@ class MeasurementWorker(QObject):
         self._raise_if_stopped()
 
         while True:
+            wavelengths = self.measurement_configuration.opm_wavelengths_nm
+            first_wavelength, second_wavelength = wavelengths
             measurement_id = "measurement-" + uuid.uuid4().hex
+            trace_context = {
+                "workflow_id": self.workflow_id,
+                "operation_id": measurement_id,
+                "measurement_id": measurement_id,
+                "method": "live_write" if self.live_write_mode else "normal_run",
+                "channel": channel,
+                "physical_port": physical_port,
+                "wavelength_mode": (
+                    self.measurement_configuration.wavelength_profile.code
+                ),
+                "opm_wavelengths_nm": list(wavelengths),
+                "source_ids": list(self.measurement_configuration.source_ids),
+                "source_wavelengths_nm": list(
+                    self.measurement_configuration.source_wavelengths_nm
+                ),
+                "measurement_classification": (
+                    self.measurement_configuration.classification.value
+                ),
+            }
+            trace_context.update(
+                {
+                    "reference_%d_dbm" % wavelength: self.reference_powers.get(
+                        wavelength
+                    )
+                    for wavelength in wavelengths
+                }
+            )
             self._set_meter_trace_context(
-                workflow_id=self.workflow_id,
-                operation_id=measurement_id,
-                measurement_id=measurement_id,
-                method="live_write" if self.live_write_mode else "normal_run",
-                channel=channel,
-                physical_port=physical_port,
-                reference_1310_dbm=self.reference_powers.get(1310),
-                reference_1550_dbm=self.reference_powers.get(1550),
+                **trace_context
             )
             started = time.perf_counter()
             measurements = self.power_meter.measure_both_wavelengths()
-            losses = calculate_insertion_loss(self.reference_powers, measurements)
-            validation = validate_insertion_loss(losses)
+            losses = calculate_insertion_loss(
+                self.reference_powers, measurements, wavelengths
+            )
+            validation = validate_insertion_loss(losses, wavelengths)
             if validation.valid:
                 self._finish_negative_episode("valid_sample")
             else:
@@ -365,16 +403,16 @@ class MeasurementWorker(QObject):
                     self._negative_episode_context = {
                         "logical_channel": channel,
                         "physical_port": physical_port,
-                        "reference_1310_dbm": self.reference_powers.get(1310),
-                        "reference_1550_dbm": self.reference_powers.get(1550),
-                        "measured_power_dbm": {
-                            "1310": measurements[1310],
-                            "1550": measurements[1550],
+                        "references_by_wavelength": {
+                            str(value): self.reference_powers.get(value)
+                            for value in wavelengths
                         },
-                        "loss_1310_db": losses[1310],
-                        "loss_1550_db": losses[1550],
-                        "rounded_loss_1310_db": validation.rounded_losses[1310],
-                        "rounded_loss_1550_db": validation.rounded_losses[1550],
+                        "measured_power_dbm": {
+                            str(value): measurements[value] for value in wavelengths
+                        },
+                        "losses_by_wavelength": {
+                            str(value): losses[value] for value in wavelengths
+                        },
                         "threshold_db": NON_NEGATIVE_LOSS_THRESHOLD_DB,
                         "validation_reason": validation.reason,
                         "invalid_wavelength": ",".join(
@@ -387,16 +425,16 @@ class MeasurementWorker(QObject):
                         operation_id=measurement_id,
                         logical_channel=channel,
                         physical_port=physical_port,
-                        reference_1310_dbm=self.reference_powers.get(1310),
-                        reference_1550_dbm=self.reference_powers.get(1550),
-                        measured_power_dbm={
-                            "1310": measurements[1310],
-                            "1550": measurements[1550],
+                        references_by_wavelength={
+                            str(value): self.reference_powers.get(value)
+                            for value in wavelengths
                         },
-                        loss_1310_db=losses[1310],
-                        loss_1550_db=losses[1550],
-                        rounded_loss_1310_db=validation.rounded_losses[1310],
-                        rounded_loss_1550_db=validation.rounded_losses[1550],
+                        measured_power_dbm={
+                            str(value): measurements[value] for value in wavelengths
+                        },
+                        losses_by_wavelength={
+                            str(value): losses[value] for value in wavelengths
+                        },
                         threshold_db=NON_NEGATIVE_LOSS_THRESHOLD_DB,
                         validation_reason=validation.reason,
                         invalid_wavelength=",".join(
@@ -411,13 +449,15 @@ class MeasurementWorker(QObject):
                 logical_channel=channel,
                 physical_port=physical_port,
                 measured_power_dbm={
-                    "1310": measurements[1310],
-                    "1550": measurements[1550],
+                    str(value): measurements[value] for value in wavelengths
                 },
-                reference_1310_dbm=self.reference_powers.get(1310),
-                reference_1550_dbm=self.reference_powers.get(1550),
-                loss_1310_db=losses[1310],
-                loss_1550_db=losses[1550],
+                references_by_wavelength={
+                    str(value): self.reference_powers.get(value)
+                    for value in wavelengths
+                },
+                losses_by_wavelength={
+                    str(value): losses[value] for value in wavelengths
+                },
                 elapsed_ms=(time.perf_counter() - started) * 1000.0,
                 reading_state="temporary",
                 both_wavelengths_complete=True,
@@ -431,8 +471,8 @@ class MeasurementWorker(QObject):
             self.reading_ready.emit(
                 channel,
                 physical_port,
-                losses[1310],
-                losses[1550],
+                losses[first_wavelength],
+                losses[second_wavelength],
             )
             decision = self._wait_for_read_or_write(
                 live_update=self.live_write_mode

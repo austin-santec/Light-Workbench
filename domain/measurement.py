@@ -22,11 +22,12 @@ class MeasurementValidation:
 def validate_reference_measurements(
     measured_powers: Mapping[int, float],
     threshold_dbm: float = DARK_REFERENCE_THRESHOLD_DBM,
+    wavelengths=MEASUREMENT_WAVELENGTHS_NM,
 ) -> MeasurementValidation:
     """Reject a calculated reference when a wavelength appears dark."""
     invalid = tuple(
         wavelength
-        for wavelength in MEASUREMENT_WAVELENGTHS_NM
+        for wavelength in tuple(wavelengths)
         if float(measured_powers[wavelength]) < float(threshold_dbm)
     )
     return MeasurementValidation(
@@ -39,9 +40,12 @@ def validate_reference_measurements(
 def format_dark_reference_error(
     measured_powers: Mapping[int, float],
     threshold_dbm: float = DARK_REFERENCE_THRESHOLD_DBM,
+    wavelengths=MEASUREMENT_WAVELENGTHS_NM,
 ) -> str:
     """Return a concise operator-facing explanation for a dark reference."""
-    validation = validate_reference_measurements(measured_powers, threshold_dbm)
+    validation = validate_reference_measurements(
+        measured_powers, threshold_dbm, wavelengths
+    )
     details = "; ".join(
         "%d nm measured %.4f dBm (limit %.4f dBm)"
         % (wavelength, float(measured_powers[wavelength]), float(threshold_dbm))
@@ -56,11 +60,14 @@ def format_dark_reference_error(
     )
 
 
-def validate_insertion_loss(losses: Mapping[int, float]) -> MeasurementValidation:
+def validate_insertion_loss(
+    losses: Mapping[int, float],
+    wavelengths=MEASUREMENT_WAVELENGTHS_NM,
+) -> MeasurementValidation:
     """Reject complete samples whose displayed IL is negative."""
     rounded = {
         wavelength: round(float(losses[wavelength]), 4)
-        for wavelength in MEASUREMENT_WAVELENGTHS_NM
+        for wavelength in tuple(wavelengths)
     }
     invalid = tuple(
         wavelength
@@ -78,6 +85,7 @@ def validate_insertion_loss(losses: Mapping[int, float]) -> MeasurementValidatio
 def calculate_insertion_loss(
     reference_powers: Mapping[int, float],
     measured_powers: Mapping[int, float],
+    wavelengths=MEASUREMENT_WAVELENGTHS_NM,
 ) -> dict[int, float]:
     """Calculate insertion loss for each supported wavelength.
 
@@ -85,9 +93,10 @@ def calculate_insertion_loss(
     produced the absolute power readings. A reference is the measured power
     without the device under test, so insertion loss is ``reference - measured``.
     """
+    wavelengths = tuple(wavelengths)
     missing_reference = [
         wavelength
-        for wavelength in MEASUREMENT_WAVELENGTHS_NM
+        for wavelength in wavelengths
         if wavelength not in reference_powers
     ]
     if missing_reference:
@@ -98,7 +107,7 @@ def calculate_insertion_loss(
 
     missing_measurements = [
         wavelength
-        for wavelength in MEASUREMENT_WAVELENGTHS_NM
+        for wavelength in wavelengths
         if wavelength not in measured_powers
     ]
     if missing_measurements:
@@ -110,5 +119,5 @@ def calculate_insertion_loss(
     return {
         wavelength: float(reference_powers[wavelength])
         - float(measured_powers[wavelength])
-        for wavelength in MEASUREMENT_WAVELENGTHS_NM
+        for wavelength in wavelengths
     }

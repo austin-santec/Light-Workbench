@@ -38,7 +38,7 @@ class RunPersistenceTests(unittest.TestCase):
                 )
             ])
             payload = load_run_json(recorder.json_path)
-            self.assertEqual(payload["schema_version"], 4)
+            self.assertEqual(payload["schema_version"], 5)
             self.assertEqual(payload["measurements"][0]["reference"], snapshot.as_dict())
             self.assertEqual(payload["reference_snapshots"], [snapshot.as_dict()])
             with recorder.csv_path.open(newline="", encoding="utf-8") as csv_file:
@@ -160,7 +160,7 @@ class RunPersistenceTests(unittest.TestCase):
             self.assertTrue(recorder.csv_path.is_file())
             self.assertTrue(recorder.json_path.is_file())
             payload = load_run_json(recorder.json_path)
-            self.assertEqual(payload["schema_version"], 4)
+            self.assertEqual(payload["schema_version"], 5)
             self.assertIsNone(payload["criteria"])
             self.assertEqual(payload["warning_limit_db"], 2.0)
             self.assertEqual(payload["measurements"][0]["physical_port"], 1)

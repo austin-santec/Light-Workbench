@@ -97,18 +97,25 @@ class CocWorkflow:
             saved_criteria = payload.get("criteria")
             if isinstance(saved_criteria, dict):
                 criteria = dict(saved_criteria)
-            else:
+            elif run_data.wavelength_mode == "SM":
                 criteria = legacy_limit_profile(
                     float(payload.get("warning_limit_db", 2.0))
                 ).as_dict()
 
         measurements = tuple(
-            MeasurementRecord(
+            MeasurementRecord.from_wavelengths(
                 record.channel,
-                record.loss_1310,
-                record.loss_1550,
-                physical_ports.get(record.channel),
-                references.get(record.channel, record.reference_snapshot),
+                record.losses_by_wavelength,
+                physical_port=physical_ports.get(
+                    record.channel, record.physical_port
+                ),
+                reference_snapshot=references.get(
+                    record.channel, record.reference_snapshot
+                ),
+                wavelength_mode=record.wavelength_mode,
+                measurement_classification=record.measurement_classification,
+                source_wavelengths_nm=record.source_wavelengths_nm,
+                source_ids=record.source_ids,
             )
             for record in run_data.measurements
         )

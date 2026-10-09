@@ -1,8 +1,8 @@
 # Light Workbench
 
 This folder contains Light Workbench, a guided Windows application for optical
-testing and measurement. Its current workflow measures insertion loss at
-**1310 nm** and **1550 nm** and controls:
+testing and measurement. Its current workflow measures insertion loss in
+**SM (1310/1550 nm)** or **MM (850/1300 nm)** mode and controls:
 
 - An ILM-100 exposed to the vendor DLL as an **OP815**
 - A Santec **OSX-100 or OSX-150** optical switch connected through USB VISA
@@ -32,10 +32,19 @@ read-only during normal testing and are stored with each new run.
 Administrators can change them through Edit > Admin Mode... and Edit > Admin
 Config...; the admin session is not persisted.
 
+Select **SM (1310/1550)** or **MM (850/1300)** in Hardware test setup before
+calculating the reference. This is an operator-selected test mode; Light
+Workbench does not infer SM/MM from the ILM identity, firmware, serial number,
+product option, power, or cached history. SM configures the 1310/1550 sequence
+and MM configures the 850/1300 sequence. The selected mode is stored with the
+reference, readings, logs, and run metadata. Each mode has its own model
+limits. MM data can be reviewed, analyzed, and exported, but the current COC
+workflow remains SM-only until approved MM report rules and templates exist.
+
 For every channel, it can:
 
 - Automatically route the connected OSX-100/OSX-150 to the requested logical channel.
-- Measure absolute power at 1310 nm and 1550 nm.
+- Measure absolute power at the two wavelengths selected by the active mode.
 - Calculate insertion loss using an explicit calculated reference session; only
   Admin Mode can authorize a manually entered production reference.
 - Display both insertion-loss values before saving them.
@@ -81,15 +90,16 @@ remains connected to Light Workbench for later use. It does not
 measure IL, create run files, or affect COC data.
 
 From `Tools > Live IL Reading...`, the operator can connect or borrow only the
-ILM/OP815 and read the current insertion loss at 1310 nm and 1550 nm. It uses
-editable reference powers initialized from Hardware test setup, supports
+ILM/OP815 and read the current insertion loss at the selected wavelength pair. It uses
+the session reference for the selected wavelength mode, supports
 repeated reads, and never connects to the switch or saves run data. `Start Live
 Updates` automatically refreshes both values without saving data and changes to
 `Stop Live Updates` while active.
 
 From `Tools > Power Measurement Diagnostics...`, the operator can connect or borrow
 the meter without starting a run and view raw absolute power at both
-wavelengths alongside the exact insertion-loss calculation. The tool can also
+wavelengths alongside the exact insertion-loss calculation. Its labels,
+history, analysis, and explicit exports follow the active SM/MM mode. The tool can also
 connect to the switch independently so a logical channel can be routed before
 the reading. Diagnostic readings and history stay in memory only; they do not
 change the active run or create CSV, JSON, COC, or other output files.
@@ -154,6 +164,8 @@ redaction, and support-bundle details.
 | `ILMReadLoss.py` | Legacy console workflow retained for compatibility |
 | `run_data.py` | CSV loader and configurable over-limit analysis model |
 | `domain/models.py` | Typed vendor-neutral measurement, device, unit, run, reference, and workflow models |
+| `domain/wavelengths.py` | Operator-selected SM/MM OPM/source profiles and legacy classification support |
+| `domain/part_numbers.py` | Validated OSX part-number parsing and front-panel channel-count resolution |
 | `domain/run_data.py` | Domain run model and over-limit analysis rules |
 | `domain/measurement_attempts.py` | Typed append-only accepted-reading and retest history |
 | `domain/raw_export.py` | Pure tab-separated formatting for copying accepted readings to Excel |
@@ -261,7 +273,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.22.0**; an existing executable keeps its prior
+current source version is **1.27.0**; an existing executable keeps its prior
 version until rebuilt.
 
 For architecture, coding standards, testing, and contribution guidance, see
@@ -345,8 +357,9 @@ ILM wavelength matches the requested wavelength. A difference in the DLL's
 diagnostic index/count convention alone does not stop the run when the actual
 wavelength is correct; diagnostics retain those raw values as warnings.
 
-The 1310 nm and 1550 nm reference powers are displayed in the desktop setup
-panel. Normal operators cannot edit or authorize them directly. Use
+The reference powers are displayed in the Current readings panel and belong
+to the connected measurement session rather than the loaded run. Normal
+operators cannot edit or authorize them directly. Use
 `Calculate Reference` with connected measurement hardware; Admin Mode provides
 an explicit `Apply Manual Reference` action for controlled exceptions. A real
 full-pass run queries the OSX-150 for its configured
@@ -359,8 +372,12 @@ the run metadata.
 
 Before a production run can start, use **Connect Hardware...** to connect all
 required hardware, complete the required Hardware test setup fields, and use
-`Calculate Reference`. A production run cannot start until a valid calculated
-reference exists for the connected measurement hardware. Admin Mode can
+`Calculate Reference`. The reference is displayed in Current readings and
+belongs to the connected measurement session rather than the loaded run. A
+production run cannot start until a valid calculated reference exists for the
+connected measurement hardware. Loading another run or CSV does not replace
+the active session reference. A confirmed ILM disconnect clears it and
+requires a new reference. Admin Mode can
 explicitly continue without descriptive metadata, but it cannot bypass missing,
 invalidated, stale, or mismatched references or disconnected hardware. The
 preflight runs before run folders/files, switch routing, laser activation, or
@@ -416,8 +433,10 @@ not written back to either run.
 
 Some 48-channel switches contain extra physical ports, such as ports 49 and
 50, while the finished switch is still designed to use only 48 channels. After
-a full pass, open `Analyze Replacements` in the analysis panel and enter the
-designed channel count. Rows beyond that count are treated as measured extras.
+a full pass, open `Analyze Replacements` in the analysis panel. The application
+derives the designed/front-panel channel count from the three-digit channel
+field in the saved OSX part number; it does not ask the operator to enter a
+second count. Rows beyond that derived count are treated as measured extras.
 A 48-channel run with exactly 48 measured rows has no extras, so the analysis
 is reported as not applicable.
 
@@ -439,6 +458,13 @@ on screen only; they are not stored as run data.
 The program does not change the OSX-150 replacement configuration; the
 recommendations are an analysis for the operator to act on physically.
 
+After a successful full configured pass with every planned channel written, the
+application offers to open the existing replacement-analysis workflow. Choosing
+No dismisses the offer; choosing Yes opens the same advisory analysis used by
+the analysis panel. The prompt does not change run data, replacement records,
+switch mappings, or COC output. The prompt is not shown for partial, selected,
+stopped, failed, retest-only, loaded-only, or unsupported MM runs.
+
 After physically performing swaps, use `Manage Port Replacements...` in the
 Replacement analysis panel. The operator records the `Current Port`,
 `Replacement Port`, reason, and initials; the application supplies the UTC
@@ -456,8 +482,9 @@ pasting into the Unit Editor notes.
 ## COC workbook export
 
 `Write COC...` opens a preparation dialog instead of immediately exporting the
-active table. The operator confirms the front-panel channel count, chooses one
-persisted base run, and can optionally choose one replacement/retest run.
+active table. The dialog derives the front-panel channel count from the
+selected base run's part number, displays it read-only, and lets the operator
+choose one persisted base run and optionally one replacement/retest run.
 COC preparation starts only when the operator explicitly clicks the Hardware
 Controls button or selects File > Write COC...; completing, stopping, or
 failing a hardware run does not automatically ask whether to create a COC.
@@ -501,6 +528,12 @@ Template graphics are preserved when present. Base/supplemental run numbers,
 front-panel count, and supplemental channel/physical-port overrides are stored
 as COC provenance in the base run metadata.
 
+The three-digit channel field in a supported OSX-100/OSX-150 part number is the
+front-panel count. A Full configured pass may measure additional physical
+switch ports; those ports are available to replacement analysis but are not
+written to the COC. Missing or invalid part numbers block replacement analysis
+and COC preparation instead of allowing the operator to guess a count.
+
 ## Copy raw readings for Excel
 
 The `Copy Raw Data...` button in Hardware Controls copies the accepted readings
@@ -536,6 +569,8 @@ The Part number field is also an editable drop-down containing the current
 standard OSX-150 part numbers. Operating band is selected from `O band` or
 `C band`. The `Tested by` field accepts the operator's initials and is saved
 with the run and copied into `G4` of the COC workbook.
+The read-only `Front-panel channels` value beside the setup fields is derived
+from the part number's three-digit channel field. It is not manually editable.
 
 The packaged ZIP includes `Check Dependencies.cmd`, which launches a
 non-destructive report for bundled files, VISA, connected instruments, run

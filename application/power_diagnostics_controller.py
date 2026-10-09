@@ -10,6 +10,7 @@ from domain.measurement import (
     validate_reference_measurements,
 )
 from domain.reference import calculate_reference_offsets
+from domain.wavelengths import measurement_configuration
 from hardware.interfaces import PowerMeter
 from hardware.session import OpticalTestSession
 
@@ -23,9 +24,12 @@ class PowerDiagnosticsWorker(QObject):
     failed = pyqtSignal(str)
     finished = pyqtSignal()
 
-    def __init__(self, meter: PowerMeter):
+    def __init__(self, meter: PowerMeter, measurement_configuration_value=None):
         super().__init__()
         self.meter = meter
+        self.measurement_configuration = (
+            measurement_configuration_value or measurement_configuration()
+        )
         self.hardware_session = OpticalTestSession(meter)
         self._finished = False
         setter = getattr(self.meter, "set_diagnostic_verification", None)
@@ -36,6 +40,9 @@ class PowerDiagnosticsWorker(QObject):
     def start(self):
         try:
             self.hardware_session.connect()
+            configure = getattr(self.meter, "configure_measurement", None)
+            if configure is not None:
+                configure(self.measurement_configuration)
             self.connected.emit(self.meter.description or "Power meter connected")
         except Exception as error:
             # Keep the worker alive long enough for the controller to perform
@@ -55,25 +62,29 @@ class PowerDiagnosticsWorker(QObject):
         if self._finished:
             return
         try:
+            wavelengths = self.measurement_configuration.opm_wavelengths_nm
             self._set_trace_context(
                 measurement_id=measurement_id,
                 method=method,
                 channel=channel,
                 physical_port=physical_port,
-                reference_1310_dbm=float(reference_1310),
-                reference_1550_dbm=float(reference_1550),
+                **{
+                    "reference_%d_dbm" % wavelengths[0]: float(reference_1310),
+                    "reference_%d_dbm" % wavelengths[1]: float(reference_1550),
+                },
             )
             measured = dict(self.meter.measure_both_wavelengths())
             losses = calculate_insertion_loss(
-                {1310: reference_1310, 1550: reference_1550},
+                {wavelengths[0]: reference_1310, wavelengths[1]: reference_1550},
                 measured,
+                wavelengths,
             )
             self.reading_ready.emit(
                 measured,
                 float(reference_1310),
                 float(reference_1550),
-                losses[1310],
-                losses[1550],
+                losses[wavelengths[0]],
+                losses[wavelengths[1]],
             )
         except Exception as error:
             self.failed.emit(str(error))
@@ -88,11 +99,18 @@ class PowerDiagnosticsWorker(QObject):
                 method="Reference",
             )
             measured = dict(self.meter.measure_reference_wavelengths())
-            validation = validate_reference_measurements(measured)
+            wavelengths = self.measurement_configuration.opm_wavelengths_nm
+            validation = validate_reference_measurements(
+                measured, wavelengths=wavelengths
+            )
             if not validation.valid:
-                self.failed.emit(format_dark_reference_error(measured))
+                self.failed.emit(
+                    format_dark_reference_error(measured, wavelengths=wavelengths)
+                )
                 return
-            reference_1310, reference_1550 = calculate_reference_offsets(measured)
+            reference_1310, reference_1550 = calculate_reference_offsets(
+                measured, wavelengths=wavelengths
+            )
             self.reference_ready.emit(
                 measured,
                 reference_1310,
@@ -164,7 +182,11 @@ class PowerDiagnosticsController(QObject):
         self.trace_callback = trace_callback
         self.trace_metadata = dict(trace_metadata or {})
 
-    def start(self, meter_factory: Callable[[], PowerMeter]) -> None:
+    def start(
+        self,
+        meter_factory: Callable[[], PowerMeter],
+        measurement_configuration_value=None,
+    ) -> None:
         """Create the worker and connect the meter asynchronously."""
         if self.thread is not None or self.worker is not None:
             raise RuntimeError("Power diagnostics meter is already active.")
@@ -188,7 +210,11 @@ class PowerDiagnosticsController(QObject):
                         setter(**self.trace_metadata)
                     except Exception:
                         pass
-            worker = self.worker_factory(meter)
+            worker = (
+                self.worker_factory(meter, measurement_configuration_value)
+                if measurement_configuration_value is not None
+                else self.worker_factory(meter)
+            )
             thread = QThread(self)
             worker.moveToThread(thread)
             self.worker = worker

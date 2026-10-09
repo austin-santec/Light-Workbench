@@ -29,6 +29,19 @@ class DiagnosticReading:
     measured_1550: float
     reference_1550: float
     insertion_loss_1550: float
+    wavelength_mode: str = "SM"
+    opm_wavelengths_nm: tuple[int, int] = (1310, 1550)
+    source_wavelengths_nm: tuple[int, int] = (1310, 1550)
+    source_ids: tuple[int, int] = (0, 1)
+    measurement_classification: str = "native"
+
+    def insertion_loss_for(self, wavelength_nm: int) -> float:
+        slot = self.opm_wavelengths_nm.index(int(wavelength_nm))
+        return (
+            self.insertion_loss_1310
+            if slot == 0
+            else self.insertion_loss_1550
+        )
 
 
 @dataclass(frozen=True)
@@ -57,11 +70,10 @@ class DiagnosticAnalysis:
 def _values_for_wavelength(
     readings: Sequence[DiagnosticReading], wavelength_nm: int
 ) -> list[float]:
-    if wavelength_nm == 1310:
-        return [reading.insertion_loss_1310 for reading in readings]
-    if wavelength_nm == 1550:
-        return [reading.insertion_loss_1550 for reading in readings]
-    raise ValueError("Unsupported diagnostic wavelength: %s" % wavelength_nm)
+    try:
+        return [reading.insertion_loss_for(wavelength_nm) for reading in readings]
+    except ValueError:
+        raise ValueError("Unsupported diagnostic wavelength: %s" % wavelength_nm)
 
 
 def calculate_variation_statistics(
@@ -103,12 +115,15 @@ def analyze_diagnostic_readings(
             % (method, method.lower())
         )
 
+    wavelengths = selected[0].opm_wavelengths_nm
+    if any(reading.opm_wavelengths_nm != wavelengths for reading in selected):
+        raise ValueError("Diagnostic analysis cannot mix wavelength modes.")
     return DiagnosticAnalysis(
         method=method,
         count=len(selected),
         by_wavelength={
             wavelength: calculate_variation_statistics(selected, wavelength)
-            for wavelength in (1310, 1550)
+            for wavelength in wavelengths
         },
     )
 

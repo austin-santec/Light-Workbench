@@ -54,6 +54,13 @@ be used as source locations. The release scripts keep deployment output in
 - Accepted reading/retest identity, immutable attempt chains, and current
   measurement projection: `domain/measurement_attempts.py` and
   `domain/run_data.py`.
+- Operator-selected SM/MM OPM/source profiles and legacy classification support:
+  `domain/wavelengths.py`. UI and hardware adapters consume the resolved
+  configuration rather than duplicating wavelength maps. Hardware identity is
+  not used to infer the selected mode.
+- OSX-100/OSX-150 part-number parsing and front-panel channel-count resolution:
+  `domain/part_numbers.py`. This count remains separate from the switch's
+  configured physical-channel count.
 - Multi-run COC merging and publication rules: `domain/coc_preparation.py`;
   repository coordination: `application/coc_workflow.py`; operator selection:
   `ui/coc_export_dialog.py`; workbook mechanics: `infrastructure/coc_export.py`.

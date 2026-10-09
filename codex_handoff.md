@@ -8,8 +8,8 @@ and the Git worktree are the source of truth.
 
 This project automates optical insertion-loss testing for an ILM-100/OP815
 meter and a Santec OSX-100/OSX-150 optical switch. The operator selects logical switch
-channels, moves the output cable when prompted, and obtains insertion loss at
-1310 nm and 1550 nm.
+channels, moves the output cable when prompted, and obtains insertion loss in
+SM 1310/1550 nm or MM 850/1300 nm mode.
 
 For each wavelength:
 
@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.22.0**. The single
+The current source release is **Light Workbench 1.27.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -41,6 +41,16 @@ The negative values remain visible for troubleshooting, but cannot be written
 to a run. Live Write Mode keeps monitoring without repeated modal dialogs, and
 support logs coalesce consecutive invalid samples into start/end episodes.
 
+The current integrated ILM uses source ID 0 for 1310 nm and source ID 1 for
+1550 nm. SM/MM is selected manually by the operator; hardware identity,
+product options, power readings, and cached history are not used to infer the
+mode. Run schema version 5 stores wavelength-keyed losses plus OPM/source
+pairs, selected mode, selection method, profile origin, and classification
+metadata; legacy files remain readable. SM and MM have independent model/mode
+limit profiles. MM supports normal analysis and replacement analysis, while
+the current COC workflow remains SM-only. Historical compatibility
+classifications are preserved when loading older records.
+
 | File | Responsibility |
 | --- | --- |
 | ilm_app.py | Current PyQt5 desktop viewer and real-hardware UI. Loads CSV runs, analyzes limits, starts hardware runs, displays readings, and commits accepted results. The header includes the bundled Lulu - CandC logo; the UI uses a light-grey shell and `#e60013` primary accent. |
@@ -58,6 +68,7 @@ support logs coalesce consecutive invalid samples into start/end episodes.
 | hardware/power_meter.py | Application-facing meter adapter. SantecPowerMeter wraps the OP815 driver; SimulatedPowerMeter is deterministic and hardware-free. |
 | power_meter.py | Compatibility facade for the hardware power-meter adapters and PowerMeter contract. |
 | hardware/interfaces.py | Vendor-neutral PowerMeter, LaserSource, and OpticalSwitch protocols. This is the starting boundary for future OPM plus separate laser support. |
+| domain/wavelengths.py | Operator-selected SM/MM OPM/source profiles and legacy classification support. |
 | application/ | Workflow controllers, measurement worker, planning, and transient hardware-run state. |
 | domain/ | Vendor-neutral models, calculations, replacement rules, timing, and reporting. |
 | domain/raw_export.py | Pure Excel-compatible TSV formatting for accepted run measurements; it does not persist data. |
@@ -203,11 +214,12 @@ short range.
 3. Enter the required main-board serial, unrestricted full switch serial, part
    number, operating band, operator initials, and the numbered run. First use the
    header `Connect Hardware...`
-   menu; references default to 0.00 dBm until calculated or entered.
-   `Calculate Reference` is
+   menu; references default to 0.00 dBm until calculated or entered. The
+   Reference section is in Current readings because the value belongs to the
+   connected measurement session, not the loaded run. `Calculate Reference` is
    enabled when measurement hardware is connected; it borrows that connection,
    reads both wavelengths with a zero software reference, releases its lease, and applies the
-   resulting two-decimal offsets back to the setup without opening the Live IL
+   resulting two-decimal offsets back to the Current readings panel without opening the Live IL
    window. Reference calibration uses a dedicated stabilized timing profile
    and does not slow normal production measurements.
    When a supported OSX connects and no run is loaded or active, the serial
@@ -247,8 +259,9 @@ short range.
 9. Existing CSVs can be opened for analysis. The table highlights either
 wavelength over the warning limit and Select Over-Limit selects rows for
 retest.
-10. `Analyze Replacements` uses measured rows whose channel is above the
-configured designed-channel count as extra physical-port candidates. It
+10. `Analyze Replacements` uses the three-digit front-panel channel count
+derived from the active run's OSX part number. Measured rows whose channel is
+above that count are extra physical-port candidates. It
 selects worthwhile replacements, adds displaced production ports back into the
 spare pool, then ranks the best remaining readings as designated spares. The
 spares do not need to be within the warning limit because they are emergency-
@@ -271,8 +284,9 @@ for direct pasting into an existing Excel table. It ignores the table filter,
 excludes pending/live readings and metadata, and does not create or modify run
 files.
 11. COC export uses a validated preparation workflow over persisted run data.
-The operator enters the front-panel channel count, chooses one base run, and
-may choose one compatible replacement/retest run. Supplemental complete pairs
+The selected base run's OSX part number supplies the read-only front-panel
+channel count; the operator chooses one base run and may choose one compatible
+replacement/retest run. Supplemental complete pairs
 override the base by logical channel only when any changed physical port is
 supported by a completed unit replacement record. Every required channel must
 be present, finite, nonnegative, and strictly below 2.5000 dB after display
@@ -345,11 +359,16 @@ or OP831/OP925-specific measurement functions in the normal IL workflow.
     source 0 -> 1310 nm
     source 1 -> 1550 nm
 
+Profile-aware application validation passes the active operator-selected OPM
+pair explicitly. This is required for MM readings (850/1300); no new record is
+classified by comparing the selected mode with a detected hardware profile.
+
 measure_both_wavelengths() remembers the detector wavelength, turns sources
-off, measures 1310 then 1550, turns each source off in a finally block, and
-restores the original detector wavelength. Current settling constants are
-0.1 s wavelength, 0.5 s source-on, and 0.1 s source-off. Do not change source
-IDs, DLL signatures, or timing assumptions without a hardware validation plan.
+off, measures the selected pair in order (1310/1550 for SM or 850/1300 for MM),
+turns each source off in a finally block, and restores the original detector
+wavelength. Current settling constants are 0.1 s wavelength, 0.5 s source-on,
+and 0.1 s source-off. Do not change source IDs, DLL signatures, or timing
+assumptions without a hardware validation plan.
 The actual wavelength returned by `GetWavelength` is safety-critical. A correct
 actual wavelength is not rejected solely because the DLL's index/count
 convention differs from the assumed zero-based mapping; diagnostics retain that
@@ -429,7 +448,7 @@ times, session count, and accumulated duration; Live IL and Red Light Test do
 not affect these fields. The CSV remains compatible with `load_run_csv`, and
 the JSON stores the warning limit, metadata, current measurements, physical
 ports, and timing sessions. Calculated replacement recommendations are
-intentionally not persisted. Run JSON schema version 4 also stores an
+intentionally not persisted. Run JSON schema version 5 also stores an
 append-only `measurement_attempts` history for every accepted Write IL result;
 the CSV and current-reading projection continue to show only the latest value
 per channel. `View Reading History...` in Run information displays current and

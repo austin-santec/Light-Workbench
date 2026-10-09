@@ -274,6 +274,44 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("Response: 0", switch_status.toolTip())
         window.close()
 
+    def test_front_panel_count_display_tracks_part_number_without_manual_input(self):
+        window = MainWindow()
+        try:
+            self.assertIn("Not available", window.front_panel_channel_count_label.text())
+            window.hardware_part_number.setCurrentText(
+                "OSX-150-1A-012-09-FA-00B-2HD"
+            )
+            self.assertEqual(
+                window.front_panel_channel_count_label.text(),
+                "Front-panel channels: 12",
+            )
+            window.hardware_part_number.setCurrentText("not-a-part-number")
+            self.assertIn("Not available", window.front_panel_channel_count_label.text())
+        finally:
+            window.close()
+
+    def test_front_panel_count_distinguishes_physical_switch_capacity(self):
+        window = MainWindow()
+        try:
+            window.run_data = RunData(
+                Path("saved.csv"),
+                [MeasurementRecord(1, 1.0, 1.0)],
+                {"Part number": "OSX-150-1A-012-09-FA-00B-2HD"},
+            )
+            window.hardware_full_pass = True
+            window.hardware_configured_channel_count = 15
+            context = window._front_panel_channel_context_for_active_run()
+            self.assertEqual(context["front_panel_channel_count"], 12)
+            self.assertEqual(context["configured_physical_channel_count"], 15)
+
+            window.run_data.metadata["Part number"] = (
+                "OSX-150-1A-016-09-FA-00B-2HD"
+            )
+            with self.assertRaisesRegex(ValueError, "reports only 15"):
+                window._front_panel_channel_context_for_active_run()
+        finally:
+            window.close()
+
     def test_connected_supported_switch_autofills_main_board_and_part_number(self):
         lookup = FakePartNumberLookupController()
         window = MainWindow(part_lookup_controller=lookup)
@@ -699,8 +737,8 @@ class MainWindowTests(unittest.TestCase):
         window.run_data = RunData(
             Path("test-run"),
             [
-                MeasurementRecord(1, 2.3, 2.3),
-                MeasurementRecord(2, 2.6, 2.0),
+                MeasurementRecord(1, 2.30, 2.30),
+                MeasurementRecord(2, 2.60, 2.00),
             ],
             {},
             criteria_snapshot=window.limit_profiles["OSX-150"].as_dict(),
@@ -826,9 +864,9 @@ class MainWindowTests(unittest.TestCase):
             Path("test-run"),
             [
                 # Channel 1 is over at 1310; channel 2 at 1550; channel 3 at both.
-                MeasurementRecord(1, 2.1, 1.0),
-                MeasurementRecord(2, 1.0, 2.1),
-                MeasurementRecord(3, 2.1, 2.1),
+                MeasurementRecord(1, 2.60, 1.0),
+                MeasurementRecord(2, 1.0, 2.60),
+                MeasurementRecord(3, 2.60, 2.60),
             ],
             {},
         )
@@ -847,9 +885,9 @@ class MainWindowTests(unittest.TestCase):
             Path("test-run"),
             [
                 MeasurementRecord(1, 1.0, 1.0),
-                MeasurementRecord(2, 2.1, 1.0),
-                MeasurementRecord(3, 1.0, 2.1),
-                MeasurementRecord(4, 2.1, 2.1),
+                MeasurementRecord(2, 2.60, 1.0),
+                MeasurementRecord(3, 1.0, 2.60),
+                MeasurementRecord(4, 2.60, 2.60),
             ],
             {},
         )
@@ -939,8 +977,8 @@ class MainWindowTests(unittest.TestCase):
             Path("test-run"),
             [
                 MeasurementRecord(1, 1.0, 1.0),
-                MeasurementRecord(2, 2.1, 1.0),
-                MeasurementRecord(3, 1.0, 2.1),
+                MeasurementRecord(2, 2.60, 1.0),
+                MeasurementRecord(3, 1.0, 2.60),
             ],
             {},
         )
@@ -1009,8 +1047,11 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(position(window.hardware_main_board_serial), (2, 1))
         self.assertEqual(position(window.hardware_switch_serial), (3, 1))
         self.assertEqual(position(window.hardware_part_number), (3, 3))
-        self.assertEqual(position(window.reference_1310_spin), (4, 1))
         self.assertEqual(position(window.hardware_operating_band), (4, 3))
+        self.assertIsNot(
+            window.reference_1310_spin.parentWidget(),
+            window.hardware_setup_box,
+        )
         window.close()
 
     def test_only_hardware_setup_fonts_are_doubled(self):
@@ -1056,6 +1097,36 @@ class MainWindowTests(unittest.TestCase):
                 self.assertEqual(ReferenceMeter.reference_measurements, 1)
                 self.assertFalse(ReferenceMeter.instances[0].closed)
                 self.assertTrue(window.hardware_connection_manager.measurement_ready)
+            finally:
+                window.close()
+
+    def test_loading_historical_run_does_not_replace_active_session_reference(self):
+        ReferenceMeter.instances.clear()
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "ilm_app.SantecPowerMeter", ReferenceMeter
+        ):
+            csv_path = Path(directory) / "historical.csv"
+            csv_path.write_text(
+                "channel,1310 IL,1550 IL\n1,0.6500,0.5000\n",
+                encoding="utf-8",
+            )
+            window = MainWindow()
+            try:
+                window.hardware_connection_manager.connect_measurement_hardware().result(
+                    timeout=2
+                )
+                QTest.qWait(25)
+                active = window.apply_calculated_reference(-0.04, 0.14)
+
+                window.load_path(csv_path)
+
+                self.assertTrue(window.reference_session.is_valid)
+                self.assertEqual(
+                    window.reference_session.snapshot.snapshot_id,
+                    active.snapshot_id,
+                )
+                self.assertAlmostEqual(window.reference_1310_spin.value(), -0.04)
+                self.assertAlmostEqual(window.reference_1550_spin.value(), 0.14)
             finally:
                 window.close()
 
@@ -1190,6 +1261,32 @@ class MainWindowTests(unittest.TestCase):
                 self.assertFalse(window.start_hardware_button.isEnabled())
                 self.assertFalse(window.retest_button.isEnabled())
                 self.assertTrue(window.calculate_reference_button.isEnabled())
+            finally:
+                window.close()
+
+    def test_confirmed_measurement_disconnect_clears_session_references(self):
+        ReferenceMeter.instances.clear()
+        with patch("ilm_app.SantecPowerMeter", ReferenceMeter):
+            window = MainWindow()
+            try:
+                window.hardware_connection_manager.connect_measurement_hardware().result(
+                    timeout=2
+                )
+                QTest.qWait(25)
+                window.apply_calculated_reference(-0.04, 0.14)
+                self.assertTrue(window.reference_session.is_valid)
+
+                window.hardware_connection_manager.disconnect_measurement_hardware().result(
+                    timeout=2
+                )
+                QTest.qWait(25)
+
+                self.assertFalse(window.reference_session.is_valid)
+                self.assertEqual(window.reference_session.snapshots, ())
+                self.assertIn(
+                    "measurement hardware was disconnected",
+                    window.reference_session.reason,
+                )
             finally:
                 window.close()
 
@@ -1465,6 +1562,29 @@ class MainWindowTests(unittest.TestCase):
             self.assertTrue(window.write_coc_action.isEnabled())
             window.close()
 
+    def test_coc_controls_remain_disabled_for_mm_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Run-1.csv"
+            path.write_text("channel,850 IL,1300 IL\n1,0.6000,0.5000\n", encoding="utf-8")
+            window = MainWindow()
+            window.run_data = RunData(
+                path,
+                [
+                    MeasurementRecord.from_wavelengths(
+                        1,
+                        {850: 0.6, 1300: 0.5},
+                        wavelength_mode="MM",
+                        measurement_classification="native",
+                        source_wavelengths_nm=(850, 1300),
+                    )
+                ],
+                {"Wavelength mode": "MM"},
+            )
+            window.refresh_coc_controls()
+            self.assertFalse(window.write_coc_button.isEnabled())
+            self.assertFalse(window.write_coc_action.isEnabled())
+            window.close()
+
     def test_hardware_lifecycle_does_not_start_coc_preparation(self):
         window = MainWindow()
         try:
@@ -1478,6 +1598,162 @@ class MainWindowTests(unittest.TestCase):
                 QApplication.processEvents()
 
             write_coc.assert_not_called()
+        finally:
+            window.close()
+
+    def test_completed_full_pass_defers_one_optimization_offer_until_event_loop(self):
+        window = MainWindow()
+        try:
+            window.run_data = RunData(
+                Path("saved.csv"),
+                [
+                    MeasurementRecord(1, 0.9, 0.8),
+                    MeasurementRecord(2, 1.0, 0.9),
+                ],
+                {
+                    "Run number": "3",
+                    "Main board serial": "MB1",
+                    "Switch serial": "SW1",
+                    "Part number": "OSX-150-1A-002-09-FA-00B-2H",
+                    "Tested by": "AT",
+                },
+            )
+            window.hardware_full_pass = True
+            window.hardware_configured_channel_count = 2
+            window.current_run_workflow = window._new_workflow("hardware_run")
+            window._record_support = MagicMock()
+
+            with patch("ilm_app.QMessageBox.question", return_value=QMessageBox.No), patch(
+                "ilm_app.QTimer.singleShot",
+                side_effect=lambda delay, callback: callback(),
+            ) as single_shot:
+                window.hardware_completed()
+
+            single_shot.assert_called_once()
+            events = [call.args[1] for call in window._record_support.call_args_list]
+            self.assertIn("replacement.post_run_prompt_offered", events)
+            self.assertIn("replacement.post_run_prompt_declined", events)
+            self.assertEqual(
+                events.count("replacement.post_run_prompt_offered"), 1
+            )
+            window._schedule_post_run_replacement_offer()
+            self.assertEqual(
+                events.count("replacement.post_run_prompt_offered"), 1
+            )
+        finally:
+            window.close()
+
+    def test_incomplete_or_non_full_run_does_not_offer_recommendations(self):
+        window = MainWindow()
+        try:
+            window.run_data = RunData(
+                Path("saved.csv"),
+                [MeasurementRecord(1, 0.9, 0.8)],
+                {"Part number": "OSX-150-1A-001-09-FA-00B-2H"},
+            )
+            window.run_data.metadata["Part number"] = (
+                "OSX-150-1A-001-09-FA-00B-2H"
+            )
+            window.hardware_configured_channel_count = 2
+            window.current_run_workflow = window._new_workflow("hardware_run")
+            window._record_support = MagicMock()
+
+            window.hardware_full_pass = False
+            window._schedule_post_run_replacement_offer()
+            window.hardware_full_pass = True
+            window.hardware_retest = True
+            window._schedule_post_run_replacement_offer()
+
+            self.assertFalse(window._record_support.called)
+        finally:
+            window.close()
+
+    def test_completed_full_pass_yes_opens_existing_replacement_analysis(self):
+        window = MainWindow()
+        try:
+            window.run_data = RunData(
+                Path("saved.csv"),
+                [MeasurementRecord(1, 0.9, 0.8)],
+                {"Part number": "OSX-150-1A-001-09-FA-00B-2H"},
+            )
+            window.hardware_full_pass = True
+            window.hardware_configured_channel_count = 1
+            window._record_support = MagicMock()
+
+            with patch(
+                "ilm_app.QMessageBox.question", return_value=QMessageBox.Yes
+            ), patch(
+                "ilm_app.QTimer.singleShot",
+                side_effect=lambda delay, callback: callback(),
+            ), patch.object(window, "show_replacement_analysis") as analysis:
+                window.hardware_completed()
+
+            analysis.assert_called_once_with(launch_source="post_run_prompt")
+        finally:
+            window.close()
+
+    def test_replacement_analysis_logs_summary_recommendation_and_spare(self):
+        window = MainWindow()
+        try:
+            window.run_data = RunData(
+                Path("saved.csv"),
+                [MeasurementRecord(1, 2.4, 1.0, physical_port=1)],
+                {
+                    "Run number": "3",
+                    "Main board serial": "MB1",
+                    "Switch serial": "SW1",
+                    "Tested by": "AT",
+                },
+            )
+            window.current_run_workflow = window._new_workflow("hardware_run")
+            window._record_support = MagicMock()
+            result = {
+                "status": "Recommendations calculated.",
+                "designed_channel_count": 1,
+                "extra_ports": [41],
+                "warning_limit_db": 2.25,
+                "recommendations": [
+                    {
+                        "logical_channel": 1,
+                        "category": "required",
+                        "current_physical_port": 1,
+                        "current_loss_1310_db": 2.4,
+                        "current_loss_1550_db": 1.0,
+                        "current_worst_loss_db": 2.4,
+                        "candidate_physical_port": 41,
+                        "candidate_loss_1310_db": 1.0,
+                        "candidate_loss_1550_db": 1.0,
+                        "candidate_worst_loss_db": 1.0,
+                        "improvement_db": 1.4,
+                    }
+                ],
+                "bottom_spares": [
+                    {
+                        "physical_port": 1,
+                        "worst_loss_db": 2.4,
+                        "within_optimization_limit": False,
+                        "too_good": False,
+                    }
+                ],
+            }
+
+            window._record_replacement_analysis_result(result, "manual_button")
+
+            events = [call.args[1] for call in window._record_support.call_args_list]
+            self.assertIn("replacement.analysis_completed", events)
+            self.assertIn("replacement.recommendation_generated", events)
+            self.assertIn("replacement.designated_spare_recommended", events)
+            recommendation_call = next(
+                call
+                for call in window._record_support.call_args_list
+                if call.args[1] == "replacement.recommendation_generated"
+            )
+            self.assertEqual(
+                recommendation_call.kwargs["launch_source"], "manual_button"
+            )
+            self.assertEqual(
+                recommendation_call.kwargs["candidate_physical_port"], 41
+            )
         finally:
             window.close()
 

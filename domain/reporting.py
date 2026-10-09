@@ -20,6 +20,7 @@ class RunSummary:
     total_duration_seconds: float
     start_time: str
     stop_time: str
+    limits_evaluated: bool = True
 
 
 @dataclass(frozen=True)
@@ -58,9 +59,18 @@ def summarize_run(
         run_number = None
 
     accepted_measurements = list(measurements)
-    over_limit_count = sum(
-        record.loss_1310 > warning_limit or record.loss_1550 > warning_limit
-        for record in accepted_measurements
+    wavelength_mode = str(metadata.get("Wavelength mode") or "SM").upper()
+    # Both operator-selected wavelength modes now have independent criteria.
+    # Historical compatibility classifications remain readable but are not
+    # rewritten during summary generation.
+    limits_evaluated = wavelength_mode in {"SM", "MM"}
+    over_limit_count = (
+        sum(
+            any(loss > warning_limit for loss in record.ordered_losses)
+            for record in accepted_measurements
+        )
+        if limits_evaluated
+        else 0
     )
     try:
         configured_limit = float(warning_limit)
@@ -79,6 +89,7 @@ def summarize_run(
         ),
         start_time=str(metadata.get("Switch test start time") or "").strip(),
         stop_time=str(metadata.get("Switch test stop time") or "").strip(),
+        limits_evaluated=limits_evaluated,
     )
 
 
@@ -105,6 +116,7 @@ def aggregate_run_summaries(
     operator_summaries = []
     for operator in sorted(grouped, key=str.casefold):
         operator_runs = grouped[operator]
+        evaluated_runs = [run for run in operator_runs if run.limits_evaluated]
         operator_durations = [
             summary.total_duration_seconds
             for summary in operator_runs
@@ -129,9 +141,11 @@ def aggregate_run_summaries(
                 average_over_limit_channel_count=(
                     sum(
                         summary.over_limit_channel_count
-                        for summary in operator_runs
+                        for summary in evaluated_runs
                     )
-                    / len(operator_runs)
+                    / len(evaluated_runs)
+                    if evaluated_runs
+                    else 0.0
                 ),
             )
         )
@@ -145,9 +159,13 @@ def aggregate_run_summaries(
             else None
         ),
         average_over_limit_channel_count=(
-            sum(summary.over_limit_channel_count for summary in selected_summaries)
-            / len(selected_summaries)
-            if selected_summaries
+            sum(
+                summary.over_limit_channel_count
+                for summary in selected_summaries
+                if summary.limits_evaluated
+            )
+            / sum(summary.limits_evaluated for summary in selected_summaries)
+            if any(summary.limits_evaluated for summary in selected_summaries)
             else 0.0
         ),
         operator_summaries=tuple(operator_summaries),

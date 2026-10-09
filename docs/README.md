@@ -55,6 +55,17 @@ The current release version is maintained in `config/app_info.py`; do not
 duplicate it in this index. The current desktop entry point is `ilm_app.py`,
 while `ILMReadLoss.py` remains a supported legacy console workflow.
 
+SM/MM wavelength behavior is defined in `domain/wavelengths.py` and documented
+in `HARDWARE_ARCHITECTURE.md` and `DATA_ARCHITECTURE.md`. The operator selects
+the mode; the application does not infer it from hardware identity or cache.
+SM and MM use independent model/mode limit profiles. Historical compatibility
+classifications remain readable, but new MM runs use the selected MM mode.
+
+Production references are session-only and are shown in the Current readings
+panel. Separate SM and MM references may coexist for one connected measurement
+configuration. Loading historical runs does not overwrite them; a confirmed
+ILM/power-meter disconnect clears them and requires a new reference.
+
 The non-recording `Tools > Power Measurement Diagnostics...` workflow follows
 the hardware and lifecycle boundaries described here while displaying
 absolute power and exact insertion-loss math. Its manual and monitoring
@@ -71,7 +82,8 @@ unsupported or actual-wavelength mismatch blocks the diagnostic sample. Raw
 index/count convention differences are retained as trace warnings.
 
 Final COC output is prepared from persisted run data rather than the visible
-table. The operator selects a front-panel count, a base run, and optionally one
+table. The application derives the front-panel count from the selected base
+run's part number; the operator selects a base run and optionally one
 compatible replacement/retest run. Export is blocked for missing, invalid, or
 formally failing values; the generated workbook uses the appropriate bundled
 45- or 48-channel OSX-150 template and removes rows beyond the selected count.

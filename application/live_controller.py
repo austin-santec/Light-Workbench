@@ -36,7 +36,7 @@ class LiveILReadingController(QObject):
         self.state = state
         self.state_changed.emit(state)
 
-    def start(self, meter_factory: Callable[[], PowerMeter]) -> None:
+    def start(self, meter_factory: Callable[[], PowerMeter], measurement_configuration=None) -> None:
         """Create the meter worker and begin connection asynchronously."""
         if self.thread is not None or self.worker is not None:
             raise RuntimeError("Live IL reading is already active.")
@@ -49,7 +49,14 @@ class LiveILReadingController(QObject):
         self._set_state(RunState.STARTING)
         try:
             meter = meter_factory()
-            worker = self.worker_factory(meter)
+            worker = (
+                self.worker_factory(
+                    meter,
+                    measurement_configuration_value=measurement_configuration,
+                )
+                if measurement_configuration is not None
+                else self.worker_factory(meter)
+            )
             thread = QThread(self)
             worker.moveToThread(thread)
             self.worker = worker

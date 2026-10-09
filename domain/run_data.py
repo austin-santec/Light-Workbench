@@ -45,22 +45,37 @@ class RunData:
         return self.measurement_attempts
 
     @property
+    def wavelength_mode(self) -> str:
+        """Return the persisted run mode, defaulting legacy files to SM."""
+        if self.measurements:
+            return self.measurements[0].wavelength_mode
+        return str(self.metadata.get("Wavelength mode") or "SM").upper()
+
+    @property
+    def opm_wavelengths_nm(self) -> tuple[int, int]:
+        if self.measurements:
+            return self.measurements[0].opm_wavelengths_nm
+        return (850, 1300) if self.wavelength_mode == "MM" else (1310, 1550)
+
+    @property
     def attempts_compatibility(self) -> list[dict]:
         """Return the former dictionary representation for older callers."""
         return [attempt.as_dict() for attempt in self.measurement_attempts]
 
     def analysis_with_profile(self, profile) -> dict:
         """Return model-specific quality counts for the active criteria."""
+        self._require_approved_limit_mode()
         assessments = [
-            (record, profile.classify(record.loss_1310, record.loss_1550))
+            (record, profile.classify(*record.ordered_losses, record.opm_wavelengths_nm))
             for record in self.measurements
         ]
+        first_wavelength, second_wavelength = self.opm_wavelengths_nm
         failed = [record for record, assessment in assessments if assessment.is_fail]
-        fail_1310 = [record.channel for record, assessment in assessments if 1310 in assessment.fail_wavelengths]
-        fail_1550 = [record.channel for record, assessment in assessments if 1550 in assessment.fail_wavelengths]
+        fail_1310 = [record.channel for record, assessment in assessments if first_wavelength in assessment.fail_wavelengths]
+        fail_1550 = [record.channel for record, assessment in assessments if second_wavelength in assessment.fail_wavelengths]
         fail_both = [
             record.channel for record, assessment in assessments
-            if 1310 in assessment.fail_wavelengths and 1550 in assessment.fail_wavelengths
+            if first_wavelength in assessment.fail_wavelengths and second_wavelength in assessment.fail_wavelengths
         ]
         return {
             "limit": profile.fail_above_db,
@@ -87,26 +102,27 @@ class RunData:
         return [
             record
             for record in self.measurements
-            if record.loss_1310 > limit or record.loss_1550 > limit
+            if any(value > limit for value in record.ordered_losses)
         ]
 
     def analysis(self, limit: float) -> dict[str, int | float | list[int]]:
         """Return summary counts and channel values for a selected limit."""
         over_limit = self.over_limit(limit)
+        first_wavelength, second_wavelength = self.opm_wavelengths_nm
         over_1310_channels = [
             record.channel
             for record in self.measurements
-            if record.loss_1310 > limit
+            if record.loss_for(first_wavelength) > limit
         ]
         over_1550_channels = [
             record.channel
             for record in self.measurements
-            if record.loss_1550 > limit
+            if record.loss_for(second_wavelength) > limit
         ]
         over_both_channels = [
             record.channel
             for record in self.measurements
-            if record.loss_1310 > limit and record.loss_1550 > limit
+            if record.loss_for(first_wavelength) > limit and record.loss_for(second_wavelength) > limit
         ]
         return {
             "limit": limit,
@@ -119,6 +135,10 @@ class RunData:
             "over_both": len(over_both_channels),
             "over_both_channels": over_both_channels,
         }
+
+    def _require_approved_limit_mode(self) -> None:
+        """Compatibility hook retained for callers of the old domain API."""
+        return None
 
 
 __all__ = ["RunData"]

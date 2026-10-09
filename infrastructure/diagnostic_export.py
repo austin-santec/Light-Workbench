@@ -4,7 +4,6 @@ import csv
 import json
 import os
 import tempfile
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -42,12 +41,18 @@ DIAGNOSTIC_TRACE_CSV_COLUMNS = (
     "Switch serial",
     "Switch raw identity",
     "Switch resource address",
+    "Wavelength mode",
+    "Measurement classification",
+    "Configured OPM wavelengths (nm)",
+    "Configured source wavelengths (nm)",
     "Measurement ID",
     "Event",
     "Method",
     "Channel",
     "Physical port",
     "Requested wavelength (nm)",
+    "Requested OPM wavelength (nm)",
+    "Nominal source wavelength (nm)",
     "Actual wavelength (nm)",
     "Wavelength index",
     "Wavelength count",
@@ -106,8 +111,29 @@ def available_diagnostic_export_path(path, include_hardware_trace=False):
         suffix_number += 1
 
 
+def _diagnostic_csv_columns(reading: DiagnosticReading) -> tuple[str, ...]:
+    first, second = reading.opm_wavelengths_nm
+    return (
+        "Reading",
+        "Time",
+        "Method",
+        "Channel",
+        "Physical port",
+        "%d measured (dBm)" % first,
+        "%d reference (dBm)" % first,
+        "%d IL (dB)" % first,
+        "%d measured (dBm)" % second,
+        "%d reference (dBm)" % second,
+        "%d IL (dB)" % second,
+        "Wavelength mode",
+        "Measurement classification",
+        "Source wavelengths (nm)",
+    )
+
+
 def _csv_row(reading: DiagnosticReading) -> dict[str, object]:
     """Return stable, human-readable export fields for one reading."""
+    first, second = reading.opm_wavelengths_nm
     return {
         "Reading": reading.reading_number,
         "Time": reading.timestamp,
@@ -116,13 +142,59 @@ def _csv_row(reading: DiagnosticReading) -> dict[str, object]:
         "Physical port": (
             reading.physical_port if reading.physical_port is not None else "-"
         ),
-        "1310 measured (dBm)": "%.4f" % reading.measured_1310,
-        "1310 reference (dBm)": "%.2f" % reading.reference_1310,
-        "1310 IL (dB)": "%.4f" % reading.insertion_loss_1310,
-        "1550 measured (dBm)": "%.4f" % reading.measured_1550,
-        "1550 reference (dBm)": "%.2f" % reading.reference_1550,
-        "1550 IL (dB)": "%.4f" % reading.insertion_loss_1550,
+        "%d measured (dBm)" % first: "%.4f" % reading.measured_1310,
+        "%d reference (dBm)" % first: "%.2f" % reading.reference_1310,
+        "%d IL (dB)" % first: "%.4f" % reading.insertion_loss_1310,
+        "%d measured (dBm)" % second: "%.4f" % reading.measured_1550,
+        "%d reference (dBm)" % second: "%.2f" % reading.reference_1550,
+        "%d IL (dB)" % second: "%.4f" % reading.insertion_loss_1550,
+        "Wavelength mode": reading.wavelength_mode,
+        "Measurement classification": reading.measurement_classification,
+        "Source wavelengths (nm)": ",".join(
+            str(value) for value in reading.source_wavelengths_nm
+        ),
     }
+
+
+def _json_reading(reading: DiagnosticReading) -> dict[str, object]:
+    """Return a wavelength-safe diagnostic DTO with SM legacy aliases."""
+    first, second = reading.opm_wavelengths_nm
+    payload = {
+        "reading_number": reading.reading_number,
+        "timestamp": reading.timestamp,
+        "method": reading.method,
+        "channel": reading.channel,
+        "physical_port": reading.physical_port,
+        "wavelength_mode": reading.wavelength_mode,
+        "measurement_classification": reading.measurement_classification,
+        "opm_wavelengths_nm": list(reading.opm_wavelengths_nm),
+        "source_wavelengths_nm": list(reading.source_wavelengths_nm),
+        "source_ids": list(reading.source_ids),
+        "measured_by_wavelength": {
+            str(first): reading.measured_1310,
+            str(second): reading.measured_1550,
+        },
+        "references_by_wavelength": {
+            str(first): reading.reference_1310,
+            str(second): reading.reference_1550,
+        },
+        "losses_by_wavelength": {
+            str(first): reading.insertion_loss_1310,
+            str(second): reading.insertion_loss_1550,
+        },
+    }
+    if reading.wavelength_mode == "SM":
+        payload.update(
+            {
+                "measured_1310": reading.measured_1310,
+                "reference_1310": reading.reference_1310,
+                "insertion_loss_1310": reading.insertion_loss_1310,
+                "measured_1550": reading.measured_1550,
+                "reference_1550": reading.reference_1550,
+                "insertion_loss_1550": reading.insertion_loss_1550,
+            }
+        )
+    return payload
 
 
 def _trace_csv_row(
@@ -145,6 +217,16 @@ def _trace_csv_row(
         "Switch serial": metadata.get("switch_serial", ""),
         "Switch raw identity": metadata.get("switch_raw_identity", ""),
         "Switch resource address": metadata.get("switch_resource_address", ""),
+        "Wavelength mode": metadata.get("wavelength_mode", ""),
+        "Measurement classification": metadata.get(
+            "measurement_classification", ""
+        ),
+        "Configured OPM wavelengths (nm)": ",".join(
+            str(value) for value in metadata.get("opm_wavelengths_nm", ())
+        ),
+        "Configured source wavelengths (nm)": ",".join(
+            str(value) for value in metadata.get("source_wavelengths_nm", ())
+        ),
         "Measurement ID": (
             event.measurement_id if event.measurement_id is not None else ""
         ),
@@ -157,6 +239,16 @@ def _trace_csv_row(
         "Requested wavelength (nm)": (
             event.requested_wavelength_nm
             if event.requested_wavelength_nm is not None
+            else ""
+        ),
+        "Requested OPM wavelength (nm)": (
+            event.requested_opm_wavelength_nm
+            if event.requested_opm_wavelength_nm is not None
+            else ""
+        ),
+        "Nominal source wavelength (nm)": (
+            event.nominal_source_wavelength_nm
+            if event.nominal_source_wavelength_nm is not None
             else ""
         ),
         "Actual wavelength (nm)": (
@@ -234,6 +326,7 @@ def export_diagnostic_history(
     destination = Path(path)
     extension = destination.suffix.lower()
     rows = [_csv_row(reading) for reading in readings]
+    csv_columns = _diagnostic_csv_columns(readings[0])
     trace_metadata = dict(trace_metadata or {})
     trace_events = tuple(trace_events)
 
@@ -244,7 +337,7 @@ def export_diagnostic_history(
             ) as stream:
                 writer = csv.DictWriter(
                     stream,
-                    fieldnames=DIAGNOSTIC_CSV_COLUMNS,
+                    fieldnames=csv_columns,
                     lineterminator="\n",
                 )
                 writer.writeheader()
@@ -280,7 +373,15 @@ def export_diagnostic_history(
             "format": "Light Workbench Power Measurement Diagnostics",
             "schema_version": 1,
             "exported_at": datetime.now().isoformat(timespec="seconds"),
-            "readings": [asdict(reading) for reading in readings],
+            "wavelength_configuration": {
+                "wavelength_mode": readings[0].wavelength_mode,
+                "opm_wavelengths_nm": list(readings[0].opm_wavelengths_nm),
+                "source_wavelengths_nm": list(readings[0].source_wavelengths_nm),
+                "measurement_classification": (
+                    readings[0].measurement_classification
+                ),
+            },
+            "readings": [_json_reading(reading) for reading in readings],
         }
         if include_hardware_trace:
             payload["hardware_trace"] = {

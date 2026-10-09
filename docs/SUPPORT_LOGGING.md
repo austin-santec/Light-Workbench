@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-Light Workbench 1.22.0 includes always-on, local engineering support logs. Their
+Light Workbench 1.27.0 includes always-on, local engineering support logs. Their
 purpose is to help engineering reconstruct operator workflows, hardware
 communication, two-wavelength measurements, insertion-loss calculations,
 connection ownership, persistence, exports, and failures.
@@ -112,6 +112,11 @@ Depending on the event, logs may contain:
   counts, export results, and sanitized destinations.
 - Warning bypasses such as continuing without metadata or with both references
   at zero.
+- Post-run replacement-analysis offers record whether the operator accepted or
+  declined. Analysis events record whether the analysis was manual or launched
+  from the post-run offer, its summary counts, each advisory recommendation,
+  and each designated-spare recommendation. These events do not make the
+  recommendation authoritative and do not replace the unit replacement audit.
 
 The OP815 trace uses independent subscribers. The global logger remains
 subscribed while Power Diagnostics temporarily records the same events in

@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
-from domain.limit_profiles import LimitProfile, default_limit_profiles
+from domain.limit_profiles import LimitProfile, default_limit_profiles, profile_key
 
 
 class AdminPasswordDialog(QDialog):
@@ -54,8 +54,13 @@ class AdminConfigDialog(QDialog):
         form = QFormLayout()
         self.model_combo = QComboBox()
         self.model_combo.addItems(["OSX-100", "OSX-150"])
-        self.model_combo.currentTextChanged.connect(self._load_selected)
+        self.model_combo.currentTextChanged.connect(self._load_current_profile)
         form.addRow("Switch model:", self.model_combo)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("SM (1310/1550)", "SM")
+        self.mode_combo.addItem("MM (850/1300)", "MM")
+        self.mode_combo.currentIndexChanged.connect(self._load_current_profile)
+        form.addRow("Wavelength mode:", self.mode_combo)
         self.profile_name_edit = QLineEdit()
         self.profile_name_edit.textChanged.connect(self._mark_dirty)
         form.addRow("Profile name:", self.profile_name_edit)
@@ -90,7 +95,7 @@ class AdminConfigDialog(QDialog):
         dialog_buttons.rejected.connect(self.reject)
         dialog_buttons.accepted.connect(self.accept)
         layout.addWidget(dialog_buttons)
-        self._load_selected("OSX-100")
+        self._load_current_profile()
 
     @staticmethod
     def _spin():
@@ -101,15 +106,18 @@ class AdminConfigDialog(QDialog):
         spin.setSuffix(" dB")
         return spin
 
-    def _load_selected(self, model):
+    def _selected_key(self):
+        return profile_key(self.model_combo.currentText(), self.mode_combo.currentData())
+
+    def _load_current_profile(self, *_args):
         self._loading = True
-        profile = self.profiles[model]
+        profile = self.profiles[self._selected_key()]
         self.profile_name_edit.setText(profile.profile_name)
         self.revision_edit.setText(profile.revision)
         self.too_good_spin.setValue(profile.too_good_below_db)
         self.warning_spin.setValue(profile.warning_above_db or 0.0)
         self.fail_spin.setValue(profile.fail_above_db)
-        is_150 = model == "OSX-150"
+        is_150 = self.model_combo.currentText() == "OSX-150"
         self.warning_spin.setEnabled(is_150)
         self.warning_note.setVisible(not is_150)
         self._loading = False
@@ -136,16 +144,18 @@ class AdminConfigDialog(QDialog):
 
     def _profile_from_form(self):
         model = self.model_combo.currentText()
+        mode = self.mode_combo.currentData()
         return LimitProfile(
             model, self.profile_name_edit.text().strip(), self.revision_edit.text().strip(),
             self.too_good_spin.value(), model == "OSX-150",
             self.warning_spin.value() if model == "OSX-150" else None,
             self.fail_spin.value(),
+            mode,
         ).validate()
 
     def _save_selected(self):
         try:
-            self.profiles[self.model_combo.currentText()] = self._profile_from_form()
+            self.profiles[self._selected_key()] = self._profile_from_form()
             self.repository.save_profiles(self.profiles)
         except (OSError, ValueError, TypeError) as error:
             QMessageBox.warning(self, "Could not save admin config", str(error))
@@ -160,11 +170,11 @@ class AdminConfigDialog(QDialog):
         except (OSError, ValueError, TypeError) as error:
             QMessageBox.warning(self, "Could not reload admin config", str(error))
             return
-        self._load_selected(self.model_combo.currentText())
+        self._load_current_profile()
 
     def _restore_defaults(self):
         self.profiles = default_limit_profiles()
-        self._load_selected(self.model_combo.currentText())
+        self._load_current_profile()
         self._dirty = True
 
 

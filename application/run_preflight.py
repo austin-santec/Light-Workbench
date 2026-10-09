@@ -91,7 +91,9 @@ def _reference_issues(
     reference_state: str,
     reference_method: str,
     reference_hardware_matches: bool,
+    wavelengths: tuple[int, int] = (1310, 1550),
 ):
+    wavelength_text = "%d nm and %d nm" % tuple(wavelengths)
     if not reference_valid:
         if reference_state == "invalidated":
             return [
@@ -99,7 +101,8 @@ def _reference_issues(
                     "reference_invalidated",
                     RunPreflightIssueCategory.REFERENCE,
                     "Reference",
-                    "Recalculate the 1310 nm and 1550 nm reference; the current reference was invalidated.",
+                    "Recalculate the %s reference; the current reference was invalidated."
+                    % wavelength_text,
                     "reference_1310",
                 )
             ]
@@ -108,7 +111,8 @@ def _reference_issues(
                 "reference_not_calculated",
                 RunPreflightIssueCategory.REFERENCE,
                 "Reference",
-                "Calculate the 1310 nm and 1550 nm reference before starting the run.",
+                "Calculate the %s reference before starting the run."
+                % wavelength_text,
                 "reference_1310",
             )
         ]
@@ -154,6 +158,7 @@ def validate_run_preflight(
     reference_state: str = "",
     reference_method: str = "",
     reference_hardware_matches: bool = True,
+    wavelengths: tuple[int, int] = (1310, 1550),
 ) -> RunPreflightResult:
     """Validate every non-side-effecting condition for a production start."""
     issues = []
@@ -247,6 +252,7 @@ def validate_run_preflight(
             reference_state=reference_state,
             reference_method=reference_method,
             reference_hardware_matches=reference_hardware_matches,
+            wavelengths=wavelengths,
         )
     )
 

@@ -7,6 +7,7 @@ from application.hardware_planning import HardwareRunPlan, build_hardware_run_pl
 from application.run_controller import HardwareRunRequest
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from hardware.interfaces import OpticalSwitch, PowerMeter
+from domain.wavelengths import MeasurementConfiguration
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ def build_hardware_run_request(
     support_logger=None,
     workflow_id: str = "",
     reference_snapshot: Mapping[str, object] | None = None,
+    measurement_configuration: MeasurementConfiguration | None = None,
 ) -> HardwareRunRequest:
     """Create a controller request for already-created hardware adapters."""
     return HardwareRunRequest(
@@ -88,6 +90,7 @@ def build_hardware_run_request(
         support_logger=support_logger,
         workflow_id=workflow_id,
         reference_snapshot=dict(reference_snapshot) if reference_snapshot else None,
+        measurement_configuration=measurement_configuration,
     )
 
 

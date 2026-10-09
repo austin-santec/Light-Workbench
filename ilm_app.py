@@ -1,6 +1,7 @@
 """PyQt5 desktop viewer for insertion-loss run data."""
 
 import sys
+import traceback
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +50,8 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QPlainTextEdit,
     QProgressDialog,
+    QRadioButton,
+    QButtonGroup,
     QScrollArea,
 )
 
@@ -85,6 +88,18 @@ from domain.measurement import (
     validate_reference_measurements,
 )
 from domain.reference import ReferenceMethod, new_reference_snapshot
+from domain.wavelengths import (
+    MM_WAVELENGTH_PROFILE,
+    SM_SOURCE_PROFILE,
+    SM_WAVELENGTH_PROFILE,
+    MeasurementClassification,
+    SourceCapabilityProfile,
+    configuration_from_metadata,
+    measurement_configuration,
+    profile_from_metadata,
+    source_profile_for_mode,
+    wavelength_profile,
+)
 from domain.hardware_connection import (
     HardwareBusyError,
     HardwareCapability,
@@ -96,6 +111,7 @@ from domain.limit_profiles import (
     default_limit_profiles,
     legacy_limit_profile,
     normalize_switch_model,
+    profile_key,
 )
 from domain.comparison import comparison_values, index_measurements
 from domain.measurement_attempts import (
@@ -104,7 +120,7 @@ from domain.measurement_attempts import (
     normalise_attempts,
 )
 from domain.raw_export import format_raw_measurements
-from domain.coc_preparation import infer_front_panel_channel_count
+from domain.part_numbers import parse_osx_part_number
 from domain.timing import SwitchTestTimer
 from hardware.factory import HardwareFactory
 from infrastructure.coc_exporter import (
@@ -763,12 +779,13 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.support_logger = support_logger or get_support_logging_service()
         self.current_run_workflow = None
+        self._post_run_recommendation_prompt_workflow_id = None
+        self._post_run_recommendation_prompted = False
         self.reference_workflow = None
         self._support_log_size_warning_shown = False
         self.run_data: RunData | None = None
         self.admin_session = AdminSession()
         self.reference_session = ReferenceSession()
-        self._last_applied_reference_snapshot = None
         self.active_run_reference_snapshot = None
         self.pending_reading_validation = None
         self._syncing_reference_widgets = False
@@ -779,7 +796,16 @@ class MainWindow(QMainWindow):
             self.limit_profiles = self.limit_profile_repository.load_profiles()
         except (OSError, ValueError, TypeError) as error:
             self.limit_profile_error = str(error)
-        self.active_limit_profile = self.limit_profiles["OSX-150"]
+        self.active_limit_profile = self.limit_profiles[profile_key("OSX-150", "SM")]
+        self._wavelength_mode_selection_method = "application_default_sm"
+        self.ilm_source_profile = source_profile_for_mode(
+            "SM", origin=self._wavelength_mode_selection_method
+        )
+        self.measurement_configuration = measurement_configuration(
+            "SM",
+            self.ilm_source_profile,
+            mode_selection_method=self._wavelength_mode_selection_method,
+        )
         # Keep adapter selection in one composition point. Passing the module
         # aliases preserves the existing test seam while allowing future
         # workstation-specific hardware configurations.
@@ -997,11 +1023,38 @@ class MainWindow(QMainWindow):
 
     def _hardware_device_status_changed(self, device_info):
         """Render transient device identity reported by the run controller."""
+        category = device_info.category
+        previous_state = self._device_connection_states.get(
+            category,
+            ConnectionState.DISCONNECTED,
+        )
+        # The switch metadata handler owns its transition bookkeeping because
+        # it also uses that transition to start the automatic part lookup.
+        if category != DeviceCategory.OPTICAL_SWITCH:
+            self._device_connection_states[category] = device_info.state
+        required_measurement_categories = {
+            DeviceCategory.POWER_METER,
+        }
+        if self.hardware_connection_manager.has_separate_laser:
+            required_measurement_categories.add(DeviceCategory.LASER_SOURCE)
+        if (
+            category in required_measurement_categories
+            and device_info.state == ConnectionState.DISCONNECTED
+            and previous_state in {ConnectionState.CONNECTED, ConnectionState.IN_USE}
+        ):
+            self.invalidate_reference(
+                "Reference invalidated because measurement hardware was disconnected.",
+                clear_all=True,
+            )
         if hasattr(self, "hardware_status_panel"):
             self.hardware_status_panel.set_device_status(device_info)
         if device_info.connection_warning:
             self.statusBar().showMessage(device_info.connection_warning, 8000)
         self._handle_connected_switch_metadata(device_info)
+
+    def _handle_connected_measurement_capability(self, device_info):
+        """Retained as a compatibility seam; hardware identity is not mode detection."""
+        return None
 
     def _handle_connected_switch_metadata(self, device_info):
         """Autofill setup metadata once for each real switch connection."""
@@ -1209,11 +1262,12 @@ class MainWindow(QMainWindow):
 
     def _hardware_connection_snapshot_changed(self, _snapshot):
         """Apply capability readiness to only hardware-dependent controls."""
-        if self.reference_session.is_valid and not self._reference_hardware_matches_snapshot():
-            self.invalidate_reference("The measurement hardware connection changed; recalculate the reference.")
+        self._sync_reference_context()
         if self.run_data is None:
             model = self._connected_switch_model()
-            profile = self.limit_profiles.get(model)
+            profile = self.limit_profiles.get(
+                profile_key(model, self.measurement_configuration.wavelength_profile.code)
+            )
             if profile is not None and hasattr(self, "criteria_profile_label"):
                 self._set_active_limit_profile(profile)
         self._update_hardware_readiness_controls()
@@ -1471,6 +1525,25 @@ class MainWindow(QMainWindow):
         header.addWidget(self.logo_label)
         header.addLayout(titles)
         header.addStretch()
+        wavelength_mode_widget = QWidget()
+        wavelength_mode_widget.setObjectName("wavelength_mode_header")
+        wavelength_mode_layout = QVBoxLayout(wavelength_mode_widget)
+        wavelength_mode_layout.setContentsMargins(0, 0, 0, 0)
+        wavelength_mode_layout.setSpacing(1)
+        wavelength_mode_title = QLabel("Wavelength mode")
+        wavelength_mode_title.setObjectName("wavelength_mode_title")
+        wavelength_mode_layout.addWidget(wavelength_mode_title)
+        self.sm_mode_radio = QRadioButton("SM (1310/1550)")
+        self.mm_mode_radio = QRadioButton("MM (850/1300)")
+        self.wavelength_mode_group = QButtonGroup(self)
+        self.wavelength_mode_group.addButton(self.sm_mode_radio)
+        self.wavelength_mode_group.addButton(self.mm_mode_radio)
+        self.sm_mode_radio.setChecked(True)
+        wavelength_mode_layout.addWidget(self.sm_mode_radio)
+        wavelength_mode_layout.addWidget(self.mm_mode_radio)
+        self.sm_mode_radio.toggled.connect(self._wavelength_mode_changed)
+        self.mm_mode_radio.toggled.connect(self._wavelength_mode_changed)
+        header.addWidget(wavelength_mode_widget)
         self.hardware_status_panel = HardwareStatusPanel(central)
         self.hardware_status_panel.set_laser_visible(
             self.hardware_connection_manager.has_separate_laser
@@ -1610,28 +1683,26 @@ class MainWindow(QMainWindow):
         )
         hardware_setup_layout.addWidget(self.hardware_part_number, 3, 3)
 
-        hardware_setup_layout.addWidget(QLabel("1310 ref:"), 4, 0)
+        self.reference_first_label = QLabel("1310 ref:")
         self.reference_1310_spin = QDoubleSpinBox()
         self.reference_1310_spin.setRange(-100.0, 100.0)
         self.reference_1310_spin.setDecimals(2)
         self.reference_1310_spin.setSingleStep(0.01)
         self.reference_1310_spin.setValue(0.00)
         self.reference_1310_spin.setSuffix(" dBm")
-        hardware_setup_layout.addWidget(self.reference_1310_spin, 4, 1)
 
         hardware_setup_layout.addWidget(QLabel("Operating band:"), 4, 2)
         self.hardware_operating_band = QComboBox()
         self.hardware_operating_band.addItems(["O band", "C band"])
         self.hardware_operating_band.setCurrentText("O band")
         hardware_setup_layout.addWidget(self.hardware_operating_band, 4, 3)
-        hardware_setup_layout.addWidget(QLabel("1550 ref:"), 5, 0)
+        self.reference_second_label = QLabel("1550 ref:")
         self.reference_1550_spin = QDoubleSpinBox()
         self.reference_1550_spin.setRange(-100.0, 100.0)
         self.reference_1550_spin.setDecimals(2)
         self.reference_1550_spin.setSingleStep(0.01)
         self.reference_1550_spin.setValue(0.00)
         self.reference_1550_spin.setSuffix(" dBm")
-        hardware_setup_layout.addWidget(self.reference_1550_spin, 5, 1)
         self.reference_1310_spin.valueChanged.connect(self.emit_reference_values)
         self.reference_1550_spin.valueChanged.connect(self.emit_reference_values)
         self.reference_1310_spin.valueChanged.connect(self._reference_values_changed_by_admin)
@@ -1641,25 +1712,11 @@ class MainWindow(QMainWindow):
             "Connect to the ILM/OP815 and calculate both reference offsets."
         )
         self.calculate_reference_button.clicked.connect(self.calculate_reference)
-        hardware_setup_layout.addWidget(
-            self.calculate_reference_button,
-            5,
-            2,
-            1,
-            2,
-        )
         self.apply_manual_reference_button = QPushButton("Apply Manual Reference")
         self.apply_manual_reference_button.setToolTip(
             "Admin Mode only: authorize the displayed reference values for production runs."
         )
         self.apply_manual_reference_button.clicked.connect(self.apply_manual_reference)
-        hardware_setup_layout.addWidget(
-            self.apply_manual_reference_button,
-            6,
-            2,
-            1,
-            2,
-        )
         hardware_setup_layout.addWidget(QLabel("Tested by:"), 6, 0)
         self.hardware_tested_by = QLineEdit()
         self.hardware_tested_by.setPlaceholderText("Initials")
@@ -1670,7 +1727,6 @@ class MainWindow(QMainWindow):
         hardware_setup_layout.addWidget(self.hardware_tested_by, 6, 1)
         self.reference_status_label = QLabel("Reference status: Not referenced")
         self.reference_status_label.setWordWrap(True)
-        hardware_setup_layout.addWidget(self.reference_status_label, 8, 0, 1, 4)
         hardware_setup_layout.addWidget(QLabel("Run number:"), 7, 0)
         self.hardware_run_number = QSpinBox()
         self.hardware_run_number.setRange(1, 9999)
@@ -1685,8 +1741,27 @@ class MainWindow(QMainWindow):
         )
         self.load_run_button.clicked.connect(self.load_selected_unit_run)
         hardware_setup_layout.addWidget(self.load_run_button, 7, 2, 1, 2)
+        self.front_panel_channel_count_label = QLabel(
+            "Front-panel channels: Not available"
+        )
+        self.front_panel_channel_count_label.setToolTip(
+            "Derived from the three-digit channel field in the part number; "
+            "this value is not editable."
+        )
+        hardware_setup_layout.addWidget(
+            self.front_panel_channel_count_label,
+            8,
+            2,
+            1,
+            2,
+        )
+        self.hardware_part_number.currentTextChanged.connect(
+            self._refresh_front_panel_channel_count_label
+        )
         self._scale_hardware_setup_fonts(hardware_setup_box, 1.2)
         self._refresh_reference_controls()
+        self._refresh_wavelength_mode_ui()
+        self._refresh_front_panel_channel_count_label()
         self.update_channel_mode_controls(self.hardware_channel_mode.currentIndex())
         setup_row.addWidget(hardware_setup_box, 1)
 
@@ -1819,6 +1894,19 @@ class MainWindow(QMainWindow):
         readings_layout.addWidget(self.demo_1310_label)
         readings_layout.addWidget(self.demo_1550_label)
         readings_layout.addWidget(self.reading_status_label)
+        reference_box = QGroupBox("Reference")
+        self.reference_box = reference_box
+        reference_box.setObjectName("reference_panel")
+        reference_layout = QGridLayout(reference_box)
+        reference_layout.setContentsMargins(6, 6, 6, 6)
+        reference_layout.addWidget(self.reference_first_label, 0, 0)
+        reference_layout.addWidget(self.reference_1310_spin, 0, 1)
+        reference_layout.addWidget(self.reference_second_label, 1, 0)
+        reference_layout.addWidget(self.reference_1550_spin, 1, 1)
+        reference_layout.addWidget(self.calculate_reference_button, 2, 0, 1, 2)
+        reference_layout.addWidget(self.apply_manual_reference_button, 3, 0, 1, 2)
+        reference_layout.addWidget(self.reference_status_label, 4, 0, 1, 2)
+        readings_layout.addWidget(reference_box)
         setup_row.addWidget(readings_box)
         root.addLayout(setup_row)
 
@@ -1860,6 +1948,7 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self._refresh_wavelength_mode_ui()
         table_panel_layout.addWidget(self.table)
         content_splitter.addWidget(table_panel)
 
@@ -1891,6 +1980,7 @@ class MainWindow(QMainWindow):
         self.criteria_profile_label.hide()
         self.select_over_limit_button.hide()
         self.metric_labels = {}
+        self.metric_title_labels = {}
         for row, (key, display) in enumerate(
             (
                 ("total", "Total channels"),
@@ -1908,7 +1998,9 @@ class MainWindow(QMainWindow):
             label.setWordWrap(True)
             label.setMinimumWidth(0)
             self.metric_labels[key] = label
-            analysis_layout.addWidget(QLabel(display + ":"), row, 0)
+            title_label = QLabel(display + ":")
+            self.metric_title_labels[key] = title_label
+            analysis_layout.addWidget(title_label, row, 0)
             analysis_layout.addWidget(label, row, 1, 1, 2)
         info_layout.addWidget(analysis_box)
 
@@ -2023,7 +2115,7 @@ class MainWindow(QMainWindow):
         return "OSX-150"
 
     def _reference_hardware_identity(self):
-        """Return stable connected-meter identity used to invalidate references."""
+        """Return the stable identity used to key a session reference."""
         try:
             info = self.hardware_connection_manager.snapshot(
                 HardwareCapability.MEASUREMENT
@@ -2043,24 +2135,172 @@ class MainWindow(QMainWindow):
         except (AttributeError, KeyError, TypeError):
             return ()
 
-    def _reference_hardware_matches_snapshot(self):
-        snapshot = self.reference_session.snapshot
-        if snapshot is None:
-            return False
+    def _reference_context_key(self):
+        """Return the connected measurement configuration cache key."""
         try:
             measurement = self.hardware_connection_manager.snapshot(
                 HardwareCapability.MEASUREMENT
             )
             if not measurement.connected:
-                return False
+                return None
+            if self.hardware_connection_manager.has_separate_laser:
+                laser = self.hardware_connection_manager.snapshot(
+                    HardwareCapability.LASER_SOURCE
+                )
+                if not laser.connected:
+                    return None
         except (AttributeError, KeyError, TypeError):
-            return False
+            return None
         identity = self._reference_hardware_identity()
-        return bool(identity) and (
-            not snapshot.meter_model or snapshot.meter_model == identity[0]
-        ) and (
-            not snapshot.meter_serial or snapshot.meter_serial == identity[1]
+        if not identity:
+            return None
+        configuration = self.measurement_configuration
+        return (
+            *identity,
+            configuration.wavelength_profile.code,
+            tuple(configuration.opm_wavelengths_nm),
+            tuple(configuration.source_wavelengths_nm),
+            tuple(configuration.source_ids),
+            configuration.source_profile.profile_id,
         )
+
+    def _sync_reference_context(self):
+        """Select a cached reference without importing historical run data."""
+        previous_key = self.reference_session.active_key
+        previous_snapshot = self.reference_session.snapshot
+        context_key = self._reference_context_key()
+        if context_key is None:
+            self.reference_session.activate(
+                None,
+                "Connect measurement hardware before using a reference.",
+            )
+            if previous_snapshot is not None or previous_key is not None:
+                self._record_support(
+                    SupportEventCategory.MEASUREMENT,
+                    "reference.context_unavailable",
+                    reference_state=self.reference_session.state,
+                    reason=self.reference_session.reason,
+                    status="unavailable",
+                )
+            return
+        snapshot = self.reference_session.activate(
+            context_key,
+            "No reference has been calculated for this hardware and wavelength mode.",
+        )
+        if snapshot is not None:
+            self._apply_reference_snapshot_to_widgets(snapshot)
+            if previous_key != context_key or (
+                previous_snapshot is None
+                or previous_snapshot.snapshot_id != snapshot.snapshot_id
+            ):
+                self._record_support(
+                    SupportEventCategory.MEASUREMENT,
+                    "reference.context_activated",
+                    reference_snapshot_id=snapshot.snapshot_id,
+                    reference_method=snapshot.method,
+                    wavelength_mode=snapshot.wavelength_mode,
+                    status="active",
+                )
+        elif previous_key != context_key or previous_snapshot is not None:
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "reference.context_unavailable",
+                wavelength_mode=self.measurement_configuration.wavelength_profile.code,
+                reason=self.reference_session.reason,
+                status="unavailable",
+            )
+
+    def _reference_hardware_matches_snapshot(self):
+        snapshot = self.reference_session.snapshot
+        if snapshot is None:
+            return False
+        context_key = self._reference_context_key()
+        return bool(context_key) and context_key == self.reference_session.active_key
+
+    def _selected_wavelength_mode(self):
+        return "MM" if self.mm_mode_radio.isChecked() else "SM"
+
+    def _set_wavelength_mode(self, mode, *, invalidate=True):
+        profile = wavelength_profile(mode)
+        configuration = measurement_configuration(
+            profile.mode,
+            source_profile_for_mode(
+                profile.mode,
+                origin=self._wavelength_mode_selection_method,
+            ),
+            mode_selection_method=self._wavelength_mode_selection_method,
+        )
+        changed = (
+            configuration.wavelength_profile.code
+            != self.measurement_configuration.wavelength_profile.code
+        )
+        self.measurement_configuration = configuration
+        self.sm_mode_radio.blockSignals(True)
+        self.mm_mode_radio.blockSignals(True)
+        try:
+            self.sm_mode_radio.setChecked(profile.code == "SM")
+            self.mm_mode_radio.setChecked(profile.code == "MM")
+        finally:
+            self.sm_mode_radio.blockSignals(False)
+            self.mm_mode_radio.blockSignals(False)
+        self._refresh_wavelength_mode_ui()
+        if changed:
+            # Mode changes select a separate session reference, if available;
+            # they do not destroy the reference cached for the other mode.
+            self._sync_reference_context()
+            self.clear_current_reading(status="Wavelength mode changed")
+
+    def _wavelength_mode_changed(self, checked):
+        if not checked:
+            return
+        reference_active = (
+            self.reference_controller.thread is not None
+            or self.reference_controller.worker is not None
+        )
+        if self.hardware_run_active or reference_active:
+            prior = self.measurement_configuration.wavelength_profile.code
+            self._set_wavelength_mode(prior, invalidate=False)
+            QMessageBox.information(
+                self,
+                "Wavelength mode locked",
+                "Stop the active hardware operation before changing wavelength mode.",
+            )
+            return
+        self._wavelength_mode_selection_method = "operator_selected"
+        self._set_wavelength_mode(self._selected_wavelength_mode())
+
+    def _refresh_wavelength_mode_ui(self):
+        if not hasattr(self, "reference_first_label"):
+            return
+        profile = self.measurement_configuration.wavelength_profile
+        first, second = profile.opm_wavelengths_nm
+        self.reference_first_label.setText(profile.reference_label(0))
+        self.reference_second_label.setText(profile.reference_label(1))
+        if hasattr(self, "demo_1310_label"):
+            self.demo_1310_label.setText("%d nm: -" % first)
+            self.demo_1550_label.setText("%d nm: -" % second)
+        if hasattr(self, "reading_filter"):
+            self.reading_filter.setItemText(FILTER_1310_OVER_LIMIT, "%d nm over limit" % first)
+            self.reading_filter.setItemText(FILTER_1550_OVER_LIMIT, "%d nm over limit" % second)
+        if hasattr(self, "metric_title_labels"):
+            self.metric_title_labels["over_1310"].setText("%d nm failed:" % first)
+            self.metric_title_labels["over_1550"].setText("%d nm failed:" % second)
+        if hasattr(self, "hardware_status_panel"):
+            self.hardware_status_panel.set_test_mode(profile.short_label)
+        if self.run_data is None and hasattr(self, "criteria_profile_label"):
+            active = self.limit_profiles.get(
+                profile_key(self._connected_switch_model(), profile.code)
+            )
+            if active is not None:
+                self._set_active_limit_profile(active)
+        if self.run_data is not None:
+            self.refresh_table()
+
+    def _uses_approved_limit_profile(self):
+        """Return whether the active run has mode-aware limit criteria."""
+        if self.run_data is not None:
+            return self._profile_for_current_run() is not None
+        return self.active_limit_profile is not None
 
     def _refresh_reference_controls(self):
         """Lock production reference fields except for an authenticated admin."""
@@ -2119,10 +2359,10 @@ class MainWindow(QMainWindow):
             reference_1310,
             reference_1550,
             method=ReferenceMethod.CALCULATED,
+            measurement_configuration=self.measurement_configuration,
             **self._reference_snapshot_context(),
         )
-        self.reference_session.apply(snapshot)
-        self._last_applied_reference_snapshot = snapshot
+        self.reference_session.apply(snapshot, self._reference_context_key())
         self._apply_reference_snapshot_to_widgets(snapshot)
         self._record_support(
             SupportEventCategory.MEASUREMENT,
@@ -2133,6 +2373,13 @@ class MainWindow(QMainWindow):
             reference_established_at=snapshot.established_at,
             meter_model=snapshot.meter_model,
             meter_serial=snapshot.meter_serial,
+            wavelength_mode=snapshot.wavelength_mode,
+            opm_wavelengths_nm=list(snapshot.opm_wavelengths_nm),
+            source_wavelengths_nm=list(snapshot.source_wavelengths_nm),
+            measurement_classification=snapshot.measurement_classification,
+            references_by_wavelength=snapshot.as_dict().get(
+                "references_by_wavelength"
+            ),
             status="success",
         )
         self._update_hardware_readiness_controls()
@@ -2142,9 +2389,14 @@ class MainWindow(QMainWindow):
         self, measured_powers, reference_1310, reference_1550
     ):
         """Apply a diagnostic baseline only after validating its raw power."""
-        validation = validate_reference_measurements(measured_powers)
+        wavelengths = self.measurement_configuration.opm_wavelengths_nm
+        validation = validate_reference_measurements(
+            measured_powers, wavelengths=wavelengths
+        )
         if not validation.valid:
-            message = format_dark_reference_error(measured_powers)
+            message = format_dark_reference_error(
+                measured_powers, wavelengths=wavelengths
+            )
             self._record_support(
                 SupportEventCategory.WORKFLOW,
                 "reference.failed",
@@ -2174,10 +2426,10 @@ class MainWindow(QMainWindow):
             self.reference_1310_spin.value(),
             self.reference_1550_spin.value(),
             method=ReferenceMethod.MANUAL_ADMIN,
+            measurement_configuration=self.measurement_configuration,
             **self._reference_snapshot_context(),
         )
-        self.reference_session.apply(snapshot)
-        self._last_applied_reference_snapshot = snapshot
+        self.reference_session.apply(snapshot, self._reference_context_key())
         self._record_support(
             SupportEventCategory.OPERATOR,
             "reference.manual_admin_applied",
@@ -2186,36 +2438,50 @@ class MainWindow(QMainWindow):
             reference_method=snapshot.method,
             reference_state=self.reference_session.state,
             reference_established_at=snapshot.established_at,
-            reference_1310_dbm=snapshot.reference_1310_dbm,
-            reference_1550_dbm=snapshot.reference_1550_dbm,
+            wavelength_mode=snapshot.wavelength_mode,
+            opm_wavelengths_nm=list(snapshot.opm_wavelengths_nm),
+            source_wavelengths_nm=list(snapshot.source_wavelengths_nm),
+            measurement_classification=snapshot.measurement_classification,
+            references_by_wavelength=snapshot.as_dict().get(
+                "references_by_wavelength"
+            ),
             status="success",
         )
         self._update_hardware_readiness_controls()
         self.statusBar().showMessage("Admin manual reference applied.", 5000)
 
-    def invalidate_reference(self, reason):
-        """Invalidate production authorization without deleting historical audit data."""
-        self.reference_session.invalidate(reason)
+    def invalidate_reference(self, reason, *, clear_all=False):
+        """Invalidate session authorization without changing run history."""
+        self.reference_session.invalidate(reason, clear_all=clear_all)
         self._record_support(
             SupportEventCategory.MEASUREMENT,
             "reference.invalidated",
             reference_state=self.reference_session.state,
             reference_invalidation_reason=str(reason),
+            reference_session_cleared=bool(clear_all),
             status="invalidated",
         )
         if hasattr(self, "reference_status_label"):
             self._refresh_reference_controls()
 
     def _profile_for_current_run(self):
-        """Resolve the run snapshot or the current connected-model profile."""
+        """Resolve the run snapshot or the current model/mode profile."""
         if self.run_data is not None and self.run_data.criteria_snapshot:
             try:
                 return LimitProfile.from_mapping(self.run_data.criteria_snapshot)
             except (ValueError, TypeError, KeyError):
                 pass
         if self.run_data is not None:
-            # Unsnapshotted in-memory/legacy callers still use the historical
-            # editable-limit semantics until the run is saved with criteria.
+            model = normalize_switch_model(
+                self.run_data.criteria_snapshot.get("model", "")
+                if self.run_data.criteria_snapshot
+                else self._connected_switch_model()
+            )
+            mode = self.run_data.wavelength_mode
+            profile = self.limit_profiles.get(profile_key(model, mode))
+            if profile is not None:
+                return profile
+            # Unsnapshotted legacy callers still use the former warning limit.
             return legacy_limit_profile(self.limit_spin.value())
         return self.active_limit_profile
 
@@ -2248,9 +2514,6 @@ class MainWindow(QMainWindow):
     def toggle_admin_mode(self):
         """Enter or leave the session-only administrator mode."""
         if self.admin_session.is_active:
-            if self.reference_session.state == "invalidated" and self._last_applied_reference_snapshot:
-                self._apply_reference_snapshot_to_widgets(self._last_applied_reference_snapshot)
-                self.reference_session.apply(self._last_applied_reference_snapshot)
             self.admin_session.exit()
             self.admin_mode_action.setText("Admin Mode...")
             self.admin_mode_action.setChecked(False)
@@ -2349,19 +2612,21 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid admin config", str(error))
             return
         if self.run_data is None or not self.run_data.criteria_snapshot:
-            self._set_active_limit_profile(self.limit_profiles.get("OSX-150"))
+            self._set_active_limit_profile(
+                self.limit_profiles.get(
+                    profile_key(
+                        self._connected_switch_model(),
+                        self.measurement_configuration.wavelength_profile.code,
+                    )
+                )
+            )
         self.refresh_analysis()
         self._record_support(
             SupportEventCategory.OPERATOR,
             "admin.config_saved",
             admin_mode=True,
-            criteria_profile="OSX-100/OSX-150",
-            previous_too_good_db=previous_profiles["OSX-150"].too_good_below_db,
-            previous_warning_db=previous_profiles["OSX-150"].warning_above_db,
-            previous_fail_db=previous_profiles["OSX-150"].fail_above_db,
-            new_too_good_db=self.limit_profiles["OSX-150"].too_good_below_db,
-            new_warning_db=self.limit_profiles["OSX-150"].warning_above_db,
-            new_fail_db=self.limit_profiles["OSX-150"].fail_above_db,
+            criteria_profile="OSX-100/OSX-150 SM/MM",
+            profiles_updated=len(self.limit_profiles),
             status="success",
         )
         self.statusBar().showMessage("Admin criteria configuration reloaded.")
@@ -2591,6 +2856,7 @@ class MainWindow(QMainWindow):
             ),
             support_logger=self.support_logger,
             workflow_id=workflow.workflow_id if workflow else "",
+            measurement_configuration_value=self.measurement_configuration,
         )
         self.reference_values_changed.connect(dialog.set_reference_values)
         dialog.references_changed.connect(self.set_reference_values)
@@ -2748,6 +3014,7 @@ class MainWindow(QMainWindow):
             ),
             support_logger=self.support_logger,
             workflow_id=workflow.workflow_id if workflow else "",
+            measurement_configuration_value=self.measurement_configuration,
         )
         dialog.references_changed.connect(self.set_reference_values)
         dialog.calculated_references_applied.connect(
@@ -2799,7 +3066,7 @@ class MainWindow(QMainWindow):
                 "Connect the measurement hardware before calculating a reference.",
             )
             return
-        self.reference_session.begin_calculation()
+        self.reference_session.begin_calculation(self._reference_context_key())
         self._refresh_reference_controls()
         owner_token = object()
         self.reference_workflow = self._new_workflow("reference_calculation")
@@ -2838,7 +3105,10 @@ class MainWindow(QMainWindow):
         self.calculate_reference_button.setEnabled(False)
 
         try:
-            self.reference_controller.start(lambda meter=meter: meter)
+            self.reference_controller.start(
+                lambda meter=meter: meter,
+                self.measurement_configuration,
+            )
         except Exception as error:
             self._record_support(
                 SupportEventCategory.WORKFLOW,
@@ -2854,7 +3124,17 @@ class MainWindow(QMainWindow):
                 status="error",
             )
             self._close_reference_progress()
-            self.invalidate_reference("Reference calculation failed: %s" % error)
+            self.reference_session.calculation_failed(
+                "Reference calculation failed: %s" % error
+            )
+            if self.reference_session.is_valid:
+                self._record_support(
+                    SupportEventCategory.MEASUREMENT,
+                    "reference.previous_retained",
+                    reference_snapshot_id=self.reference_session.snapshot.snapshot_id,
+                    status="active",
+                )
+            self._refresh_reference_controls()
             self._update_hardware_readiness_controls()
             QMessageBox.critical(self, "Reference calculation", str(error))
 
@@ -2863,6 +3143,7 @@ class MainWindow(QMainWindow):
         self.reference_controller.calculate_reference()
 
     def _reference_calculation_ready(self, reference_1310, reference_1550):
+        wavelengths = self.measurement_configuration.opm_wavelengths_nm
         self._record_support(
             SupportEventCategory.MEASUREMENT,
             "reference.completed",
@@ -2872,8 +3153,17 @@ class MainWindow(QMainWindow):
                 else ""
             ),
             workflow_type="reference_calculation",
-            reference_1310_dbm=reference_1310,
-            reference_1550_dbm=reference_1550,
+            wavelength_mode=self.measurement_configuration.wavelength_profile.code,
+            references_by_wavelength={
+                str(wavelengths[0]): reference_1310,
+                str(wavelengths[1]): reference_1550,
+            },
+            source_wavelengths_nm=list(
+                self.measurement_configuration.source_wavelengths_nm
+            ),
+            measurement_classification=(
+                self.measurement_configuration.classification.value
+            ),
             both_wavelengths_complete=True,
             status="success",
         )
@@ -2907,7 +3197,17 @@ class MainWindow(QMainWindow):
             status="error",
         )
         self._finish_reference_calculation()
-        self.invalidate_reference("Reference calculation failed: %s" % message)
+        self.reference_session.calculation_failed(
+            "Reference calculation failed: %s" % message
+        )
+        if self.reference_session.is_valid:
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "reference.previous_retained",
+                reference_snapshot_id=self.reference_session.snapshot.snapshot_id,
+                status="active",
+            )
+        self._refresh_reference_controls()
         QMessageBox.critical(self, "Reference calculation failed", message)
 
     def _finish_reference_calculation(self):
@@ -3200,6 +3500,39 @@ class MainWindow(QMainWindow):
             self.refresh_table()
             return
 
+        if self.run_data is not None:
+            current_signature = (
+                self.run_data.wavelength_mode,
+                self.run_data.opm_wavelengths_nm,
+                self.run_data.measurements[0].measurement_classification
+                if self.run_data.measurements else "native",
+                self.run_data.measurements[0].source_wavelengths_nm
+                if self.run_data.measurements else (1310, 1550),
+            )
+            comparison_signature = (
+                comparison_data.wavelength_mode,
+                comparison_data.opm_wavelengths_nm,
+                comparison_data.measurements[0].measurement_classification
+                if comparison_data.measurements else "native",
+                comparison_data.measurements[0].source_wavelengths_nm
+                if comparison_data.measurements else (1310, 1550),
+            )
+            if comparison_signature != current_signature:
+                self.comparison_run_combo.blockSignals(True)
+                self.comparison_run_combo.setCurrentIndex(0)
+                self.comparison_run_combo.blockSignals(False)
+                self.comparison_run_data = None
+                self.comparison_run_number = None
+                QMessageBox.information(
+                    self,
+                    "Incompatible comparison run",
+                    "Runs can only be compared when wavelength mode, OPM "
+                    "wavelengths, source profile, and measurement "
+                    "classification match.",
+                )
+                self.refresh_table()
+                return
+
         self.comparison_run_data = comparison_data
         try:
             self.comparison_run_number = int(
@@ -3307,6 +3640,36 @@ class MainWindow(QMainWindow):
 
         self.run_data = run_data
         self.run_recorder = None
+        # A loaded run has no live switch-capacity observation. Do not reuse
+        # the physical count from a previously completed hardware session.
+        self.hardware_session.full_pass = False
+        self.hardware_session.retest = False
+        self.hardware_session.configured_channel_count = None
+        try:
+            loaded_configuration = configuration_from_metadata(
+                run_data.metadata,
+                fallback_source_profile=self.ilm_source_profile,
+            )
+            self._wavelength_mode_selection_method = (
+                loaded_configuration.mode_selection_method
+            )
+            self.ilm_source_profile = loaded_configuration.source_profile
+            self.measurement_configuration = loaded_configuration
+            self.sm_mode_radio.blockSignals(True)
+            self.mm_mode_radio.blockSignals(True)
+            try:
+                self.sm_mode_radio.setChecked(
+                    loaded_configuration.wavelength_profile.code == "SM"
+                )
+                self.mm_mode_radio.setChecked(
+                    loaded_configuration.wavelength_profile.code == "MM"
+                )
+            finally:
+                self.sm_mode_radio.blockSignals(False)
+                self.mm_mode_radio.blockSignals(False)
+            self._refresh_wavelength_mode_ui()
+        except ValueError:
+            self._set_wavelength_mode("SM", invalidate=False)
         self._load_unit_state(self.unit_repository.infer_unit_directory(path))
         self.replacement_analysis = None
         self.switch_test_timer = None
@@ -3402,32 +3765,43 @@ class MainWindow(QMainWindow):
                 }
                 if physical_ports or references:
                     run_data.measurements = [
-                        MeasurementRecord(
+                        MeasurementRecord.from_wavelengths(
                             record.channel,
-                            record.loss_1310,
-                            record.loss_1550,
-                            physical_ports.get(record.channel),
-                            references.get(record.channel, record.reference_snapshot),
+                            record.losses_by_wavelength,
+                            physical_port=physical_ports.get(
+                                record.channel, record.physical_port
+                            ),
+                            reference_snapshot=references.get(
+                                record.channel, record.reference_snapshot
+                            ),
+                            wavelength_mode=record.wavelength_mode,
+                            measurement_classification=record.measurement_classification,
+                            source_wavelengths_nm=record.source_wavelengths_nm,
+                            source_ids=record.source_ids,
                         )
                         for record in run_data.measurements
                     ]
-                criteria = payload.get("criteria")
-                if isinstance(criteria, dict):
-                    try:
-                        profile = LimitProfile.from_mapping(criteria)
-                    except (ValueError, TypeError, KeyError):
+                if run_data.wavelength_mode == "SM":
+                    criteria = payload.get("criteria")
+                    if isinstance(criteria, dict):
+                        try:
+                            profile = LimitProfile.from_mapping(criteria)
+                        except (ValueError, TypeError, KeyError):
+                            profile = legacy_limit_profile(
+                                float(payload.get("warning_limit_db", 2.0))
+                            )
+                    else:
+                        # Runs created before model-specific criteria retain their
+                        # original single warning limit and are marked legacy.
                         profile = legacy_limit_profile(
                             float(payload.get("warning_limit_db", 2.0))
                         )
+                    run_data.criteria_snapshot = profile.as_dict()
+                    run_data.warning_limit = profile.warning_above_db
+                    self._set_active_limit_profile(profile)
                 else:
-                    # Runs created before model-specific criteria retain their
-                    # original single warning limit and are marked legacy.
-                    profile = legacy_limit_profile(
-                        float(payload.get("warning_limit_db", 2.0))
-                    )
-                run_data.criteria_snapshot = profile.as_dict()
-                run_data.warning_limit = profile.warning_above_db
-                self._set_active_limit_profile(profile)
+                    run_data.criteria_snapshot = None
+                    run_data.warning_limit = None
             except (OSError, ValueError, TypeError, KeyError):
                 self.statusBar().showMessage(
                     "Loaded CSV; the companion run.json could not be read."
@@ -3441,30 +3815,10 @@ class MainWindow(QMainWindow):
         run_data.attempts = [
             attempt.as_dict() for attempt in run_data.measurement_attempts
         ]
-        historical_reference = next(
-            (
-                record.reference_snapshot
-                for record in reversed(run_data.measurements)
-                if isinstance(record.reference_snapshot, dict)
-            ),
-            None,
-        )
-        if historical_reference:
-            try:
-                self._syncing_reference_widgets = True
-                self.reference_1310_spin.setValue(
-                    float(historical_reference["reference_1310_dbm"])
-                )
-                self.reference_1550_spin.setValue(
-                    float(historical_reference["reference_1550_dbm"])
-                )
-            except (KeyError, TypeError, ValueError):
-                pass
-            finally:
-                self._syncing_reference_widgets = False
-        self.invalidate_reference(
-            "Loaded references are historical only; calculate a new reference before acquisition."
-        )
+        # Historical references remain attached to their saved readings.  They
+        # must never replace or invalidate the independent session reference
+        # bank used for new acquisition.
+        self._sync_reference_context()
         self.run_recorder = self.run_repository.recorder_from_existing(
             path,
             metadata=run_data.metadata,
@@ -3487,6 +3841,8 @@ class MainWindow(QMainWindow):
 
     def start_demo(self):
         channel_count = self.demo_channel_count.value()
+        configuration = self.measurement_configuration
+        wavelengths = configuration.opm_wavelengths_nm
         readings = []
         reference_1310 = self.reference_1310_spin.value()
         reference_1550 = self.reference_1550_spin.value()
@@ -3498,11 +3854,12 @@ class MainWindow(QMainWindow):
             if channel % 9 == 0:
                 loss_1550 += 1.1
             readings.append({
-                1310: reference_1310 - loss_1310,
-                1550: reference_1550 - loss_1550,
+                wavelengths[0]: reference_1310 - loss_1310,
+                wavelengths[1]: reference_1550 - loss_1550,
             })
 
         self.demo_meter = SimulatedPowerMeter(readings)
+        self.demo_meter.configure_measurement(configuration)
         self.demo_meter.connect()
         self.demo_channel = 1
         self.demo_measurement = None
@@ -3515,8 +3872,15 @@ class MainWindow(QMainWindow):
                 "Tested by": self.hardware_tested_by.text().strip(),
                 "Mode": "Simulation",
                 "Run number": "1",
-                "1310 reference dBm": "%.2f" % reference_1310,
-                "1550 reference dBm": "%.2f" % reference_1550,
+                "Wavelength mode": configuration.wavelength_profile.code,
+                "OPM wavelengths nm": ",".join(str(value) for value in wavelengths),
+                "Source wavelengths nm": ",".join(
+                    str(value) for value in configuration.source_wavelengths_nm
+                ),
+                "Source IDs": ",".join(str(value) for value in configuration.source_ids),
+                "Source profile": configuration.source_profile.profile_id,
+                "Source profile origin": configuration.source_profile.origin,
+                "Measurement classification": configuration.classification.value,
             },
         )
         self.run_recorder = self.run_repository.new_recorder(
@@ -3525,8 +3889,15 @@ class MainWindow(QMainWindow):
                 "Tested by": self.hardware_tested_by.text().strip(),
                 "Mode": "Simulation",
                 "Run number": "1",
-                "1310 reference dBm": "%.2f" % reference_1310,
-                "1550 reference dBm": "%.2f" % reference_1550,
+                "Wavelength mode": configuration.wavelength_profile.code,
+                "OPM wavelengths nm": ",".join(str(value) for value in wavelengths),
+                "Source wavelengths nm": ",".join(
+                    str(value) for value in configuration.source_wavelengths_nm
+                ),
+                "Source IDs": ",".join(str(value) for value in configuration.source_ids),
+                "Source profile": configuration.source_profile.profile_id,
+                "Source profile origin": configuration.source_profile.origin,
+                "Measurement classification": configuration.classification.value,
             },
             limit=self.limit_spin.value(),
         )
@@ -3565,16 +3936,18 @@ class MainWindow(QMainWindow):
         if self.demo_meter is None or self.demo_channel == 0:
             return
         measurements = self.demo_meter.measure_both_wavelengths()
+        wavelengths = self.measurement_configuration.opm_wavelengths_nm
         self.demo_measurement = calculate_insertion_loss(
             {
-                1310: self.reference_1310_spin.value(),
-                1550: self.reference_1550_spin.value(),
+                wavelengths[0]: self.reference_1310_spin.value(),
+                wavelengths[1]: self.reference_1550_spin.value(),
             },
             measurements,
+            wavelengths,
         )
         self.set_current_reading_channel(self.demo_channel)
-        self.current_loss_1310 = self.demo_measurement[1310]
-        self.current_loss_1550 = self.demo_measurement[1550]
+        self.current_loss_1310 = self.demo_measurement[wavelengths[0]]
+        self.current_loss_1550 = self.demo_measurement[wavelengths[1]]
         self.refresh_current_reading()
         self.accept_demo_button.setEnabled(True)
         self.demo_channel_label.setText("Channel %d - review reading" % self.demo_channel)
@@ -3582,10 +3955,15 @@ class MainWindow(QMainWindow):
     def accept_demo(self):
         if self.run_data is None or self.demo_measurement is None:
             return
-        record = MeasurementRecord(
+        configuration = self.measurement_configuration
+        wavelengths = configuration.opm_wavelengths_nm
+        record = MeasurementRecord.from_wavelengths(
             self.demo_channel,
-            self.demo_measurement[1310],
-            self.demo_measurement[1550],
+            self.demo_measurement,
+            wavelength_mode=configuration.wavelength_profile.code,
+            measurement_classification=configuration.classification.value,
+            source_wavelengths_nm=configuration.source_wavelengths_nm,
+            source_ids=configuration.source_ids,
         )
         self._accept_measurement_record(record)
         if self.demo_channel >= self.demo_channel_count.value():
@@ -3637,10 +4015,14 @@ class MainWindow(QMainWindow):
             self.measure_demo()
             if self.demo_measurement is None:
                 return
-            record = MeasurementRecord(
+            configuration = self.measurement_configuration
+            record = MeasurementRecord.from_wavelengths(
                 channel,
-                self.demo_measurement[1310],
-                self.demo_measurement[1550],
+                self.demo_measurement,
+                wavelength_mode=configuration.wavelength_profile.code,
+                measurement_classification=configuration.classification.value,
+                source_wavelengths_nm=configuration.source_wavelengths_nm,
+                source_ids=configuration.source_ids,
             )
             self._accept_measurement_record(record, write_context="retest")
             self.demo_measurement = None
@@ -3688,6 +4070,22 @@ class MainWindow(QMainWindow):
         if clicked_button == cancel_button:
             return None
         return None
+
+    def _refresh_front_panel_channel_count_label(self, *_args):
+        """Display the read-only production count derived from the part number."""
+        if not hasattr(self, "front_panel_channel_count_label"):
+            return
+        part_number = self.hardware_part_number.currentText().strip()
+        try:
+            count = parse_osx_part_number(part_number).front_panel_channel_count
+        except ValueError:
+            self.front_panel_channel_count_label.setText(
+                "Front-panel channels: Not available"
+            )
+            return
+        self.front_panel_channel_count_label.setText(
+            "Front-panel channels: %d" % count
+        )
 
     def _current_hardware_identity(self):
         """Return the editable identity fields used to name a hardware run."""
@@ -3892,9 +4290,29 @@ class MainWindow(QMainWindow):
                 return
 
         continuing_existing = run_mode == "continue"
+        if continuing_existing and (
+            self.run_data.wavelength_mode
+            != self.measurement_configuration.wavelength_profile.code
+        ):
+            QMessageBox.warning(
+                self,
+                "Wavelength mode mismatch",
+                "This run was created in %s mode. Select %s mode before "
+                "continuing it."
+                % (self.run_data.wavelength_mode, self.run_data.wavelength_mode),
+            )
+            return
+        profile = None
         if continuing_existing or retest:
-            profile = self._profile_for_current_run()
-        else:
+            snapshot = self.run_data.criteria_snapshot if self.run_data else None
+            if snapshot:
+                try:
+                    candidate = LimitProfile.from_mapping(snapshot)
+                    if candidate.wavelength_mode == self.measurement_configuration.wavelength_profile.code:
+                        profile = candidate
+                except (ValueError, TypeError, KeyError):
+                    profile = None
+        if profile is None:
             if self.limit_profile_error:
                 QMessageBox.warning(
                     self,
@@ -3903,7 +4321,9 @@ class MainWindow(QMainWindow):
                 )
                 return
             model = self._connected_switch_model()
-            profile = self.limit_profiles.get(model)
+            profile = self.limit_profiles.get(
+                profile_key(model, self.measurement_configuration.wavelength_profile.code)
+            )
             if profile is None:
                 QMessageBox.warning(
                     self,
@@ -3911,19 +4331,27 @@ class MainWindow(QMainWindow):
                     "No limit profile is configured for the connected switch model: %s" % model,
                 )
                 return
-        self._set_active_limit_profile(profile)
-        self._record_support(
-            SupportEventCategory.WORKFLOW,
-            "run.criteria_snapshot_resolved",
-            switch_model=profile.model,
-            criteria_profile=profile.profile_name,
-            criteria_revision=profile.revision,
-            too_good_limit_db=profile.too_good_below_db,
-            fail_limit_db=profile.fail_above_db,
-            warning_enabled=profile.warning_enabled,
-            criteria_snapshot=profile.as_dict(),
-            status="success",
-        )
+        if profile is not None:
+            self._set_active_limit_profile(profile)
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "run.criteria_snapshot_resolved",
+                switch_model=profile.model,
+                criteria_profile=profile.profile_name,
+                criteria_revision=profile.revision,
+                too_good_limit_db=profile.too_good_below_db,
+                fail_limit_db=profile.fail_above_db,
+                warning_enabled=profile.warning_enabled,
+                criteria_snapshot=profile.as_dict(),
+                status="success",
+            )
+        else:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "run.criteria_unavailable_for_wavelength_mode",
+                wavelength_mode="MM",
+                status="not_applicable",
+            )
         try:
             preparation = prepare_hardware_run(
                 retest=retest,
@@ -3941,6 +4369,8 @@ class MainWindow(QMainWindow):
 
         owner_token = object()
         self.current_run_workflow = self._new_workflow("hardware_run")
+        self._post_run_recommendation_prompt_workflow_id = None
+        self._post_run_recommendation_prompted = False
         workflow_id = (
             self.current_run_workflow.workflow_id
             if self.current_run_workflow
@@ -3995,14 +4425,34 @@ class MainWindow(QMainWindow):
                     "Operating band": self.hardware_operating_band.currentText().strip() or "O band",
                     "Tested by": self.hardware_tested_by.text().strip(),
                     "Run number": str(selected_run_number),
+                    "Wavelength mode": self.measurement_configuration.wavelength_profile.code,
+                    "OPM wavelengths nm": ",".join(
+                        str(value)
+                        for value in self.measurement_configuration.opm_wavelengths_nm
+                    ),
+                    "Source wavelengths nm": ",".join(
+                        str(value)
+                        for value in self.measurement_configuration.source_wavelengths_nm
+                    ),
+                    "Source IDs": ",".join(
+                        str(value) for value in self.measurement_configuration.source_ids
+                    ),
+                    "Source profile": self.measurement_configuration.source_profile.profile_id,
+                    "Source profile origin": (
+                        self.measurement_configuration.source_profile.origin
+                    ),
+                    "Mode selection method": self._wavelength_mode_selection_method,
+                    "Measurement classification": (
+                        self.measurement_configuration.classification.value
+                    ),
                 },
-                criteria_snapshot=profile.as_dict(),
+                criteria_snapshot=profile.as_dict() if profile is not None else None,
             )
             self._load_unit_state(selected_unit_directory)
             self.run_recorder = self.run_repository.new_recorder(
                 metadata=self.run_data.metadata,
                 limit=self.limit_spin.value(),
-                criteria_snapshot=profile.as_dict(),
+                criteria_snapshot=profile.as_dict() if profile is not None else None,
                 directory=self.run_data.source_path,
             )
             self.switch_test_timer = SwitchTestTimer(
@@ -4063,10 +4513,15 @@ class MainWindow(QMainWindow):
             preparation,
             meter=meter,
             switch=switch,
-            reference_powers={
-                1310: self.reference_session.snapshot.reference_1310_dbm,
-                1550: self.reference_session.snapshot.reference_1550_dbm,
-            },
+            reference_powers=dict(
+                zip(
+                    self.measurement_configuration.opm_wavelengths_nm,
+                    (
+                        self.reference_session.snapshot.reference_1310_dbm,
+                        self.reference_session.snapshot.reference_1550_dbm,
+                    ),
+                )
+            ),
             existing_channels=(
                 [record.channel for record in self.run_data.measurements]
                 if continuing_existing
@@ -4077,6 +4532,7 @@ class MainWindow(QMainWindow):
             support_logger=self.support_logger,
             workflow_id=workflow_id,
             reference_snapshot=self.active_run_reference_snapshot,
+            measurement_configuration=self.measurement_configuration,
         )
         try:
             self.hardware_controller.start(request)
@@ -4126,6 +4582,7 @@ class MainWindow(QMainWindow):
                 if reference is not None
                 else False
             ),
+            wavelengths=self.measurement_configuration.opm_wavelengths_nm,
         )
 
     @staticmethod
@@ -4540,11 +4997,13 @@ class MainWindow(QMainWindow):
 
     def write_hardware(self):
         if self.hardware_pending_reading is not None:
+            wavelengths = self.measurement_configuration.opm_wavelengths_nm
             validation = validate_insertion_loss(
                 {
-                    1310: self.hardware_pending_reading[2],
-                    1550: self.hardware_pending_reading[3],
-                }
+                    wavelengths[0]: self.hardware_pending_reading[2],
+                    wavelengths[1]: self.hardware_pending_reading[3],
+                },
+                wavelengths,
             )
             if not validation.valid:
                 self._record_negative_loss_write_attempt(validation)
@@ -4593,23 +5052,29 @@ class MainWindow(QMainWindow):
         return None
 
     def commit_hardware_reading(self):
-        channel, physical_port, loss_1310, loss_1550 = self.hardware_pending_reading
+        channel, physical_port, first_loss, second_loss = self.hardware_pending_reading
         if self.run_data is None:
             return False
-        validation = validate_insertion_loss(
-            {1310: loss_1310, 1550: loss_1550}
-        )
+        configuration = self.measurement_configuration
+        wavelengths = configuration.opm_wavelengths_nm
+        losses = {wavelengths[0]: first_loss, wavelengths[1]: second_loss}
+        validation = validate_insertion_loss(losses, wavelengths)
         if not validation.valid:
             self._record_negative_loss_write_attempt(validation)
             return False
-        record = MeasurementRecord(
+        record = MeasurementRecord.from_wavelengths(
             channel,
-            loss_1310,
-            loss_1550,
-            physical_port,
-            dict(self.active_run_reference_snapshot)
-            if self.active_run_reference_snapshot
-            else None,
+            losses,
+            physical_port=physical_port,
+            reference_snapshot=(
+                dict(self.active_run_reference_snapshot)
+                if self.active_run_reference_snapshot
+                else None
+            ),
+            wavelength_mode=configuration.wavelength_profile.code,
+            measurement_classification=configuration.classification.value,
+            source_wavelengths_nm=configuration.source_wavelengths_nm,
+            source_ids=configuration.source_ids,
         )
         attempt = self._accept_measurement_record(record)
         self._record_support(
@@ -4626,8 +5091,12 @@ class MainWindow(QMainWindow):
             operator_initials=self.run_data.metadata.get("Tested by"),
             logical_channel=channel,
             physical_port=physical_port,
-            loss_1310_db=loss_1310,
-            loss_1550_db=loss_1550,
+            wavelength_mode=configuration.wavelength_profile.code,
+            first_wavelength_nm=wavelengths[0],
+            first_loss_db=first_loss,
+            second_wavelength_nm=wavelengths[1],
+            second_loss_db=second_loss,
+            measurement_classification=configuration.classification.value,
             attempt_id=attempt.attempt_id,
             attempt_number=attempt.attempt_number,
             replaces_attempt_id=attempt.replaces_attempt_id,
@@ -4771,13 +5240,55 @@ class MainWindow(QMainWindow):
         self._apply_run_mode_controls()
 
     def hardware_reading_ready(self, channel, _physical_port, loss_1310, loss_1550):
-        self.hardware_session.set_pending_reading(
-            channel,
-            _physical_port,
-            loss_1310,
-            loss_1550,
-        )
-        validation = validate_insertion_loss({1310: loss_1310, 1550: loss_1550})
+        wavelengths = self.measurement_configuration.opm_wavelengths_nm
+        try:
+            self.hardware_session.set_pending_reading(
+                channel,
+                _physical_port,
+                loss_1310,
+                loss_1550,
+            )
+            validation = validate_insertion_loss(
+                {wavelengths[0]: loss_1310, wavelengths[1]: loss_1550},
+                wavelengths,
+            )
+        except Exception as error:
+            # A completed sample must not leave the UI looking as if it is
+            # still measuring if presentation/validation fails.
+            self.hardware_session.clear_pending()
+            self.pending_reading_validation = None
+            self.clear_current_reading(
+                channel,
+                "Measurement completed but could not be processed",
+            )
+            self.continue_hardware_button.setEnabled(False)
+            self.write_hardware_button.setEnabled(False)
+            self.change_hardware_channel_button.setEnabled(False)
+            self.hardware_live_indicator.setVisible(False)
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.completed_processing_failed",
+                level=SupportLogLevel.ERROR,
+                logical_channel=channel,
+                physical_port=_physical_port,
+                wavelength_mode=(
+                    self.measurement_configuration.wavelength_profile.code
+                ),
+                opm_wavelengths_nm=list(wavelengths),
+                error_type=type(error).__name__,
+                error_message=str(error),
+                stack_trace=traceback.format_exc(),
+                status="error",
+            )
+            QMessageBox.critical(
+                self,
+                "Measurement could not be displayed",
+                "The hardware completed the reading, but Light Workbench "
+                "could not process it. The reading was not written.\n\n"
+                "Stop this run and contact engineering support if the problem "
+                "continues.\n\nTechnical error: %s" % error,
+            )
+            return
         self.pending_reading_validation = validation
         self._record_support(
             SupportEventCategory.MEASUREMENT,
@@ -4789,8 +5300,14 @@ class MainWindow(QMainWindow):
             ),
             logical_channel=channel,
             physical_port=_physical_port,
-            loss_1310_db=loss_1310,
-            loss_1550_db=loss_1550,
+            wavelength_mode=self.measurement_configuration.wavelength_profile.code,
+            first_wavelength_nm=wavelengths[0],
+            first_loss_db=loss_1310,
+            second_wavelength_nm=wavelengths[1],
+            second_loss_db=loss_1550,
+            measurement_classification=(
+                self.measurement_configuration.classification.value
+            ),
             reading_state="temporary",
             both_wavelengths_complete=True,
             validation_reason=validation.reason,
@@ -4808,8 +5325,8 @@ class MainWindow(QMainWindow):
                 "Invalid negative loss - check the reference or current connection"
             )
             self._refresh_reading_status_color()
-        self.demo_1310_label.setText("1310 nm: %.4f dB" % loss_1310)
-        self.demo_1550_label.setText("1550 nm: %.4f dB" % loss_1550)
+        self.demo_1310_label.setText("%d nm: %.4f dB" % (wavelengths[0], loss_1310))
+        self.demo_1550_label.setText("%d nm: %.4f dB" % (wavelengths[1], loss_1550))
         self.continue_hardware_button.setEnabled(not self.live_write_mode_enabled)
         self.write_hardware_button.setEnabled(validation.valid)
         self.change_hardware_channel_button.setEnabled(True)
@@ -4875,6 +5392,240 @@ class MainWindow(QMainWindow):
                 "Hardware channel %d of %d saved" % (current, total)
             )
 
+    def _post_run_replacement_offer_context(self):
+        """Return context only when a full run has all accepted readings."""
+        if (
+            not self.hardware_full_pass
+            or self.hardware_retest
+            or self.run_data is None
+            or not self._uses_approved_limit_profile()
+        ):
+            return None
+
+        planned_count = self.hardware_configured_channel_count
+        if planned_count is None or int(planned_count) < 1:
+            return None
+        try:
+            part_context = self._front_panel_channel_context_for_active_run()
+        except ValueError:
+            return None
+        if part_context["front_panel_channel_count"] > int(planned_count):
+            return None
+        accepted_channels = {
+            int(record.channel) for record in self.run_data.measurements
+        }
+        planned_channels = set(range(1, int(planned_count) + 1))
+        if not planned_channels.issubset(accepted_channels):
+            return None
+        return {
+            "workflow_id": (
+                self.current_run_workflow.workflow_id
+                if self.current_run_workflow is not None
+                else ""
+            ),
+            "planned_channel_count": int(planned_count),
+            "front_panel_channel_count": part_context[
+                "front_panel_channel_count"
+            ],
+            "part_number": part_context["part_number"],
+            "measurement_count": len(self.run_data.measurements),
+        }
+
+    def _replacement_support_identity(self):
+        """Return stable run identity fields for replacement support events."""
+        metadata = self.run_data.metadata if self.run_data is not None else {}
+        return {
+            "run_number": metadata.get("Run number", ""),
+            "unit_serial": metadata.get("Main board serial", ""),
+            "switch_serial": metadata.get("Switch serial", ""),
+            "operator_initials": metadata.get(
+                "Tested by", self.hardware_tested_by.text().strip()
+            ),
+        }
+
+    def _schedule_post_run_replacement_offer(self):
+        """Offer advisory replacement analysis after a successful full pass."""
+        context = self._post_run_replacement_offer_context()
+        if context is None:
+            return
+        workflow_id = context["workflow_id"]
+        if self._post_run_recommendation_prompted:
+            return
+        self._post_run_recommendation_prompted = True
+        self._post_run_recommendation_prompt_workflow_id = workflow_id
+        QTimer.singleShot(
+            0,
+            lambda: self._offer_post_run_replacement_analysis(context),
+        )
+
+    def _offer_post_run_replacement_analysis(self, context):
+        """Show one post-run offer without changing run or replacement data."""
+        if (
+            context["workflow_id"]
+            and (
+                self.current_run_workflow is None
+                or self.current_run_workflow.workflow_id != context["workflow_id"]
+            )
+        ):
+            return
+
+        identity = self._replacement_support_identity()
+        common = dict(
+            workflow_id=context["workflow_id"],
+            planned_channel_count=context["planned_channel_count"],
+            front_panel_channel_count=context["front_panel_channel_count"],
+            configured_channel_count=context["planned_channel_count"],
+            part_number=context["part_number"],
+            measurement_count=context["measurement_count"],
+            launch_source="post_run_prompt",
+            **identity,
+        )
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "replacement.post_run_prompt_offered",
+            status="offered",
+            **common,
+        )
+        choice = QMessageBox.question(
+            self,
+            "Optimization recommendations",
+            "The full configured pass is complete. Would you like to review "
+            "optimization recommendations?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if choice == QMessageBox.Yes:
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "replacement.post_run_prompt_accepted",
+                status="accepted",
+                **common,
+            )
+            self.show_replacement_analysis(launch_source="post_run_prompt")
+        else:
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "replacement.post_run_prompt_declined",
+                status="declined",
+                **common,
+            )
+
+    def _record_replacement_analysis_result(self, result, launch_source):
+        """Record advisory analysis details without persisting recommendations."""
+        if self.current_run_workflow is None:
+            workflow_id = ""
+        else:
+            workflow_id = self.current_run_workflow.workflow_id
+        identity = self._replacement_support_identity()
+        try:
+            part_context = self._front_panel_channel_context_for_active_run()
+        except ValueError:
+            part_context = {}
+        recommendations = list(result.get("recommendations", []))
+        required_count = sum(
+            recommendation_category(item, result.get("warning_limit_db"))
+            == "required"
+            for item in recommendations
+        )
+        optional_count = len(recommendations) - required_count
+        spares = list(result.get("bottom_spares", []))
+        production_count = sum(
+            record.channel <= result.get("designed_channel_count", 0)
+            for record in self.run_data.measurements
+        )
+        common = dict(
+            workflow_id=workflow_id,
+            launch_source=launch_source,
+            measurement_count=len(self.run_data.measurements),
+            designed_channel_count=result.get("designed_channel_count"),
+            production_channel_count=production_count,
+            extra_candidate_count=len(result.get("extra_ports", [])),
+            required_recommendation_count=required_count,
+            optional_recommendation_count=optional_count,
+            designated_spare_count=len(spares),
+            recommendation_count=len(recommendations),
+            analysis_status=result.get("status", ""),
+            front_panel_channel_count=part_context.get(
+                "front_panel_channel_count",
+                result.get("designed_channel_count"),
+            ),
+            configured_channel_count=part_context.get(
+                "configured_physical_channel_count"
+            ),
+            part_number=part_context.get("part_number", ""),
+            status="completed",
+            **identity,
+        )
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "replacement.analysis_completed",
+            **common,
+        )
+        for rank, item in enumerate(recommendations, start=1):
+            category = recommendation_category(
+                item, result.get("warning_limit_db")
+            )
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "replacement.recommendation_generated",
+                workflow_id=workflow_id,
+                launch_source=launch_source,
+                recommendation_rank=rank,
+                recommendation_category=category,
+                logical_channel=item.get("logical_channel"),
+                current_physical_port=item.get("current_physical_port"),
+                candidate_physical_port=item.get("candidate_physical_port"),
+                current_loss_1310_db=item.get("current_loss_1310_db"),
+                current_loss_1550_db=item.get("current_loss_1550_db"),
+                current_worst_loss_db=item.get("current_worst_loss_db"),
+                candidate_loss_1310_db=item.get("candidate_loss_1310_db"),
+                candidate_loss_1550_db=item.get("candidate_loss_1550_db"),
+                candidate_worst_loss_db=item.get("candidate_worst_loss_db"),
+                improvement_db=item.get("improvement_db"),
+                status="advisory",
+                **identity,
+            )
+        for rank, spare in enumerate(spares, start=1):
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "replacement.designated_spare_recommended",
+                workflow_id=workflow_id,
+                launch_source=launch_source,
+                spare_rank=rank,
+                physical_port=spare.get("physical_port"),
+                spare_worst_loss_db=spare.get("worst_loss_db"),
+                spare_within_limits=spare.get("within_optimization_limit"),
+                spare_too_good=spare.get("too_good"),
+                status="advisory",
+                **identity,
+            )
+
+    def _front_panel_channel_context_for_active_run(self):
+        """Resolve the active run's product count and available physical count."""
+        if self.run_data is None:
+            raise ValueError("Load or start a run before resolving front-panel channels.")
+        part_number = str(
+            self.run_data.metadata.get("Part number")
+            or self.hardware_part_number.currentText()
+            or ""
+        ).strip()
+        details = parse_osx_part_number(part_number)
+        configured_count = None
+        if self.hardware_full_pass and self.hardware_configured_channel_count:
+            configured_count = int(self.hardware_configured_channel_count)
+            if details.front_panel_channel_count > configured_count:
+                raise ValueError(
+                    "The part number specifies %d front-panel channels, but the "
+                    "connected switch reports only %d configured physical channels."
+                    % (details.front_panel_channel_count, configured_count)
+                )
+        return {
+            "part_number": details.value,
+            "model": details.model,
+            "front_panel_channel_count": details.front_panel_channel_count,
+            "configured_physical_channel_count": configured_count,
+        }
+
     def hardware_completed(self):
         self._record_support(
             SupportEventCategory.WORKFLOW,
@@ -4896,6 +5647,7 @@ class MainWindow(QMainWindow):
         self.retest_button.setEnabled(True)
         self.active_run_reference_snapshot = None
         self.statusBar().showMessage("Hardware run complete. CSV and JSON are saved.")
+        self._schedule_post_run_replacement_offer()
 
     def hardware_stopped(self):
         self._record_support(
@@ -5050,6 +5802,16 @@ class MainWindow(QMainWindow):
         if self.run_data is None:
             return
         profile = self._profile_for_current_run()
+        if profile is None:
+            self.metric_labels["total"].setText(str(len(self.run_data.measurements)))
+            for key, label in self.metric_labels.items():
+                if key != "total":
+                    label.setText("Limits unavailable")
+            self.refresh_current_reading()
+            self.refresh_table()
+            self.refresh_replacement_summary()
+            self.refresh_coc_controls()
+            return
         self._set_active_limit_profile(profile)
         summary = self.run_data.analysis_with_profile(profile)
         for key, label in self.metric_labels.items():
@@ -5065,7 +5827,10 @@ class MainWindow(QMainWindow):
     def refresh_replacement_summary(self):
         """Refresh the replacement-analysis status shown beside the table."""
         has_measurements = bool(self.run_data and self.run_data.measurements)
-        self.replacement_analysis_button.setEnabled(has_measurements)
+        limits_available = self._uses_approved_limit_profile()
+        self.replacement_analysis_button.setEnabled(
+            has_measurements and limits_available
+        )
         self.record_replacements_button.setEnabled(
             has_measurements or self.unit_directory is not None
         )
@@ -5095,6 +5860,12 @@ class MainWindow(QMainWindow):
             )
         )
         self.completed_replacements_label.setText("\n".join(lines))
+        if not limits_available:
+            self.replacement_summary_label.setText(
+                "Not available: no limit profile is configured for this model and mode."
+            )
+            return
+
         result = self.replacement_analysis
         if not result:
             self.replacement_summary_label.setText("Not run")
@@ -5281,29 +6052,75 @@ class MainWindow(QMainWindow):
             % len(self.run_data.measurements)
         )
 
-    def show_replacement_analysis(self):
-        """Collect measured extra ports, calculate recommendations, and save them."""
+    def show_replacement_analysis(self, launch_source="manual_button"):
+        """Calculate advisory replacements using the existing operator workflow."""
         if self.run_data is None or not self.run_data.measurements:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "replacement.analysis_failed",
+                launch_source=launch_source,
+                failure_stage="no_measurements",
+                status="blocked",
+            )
             QMessageBox.information(
                 self,
                 "No measurements",
                 "Complete or load a run before analyzing replacement ports.",
             )
             return
+        try:
+            part_context = self._front_panel_channel_context_for_active_run()
+        except ValueError as error:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "replacement.analysis_failed",
+                launch_source=launch_source,
+                failure_stage="front_panel_count_resolution",
+                reason_code="invalid_part_number_or_channel_count",
+                error_message=str(error),
+                status="blocked",
+            )
+            QMessageBox.information(
+                self,
+                "Front-panel channel count unavailable",
+                "%s\n\nUse Lookup Part Number or enter the correct part number "
+                "before analyzing replacements." % error,
+            )
+            return
+
+        identity = self._replacement_support_identity()
+        workflow_id = (
+            self.current_run_workflow.workflow_id
+            if self.current_run_workflow
+            else ""
+        )
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "replacement.analysis_started",
+            workflow_id=workflow_id,
+            launch_source=launch_source,
+            measurement_count=len(self.run_data.measurements),
+            front_panel_channel_count=part_context["front_panel_channel_count"],
+            configured_channel_count=part_context[
+                "configured_physical_channel_count"
+            ],
+            part_number=part_context["part_number"],
+            status="started",
+            **identity,
+        )
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Analyze replacement ports")
         dialog.setMinimumWidth(600)
         layout = QFormLayout(dialog)
 
-        maximum_channel = max(record.channel for record in self.run_data.measurements)
-        designed_count = QSpinBox()
-        designed_count.setRange(1, 256)
-        designed_count.setValue(maximum_channel)
-        designed_count.setToolTip(
-            "The number of logical channels the finished switch is designed to use."
+        part_number_label = QLabel(part_context["part_number"])
+        part_number_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addRow("Part number:", part_number_label)
+        front_panel_count_label = QLabel(
+            str(part_context["front_panel_channel_count"])
         )
-        layout.addRow("Designed channel count:", designed_count)
+        layout.addRow("Front-panel channels:", front_panel_count_label)
 
         minimum_improvement = QDoubleSpinBox()
         minimum_improvement.setRange(0.0, 100.0)
@@ -5325,13 +6142,13 @@ class MainWindow(QMainWindow):
         detected_extras_label.setWordWrap(True)
         layout.addRow("Measured extra ports:", detected_extras_label)
 
-        def update_detected_extras(value):
+        def update_detected_extras():
             ports = [
                 record.physical_port
                 if record.physical_port is not None
                 else record.channel
                 for record in self.run_data.measurements
-                if record.channel > value
+                if record.channel > part_context["front_panel_channel_count"]
             ]
             detected_extras_label.setText(
                 ", ".join(str(port) for port in sorted(ports))
@@ -5339,8 +6156,7 @@ class MainWindow(QMainWindow):
                 else "None detected; analysis will be not applicable."
             )
 
-        designed_count.valueChanged.connect(update_detected_extras)
-        update_detected_extras(designed_count.value())
+        update_detected_extras()
         layout.addRow(
             QLabel(
                 "A full pass supplies these readings automatically. The minimum "
@@ -5353,28 +6169,41 @@ class MainWindow(QMainWindow):
         buttons.rejected.connect(dialog.reject)
         layout.addRow(buttons)
 
-        while dialog.exec_() == QDialog.Accepted:
+        while True:
+            if dialog.exec_() != QDialog.Accepted:
+                self._record_support(
+                    SupportEventCategory.OPERATOR,
+                    "replacement.analysis_canceled",
+                    workflow_id=workflow_id,
+                    launch_source=launch_source,
+                    cancellation_stage="channel_count",
+                    status="canceled",
+                    **identity,
+                )
+                return
             try:
                 production_records = [
                     record
                     for record in self.run_data.measurements
-                    if record.channel <= designed_count.value()
+                    if record.channel
+                    <= part_context["front_panel_channel_count"]
                 ]
                 readings = [
                     ReplacementReading(
                         record.physical_port
                         if record.physical_port is not None
                         else record.channel,
-                        record.loss_1310,
-                        record.loss_1550,
+                        record.ordered_losses[0],
+                        record.ordered_losses[1],
                     )
                     for record in self.run_data.measurements
-                    if record.channel > designed_count.value()
+                    if record.channel
+                    > part_context["front_panel_channel_count"]
                 ]
                 result = analyze_replacements(
                     production_records,
                     readings,
-                    designed_count.value(),
+                    part_context["front_panel_channel_count"],
                     self.active_limit_profile.warning_above_db
                     if self.active_limit_profile.warning_enabled
                     else self.active_limit_profile.fail_above_db,
@@ -5383,10 +6212,23 @@ class MainWindow(QMainWindow):
                     fail_limit=self.active_limit_profile.fail_above_db,
                     model=self.active_limit_profile.model,
                     too_good_limit=self.active_limit_profile.too_good_below_db,
+                    wavelengths=self.run_data.opm_wavelengths_nm,
                 )
+                self._record_replacement_analysis_result(result, launch_source)
                 self.apply_replacement_analysis(result)
                 return
             except (OSError, ValueError, TypeError) as error:
+                self._record_support(
+                    SupportEventCategory.WORKFLOW,
+                    "replacement.analysis_failed",
+                    workflow_id=workflow_id,
+                    launch_source=launch_source,
+                    failure_stage="calculation",
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    status="error",
+                    **identity,
+                )
                 QMessageBox.warning(dialog, "Invalid replacement analysis", str(error))
 
     def apply_replacement_analysis(self, result):
@@ -5419,9 +6261,19 @@ class MainWindow(QMainWindow):
                 )
             except OSError:
                 pass
-        self.write_coc_button.setEnabled(persisted_readings)
+        active_mode = (
+            self.run_data.wavelength_mode
+            if self.run_data is not None
+            else self.measurement_configuration.wavelength_profile.code
+        )
+        coc_eligible = (
+            persisted_readings
+            and active_mode == "SM"
+            and self._uses_approved_limit_profile()
+        )
+        self.write_coc_button.setEnabled(coc_eligible)
         self.copy_raw_data_button.setEnabled(current_readings)
-        self.write_coc_action.setEnabled(persisted_readings)
+        self.write_coc_action.setEnabled(coc_eligible)
 
     def show_reading_history(self):
         """Open the read-only accepted-reading history for the active run."""
@@ -5489,23 +6341,10 @@ class MainWindow(QMainWindow):
                     options.sort(key=lambda option: option.source.run_number)
         return options
 
-    def _default_coc_channel_count(self, options):
-        part_number = self.hardware_part_number.currentText().strip()
-        if not part_number and self.run_data is not None:
-            part_number = self.run_data.metadata.get("Part number", "")
-        inferred = infer_front_panel_channel_count(part_number)
-        if inferred is not None:
-            return inferred
-        available = {
-            record.channel
-            for option in options
-            for record in option.source.measurements
-            if 1 <= record.channel <= 48
-        }
-        contiguous = 0
-        while contiguous + 1 in available:
-            contiguous += 1
-        return contiguous or 1
+    @staticmethod
+    def _resolve_coc_front_panel_count(part_number):
+        """Resolve a COC count from the selected base run's part number."""
+        return parse_osx_part_number(part_number).front_panel_channel_count
 
     def _confirm_coc_optimization(self, result):
         message = QMessageBox(self)
@@ -5696,6 +6535,21 @@ class MainWindow(QMainWindow):
             )
             QMessageBox.information(self, "No run loaded", "Load or start a run first.")
             return
+        if self.run_data.wavelength_mode != "SM":
+            self._record_coc_terminal(
+                attempt_id,
+                "blocked",
+                "precondition",
+                reason_code="unsupported_wavelength_mode",
+                reason="COC generation is available only for approved SM runs.",
+            )
+            QMessageBox.information(
+                self,
+                "COC unavailable for MM",
+                "MM runs cannot be used for the current COC workflow because "
+                "approved MM templates and report rules are not configured.",
+            )
+            return
         try:
             options = self._coc_run_options()
         except Exception as error:
@@ -5762,7 +6616,7 @@ class MainWindow(QMainWindow):
             dialog = CocExportDialog(
                 options,
                 prepare,
-                initial_channel_count=self._default_coc_channel_count(options),
+                front_panel_count_resolver=self._resolve_coc_front_panel_count,
                 current_run_path=self.run_data.source_path,
                 validation_blocked_callback=record_blocked_validation,
                 parent=self,
@@ -6070,9 +6924,13 @@ class MainWindow(QMainWindow):
             color = "#b3bbc5" if self.dark_mode_enabled else "#587073"
         elif self.pending_reading_validation is not None and not self.pending_reading_validation.valid:
             color = "#ff8f86" if self.dark_mode_enabled else "#a33b2f"
+        elif not self._uses_approved_limit_profile():
+            color = "#72d19a" if self.dark_mode_enabled else "#28704a"
         else:
             assessment = self._profile_for_current_run().classify(
-                self.current_loss_1310, self.current_loss_1550
+                self.current_loss_1310,
+                self.current_loss_1550,
+                self.measurement_configuration.opm_wavelengths_nm,
             )
             if assessment.is_fail:
                 color = "#ff8f86" if self.dark_mode_enabled else "#a33b2f"
@@ -6086,16 +6944,23 @@ class MainWindow(QMainWindow):
         self.current_loss_1310 = None
         self.current_loss_1550 = None
         self.pending_reading_validation = None
-        self.demo_1310_label.setText("1310 nm: -")
-        self.demo_1550_label.setText("1550 nm: -")
+        wavelengths = self.measurement_configuration.opm_wavelengths_nm
+        self.demo_1310_label.setText("%d nm: -" % wavelengths[0])
+        self.demo_1550_label.setText("%d nm: -" % wavelengths[1])
         self.reading_status_label.setText(status)
         self._refresh_reading_status_color()
 
     def refresh_current_reading(self):
         if self.current_loss_1310 is None or self.current_loss_1550 is None:
             return
+        if not self._uses_approved_limit_profile():
+            self.reading_status_label.setText("Limits unavailable")
+            self._refresh_reading_status_color()
+            return
         assessment = self._profile_for_current_run().classify(
-            self.current_loss_1310, self.current_loss_1550
+            self.current_loss_1310,
+            self.current_loss_1550,
+            self.measurement_configuration.opm_wavelengths_nm,
         )
         if assessment.is_fail:
             status = "FAIL at %s" % ", ".join(
@@ -6129,9 +6994,13 @@ class MainWindow(QMainWindow):
         """Return whether a saved record belongs in the selected table view."""
         filter_index = self.reading_filter.currentIndex()
         profile = self._profile_for_current_run()
-        assessment = profile.classify(record.loss_1310, record.loss_1550)
-        over_1310 = 1310 in assessment.fail_wavelengths
-        over_1550 = 1550 in assessment.fail_wavelengths
+        assessment = profile.classify(
+            *record.ordered_losses,
+            record.opm_wavelengths_nm,
+        )
+        first_wavelength, second_wavelength = record.opm_wavelengths_nm
+        over_1310 = first_wavelength in assessment.fail_wavelengths
+        over_1550 = second_wavelength in assessment.fail_wavelengths
         if filter_index == FILTER_WITHIN_LIMIT:
             return not over_1310 and not over_1550
         if filter_index == FILTER_ANY_OVER_LIMIT:
@@ -6147,7 +7016,13 @@ class MainWindow(QMainWindow):
     def refresh_table(self):
         if self.run_data is None:
             return
-        profile = self._profile_for_current_run()
+        limits_available = self._uses_approved_limit_profile()
+        profile = self._profile_for_current_run() if limits_available else None
+        wavelengths = self.run_data.opm_wavelengths_nm
+        if not limits_available and self.reading_filter.currentIndex() != FILTER_ALL:
+            self.reading_filter.blockSignals(True)
+            self.reading_filter.setCurrentIndex(FILTER_ALL)
+            self.reading_filter.blockSignals(False)
         comparison_records = {}
         if self.comparison_run_data is not None:
             comparison_records = index_measurements(
@@ -6155,8 +7030,8 @@ class MainWindow(QMainWindow):
             )
         headers = [
             "Channel",
-            "1310 nm IL (dB)",
-            "1550 nm IL (dB)",
+            "%d nm IL (dB)" % wavelengths[0],
+            "%d nm IL (dB)" % wavelengths[1],
             "Status",
         ]
         if self.comparison_run_data is not None:
@@ -6170,8 +7045,8 @@ class MainWindow(QMainWindow):
             )
             headers.extend(
                 [
-                    "%s 1310 nm IL (dB)" % run_label,
-                    "%s 1550 nm IL (dB)" % run_label,
+                    "%s %d nm IL (dB)" % (run_label, wavelengths[0]),
+                    "%s %d nm IL (dB)" % (run_label, wavelengths[1]),
                 ]
             )
         self.table.setColumnCount(len(headers))
@@ -6182,12 +7057,27 @@ class MainWindow(QMainWindow):
             record
             for record in records
             if record.channel == pending_channel
-            or self.record_matches_filter(record, profile.fail_above_db)
+            or self.record_matches_filter(
+                record, profile.fail_above_db if profile is not None else 0.0
+            )
         ]
         if pending_channel is not None and all(
             record.channel != pending_channel for record in records
         ):
-            records.append(MeasurementRecord(pending_channel, 0.0, 0.0))
+            records.append(
+                MeasurementRecord.from_wavelengths(
+                    pending_channel,
+                    {wavelengths[0]: 0.0, wavelengths[1]: 0.0},
+                    wavelength_mode=self.run_data.wavelength_mode,
+                    measurement_classification=(
+                        self.measurement_configuration.classification.value
+                    ),
+                    source_wavelengths_nm=(
+                        self.measurement_configuration.source_wavelengths_nm
+                    ),
+                    source_ids=self.measurement_configuration.source_ids,
+                )
+            )
         self.displayed_records = records
         self.table.setRowCount(len(records))
         for row_index, record in enumerate(records):
@@ -6195,6 +7085,7 @@ class MainWindow(QMainWindow):
             comparison_display_values = comparison_values(
                 comparison_records,
                 record.channel,
+                wavelengths=wavelengths,
             )
             if is_pending:
                 values = [str(record.channel), "-", "-", "Taking measurement"]
@@ -6205,22 +7096,29 @@ class MainWindow(QMainWindow):
                         item.setTextAlignment(Qt.AlignCenter)
                     self.table.setItem(row_index, column, item)
                 continue
-            assessment = profile.classify(record.loss_1310, record.loss_1550)
-            flagged = assessment.is_fail
-            status_parts = []
-            if assessment.is_fail:
-                status_parts.append(
-                    "FAIL at " + ", ".join("%d nm" % wavelength for wavelength in assessment.fail_wavelengths)
+            flagged = False
+            if profile is None:
+                status = "Limits unavailable"
+            else:
+                assessment = profile.classify(
+                    *record.ordered_losses,
+                    record.opm_wavelengths_nm,
                 )
-            if assessment.is_too_good:
-                status_parts.append("Too good to verify")
-            if assessment.is_optimization and not assessment.is_fail:
-                status_parts.append("Optimization warning")
-            status = "; ".join(status_parts) if status_parts else "Within configured limit"
+                flagged = assessment.is_fail
+                status_parts = []
+                if assessment.is_fail:
+                    status_parts.append(
+                        "FAIL at " + ", ".join("%d nm" % wavelength for wavelength in assessment.fail_wavelengths)
+                    )
+                if assessment.is_too_good:
+                    status_parts.append("Too good to verify")
+                if assessment.is_optimization and not assessment.is_fail:
+                    status_parts.append("Optimization warning")
+                status = "; ".join(status_parts) if status_parts else "Within configured limit"
             values = [
                 str(record.channel),
-                "%.4f" % record.loss_1310,
-                "%.4f" % record.loss_1550,
+                "%.4f" % record.loss_for(wavelengths[0]),
+                "%.4f" % record.loss_for(wavelengths[1]),
                 status,
             ]
             values.extend(comparison_display_values)
@@ -6245,7 +7143,10 @@ class MainWindow(QMainWindow):
         for row_index, record in enumerate(self.displayed_records):
             if (
                 record.channel != self.hardware_pending_channel
-                and profile.classify(record.loss_1310, record.loss_1550).is_fail
+                and profile.classify(
+                    *record.ordered_losses,
+                    record.opm_wavelengths_nm,
+                ).is_fail
             ):
                 index = self.table.model().index(row_index, 0)
                 self.table.selectionModel().select(

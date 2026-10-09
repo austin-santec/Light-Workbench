@@ -50,6 +50,14 @@ class MeasurementDomainTests(unittest.TestCase):
         self.assertFalse(validation.valid)
         self.assertEqual(validation.invalid_wavelengths, (1550,))
 
+    def test_mm_loss_validation_uses_the_mm_wavelength_pair(self):
+        validation = validate_insertion_loss(
+            {850: 0.1, 1300: -0.2},
+            (850, 1300),
+        )
+        self.assertFalse(validation.valid)
+        self.assertEqual(validation.invalid_wavelengths, (1300,))
+
 
 if __name__ == "__main__":
     unittest.main()

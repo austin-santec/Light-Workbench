@@ -9,6 +9,12 @@ from .coc_preparation import (
     infer_front_panel_channel_count,
     prepare_coc,
 )
+from .part_numbers import (
+    MAX_FRONT_PANEL_CHANNELS,
+    OsxPartNumber,
+    parse_osx_part_number,
+    resolve_front_panel_channel_count,
+)
 from .run_data import RunData
 from .measurement_attempts import (
     MeasurementAttempt,
@@ -63,6 +69,10 @@ __all__ = [
     "CocSourceRun",
     "infer_front_panel_channel_count",
     "prepare_coc",
+    "MAX_FRONT_PANEL_CHANNELS",
+    "OsxPartNumber",
+    "parse_osx_part_number",
+    "resolve_front_panel_channel_count",
     "RunData",
     "MeasurementAttempt",
     "latest_attempt_for_channel",

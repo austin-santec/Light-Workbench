@@ -249,8 +249,9 @@ a compatibility facade, while `HardwareRunController` and new application code
 use the package-owned implementation directly.
 
 The reference-controller increment reuses `LiveILReadingController` for the
-main-window Calculate Reference workflow. The setup screen retains its
-progress dialog and preflight device check, while thread creation, worker
+main-window Calculate Reference workflow. The Current readings panel owns the
+reference presentation, while the progress dialog and preflight device check,
+thread creation, worker
 signals, reference commands, and meter cleanup now use the same controller
 lifecycle as Live IL.
 

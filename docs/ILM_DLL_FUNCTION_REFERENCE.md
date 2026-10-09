@@ -25,8 +25,8 @@ existing production workflow:
 | `OpenDriver` | Initialize the DLL driver. |
 | `RemoteMode` | Enter and leave remote mode. |
 | `OperationMode` | Existing startup command; its OP831-specific meaning requires vendor clarification before changing it. |
-| `SetWavelength` | Request 1310 nm or 1550 nm. The DLL may choose the closest discrete wavelength. |
-| `GetWavelength` | Verify the actual wavelength before reading power. |
+| `SetWavelength` | Select the OPM calibration wavelength (1310/1550 nm for SM or 850/1300 nm for MM). It does not select or prove the physical laser wavelength. |
+| `GetWavelength` | Read back the selected OPM wavelength before reading power. It does not verify the emitted physical source wavelength. |
 | `SourceON` | Turn the selected physical source on or off. |
 | `ReadPower` | Read absolute optical power in dBm. |
 | `CloseDriver` | Release the initialized driver and USB session. This export exists in the installed DLL even though it is not listed in the supplied HTML function index. |
@@ -40,6 +40,13 @@ insertion loss (dB) = reference power (dBm) - measured power (dBm)
 
 The DLL’s internal relative-loss/reference functions must not replace this
 calculation.
+
+The physical source is selected separately with `SourceON(source_id, state)`.
+Its nominal wavelength comes from the adapter-declared source-capability
+profile. The current OP815 profile defines source 0 as 1310 nm and source 1 as
+1550 nm. Because the DLL does not expose a dependable source table,
+`GetWavelength`, `GetModuleID`, and the OPM wavelength index must never be used
+to infer a source's emitted wavelength.
 
 ## Approved future diagnostic candidates
 

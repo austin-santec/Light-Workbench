@@ -33,6 +33,7 @@ from domain.measurement import (
 from domain.reference import calculate_reference_offsets
 from hardware.factory import HardwareFactory
 from hardware.session import OpticalTestSession
+from domain.wavelengths import SM_SOURCE_PROFILE, measurement_configuration
 
 
 class LiveILReadingWorker(QObject):
@@ -44,16 +45,24 @@ class LiveILReadingWorker(QObject):
     failed = pyqtSignal(str)
     finished = pyqtSignal()
 
-    def __init__(self, meter):
+    def __init__(self, meter, measurement_configuration_value=None):
         super().__init__()
         self.meter = meter
         self.hardware_session = OpticalTestSession(meter)
         self._finished = False
+        self.measurement_configuration = (
+            measurement_configuration_value
+            if measurement_configuration_value is not None
+            else measurement_configuration("SM", SM_SOURCE_PROFILE)
+        )
 
     @pyqtSlot()
     def start(self):
         try:
             self.hardware_session.connect()
+            configure = getattr(self.meter, "configure_measurement", None)
+            if configure is not None:
+                configure(self.measurement_configuration)
             self.connected.emit(self.meter.description or "OP815 connected")
         except Exception as error:
             # Leave the worker event loop available until the UI receives the
@@ -68,18 +77,25 @@ class LiveILReadingWorker(QObject):
             return
         try:
             setter = getattr(self.meter, "set_trace_context", None)
+            wavelengths = self.measurement_configuration.opm_wavelengths_nm
             if setter is not None:
                 setter(
-                    reference_1310_dbm=float(reference_1310),
-                    reference_1550_dbm=float(reference_1550),
+                    **{
+                        "reference_%d_dbm" % wavelengths[0]: float(reference_1310),
+                        "reference_%d_dbm" % wavelengths[1]: float(reference_1550),
+                    },
                     method="live_il",
                 )
             measurements = self.meter.measure_both_wavelengths()
             losses = calculate_insertion_loss(
-                {1310: reference_1310, 1550: reference_1550},
+                {
+                    wavelengths[0]: reference_1310,
+                    wavelengths[1]: reference_1550,
+                },
                 measurements,
+                wavelengths,
             )
-            self.reading_ready.emit(losses[1310], losses[1550])
+            self.reading_ready.emit(losses[wavelengths[0]], losses[wavelengths[1]])
         except Exception as error:
             self.failed.emit(str(error))
 
@@ -89,11 +105,18 @@ class LiveILReadingWorker(QObject):
             return
         try:
             measurements = self.meter.measure_reference_wavelengths()
-            validation = validate_reference_measurements(measurements)
+            wavelengths = self.measurement_configuration.opm_wavelengths_nm
+            validation = validate_reference_measurements(
+                measurements, wavelengths=wavelengths
+            )
             if not validation.valid:
-                self.failed.emit(format_dark_reference_error(measurements))
+                self.failed.emit(
+                    format_dark_reference_error(measurements, wavelengths=wavelengths)
+                )
                 return
-            reference_1310, reference_1550 = calculate_reference_offsets(measurements)
+            reference_1310, reference_1550 = calculate_reference_offsets(
+                measurements, wavelengths
+            )
             self.reference_ready.emit(reference_1310, reference_1550)
         except Exception as error:
             self.failed.emit(str(error))
@@ -133,6 +156,7 @@ class LiveILReadingDialog(QDialog):
         auto_calculate_reference=False,
         support_logger=None,
         workflow_id="",
+        measurement_configuration_value=None,
     ):
         super().__init__(parent)
         self.hardware_factory = HardwareFactory()
@@ -145,6 +169,14 @@ class LiveILReadingDialog(QDialog):
         self.worker = None
         self.support_logger = support_logger
         self.workflow_id = str(workflow_id or "")
+        self.measurement_configuration = (
+            measurement_configuration_value
+            if measurement_configuration_value is not None
+            else measurement_configuration("SM", SM_SOURCE_PROFILE)
+        )
+        first_wavelength, second_wavelength = (
+            self.measurement_configuration.opm_wavelengths_nm
+        )
         self.live_controller = LiveILReadingController(
             self,
             worker_factory=LiveILReadingWorker,
@@ -188,8 +220,8 @@ class LiveILReadingDialog(QDialog):
         reference_layout = QFormLayout(reference_box)
         self.reference_1310_spin = self._reference_spin(reference_1310)
         self.reference_1550_spin = self._reference_spin(reference_1550)
-        reference_layout.addRow("1310 nm:", self.reference_1310_spin)
-        reference_layout.addRow("1550 nm:", self.reference_1550_spin)
+        reference_layout.addRow("%d nm:" % first_wavelength, self.reference_1310_spin)
+        reference_layout.addRow("%d nm:" % second_wavelength, self.reference_1550_spin)
         self.calculate_reference_button = QPushButton("Calculate Reference")
         self.calculate_reference_button.setToolTip(
             "Read the meter with a zero software reference and apply the offsets."
@@ -215,9 +247,9 @@ class LiveILReadingDialog(QDialog):
         self.live_update_indicator.setVisible(False)
         readings_header.addWidget(self.live_update_indicator)
         readings_layout.addLayout(readings_header)
-        self.reading_1310_label = QLabel("1310 nm IL: -")
+        self.reading_1310_label = QLabel("%d nm IL: -" % first_wavelength)
         self.reading_1310_label.setObjectName("reading")
-        self.reading_1550_label = QLabel("1550 nm IL: -")
+        self.reading_1550_label = QLabel("%d nm IL: -" % second_wavelength)
         self.reading_1550_label.setObjectName("reading")
         readings_layout.addWidget(self.reading_1310_label)
         readings_layout.addWidget(self.reading_1550_label)
@@ -269,6 +301,9 @@ class LiveILReadingDialog(QDialog):
         layout.addLayout(button_layout)
 
     def _build_repeatability_panel(self):
+        first_wavelength, second_wavelength = (
+            self.measurement_configuration.opm_wavelengths_nm
+        )
         panel = QGroupBox("Repeatability Test")
         panel.setMinimumWidth(440)
         panel_layout = QVBoxLayout(panel)
@@ -282,7 +317,11 @@ class LiveILReadingDialog(QDialog):
 
         self.repeatability_table = QTableWidget(0, 3)
         self.repeatability_table.setHorizontalHeaderLabels(
-            ["Reading", "1310 nm IL (dB)", "1550 nm IL (dB)"]
+            [
+                "Reading",
+                "%d nm IL (dB)" % first_wavelength,
+                "%d nm IL (dB)" % second_wavelength,
+            ]
         )
         self.repeatability_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.repeatability_table.setSelectionMode(QTableWidget.NoSelection)
@@ -293,8 +332,8 @@ class LiveILReadingDialog(QDialog):
         stats_layout = QFormLayout(stats_box)
         self.repeatability_stats_1310_label = QLabel("No readings")
         self.repeatability_stats_1550_label = QLabel("No readings")
-        stats_layout.addRow("1310 nm:", self.repeatability_stats_1310_label)
-        stats_layout.addRow("1550 nm:", self.repeatability_stats_1550_label)
+        stats_layout.addRow("%d nm:" % first_wavelength, self.repeatability_stats_1310_label)
+        stats_layout.addRow("%d nm:" % second_wavelength, self.repeatability_stats_1550_label)
         panel_layout.addWidget(stats_box)
 
         repeatability_buttons = QHBoxLayout()
@@ -328,7 +367,9 @@ class LiveILReadingDialog(QDialog):
         if self.thread is not None:
             return
         try:
-            self.live_controller.start(self.meter_factory)
+            self.live_controller.start(
+                self.meter_factory, self.measurement_configuration
+            )
             self.thread = self.live_controller.thread
             self.worker = self.live_controller.worker
             self.start_button.setEnabled(False)
@@ -567,11 +608,20 @@ class LiveILReadingDialog(QDialog):
         )
 
     def reference_ready(self, reference_1310, reference_1550):
+        first_wavelength, second_wavelength = (
+            self.measurement_configuration.opm_wavelengths_nm
+        )
         self._record_support(
             "reference.completed",
             category="measurement",
-            reference_1310_dbm=reference_1310,
-            reference_1550_dbm=reference_1550,
+            wavelength_mode=self.measurement_configuration.wavelength_profile.code,
+            references_by_wavelength={
+                str(first_wavelength): reference_1310,
+                str(second_wavelength): reference_1550,
+            },
+            source_wavelengths_nm=list(
+                self.measurement_configuration.source_wavelengths_nm
+            ),
             both_wavelengths_complete=True,
             status="success",
         )
@@ -620,7 +670,13 @@ class LiveILReadingDialog(QDialog):
 
     def reading_ready(self, loss_1310, loss_1550):
         self.read_pending = False
-        validation = validate_insertion_loss({1310: loss_1310, 1550: loss_1550})
+        first_wavelength, second_wavelength = (
+            self.measurement_configuration.opm_wavelengths_nm
+        )
+        validation = validate_insertion_loss(
+            {first_wavelength: loss_1310, second_wavelength: loss_1550},
+            (first_wavelength, second_wavelength),
+        )
         method = (
             "repeatability"
             if self.repeatability_read_pending
@@ -630,10 +686,21 @@ class LiveILReadingDialog(QDialog):
         )
         self._record_support(
             "measurement.two_wavelength_completed",
-            reference_1310_dbm=self.reference_1310_spin.value(),
-            reference_1550_dbm=self.reference_1550_spin.value(),
-            loss_1310_db=loss_1310,
-            loss_1550_db=loss_1550,
+            wavelength_mode=self.measurement_configuration.wavelength_profile.code,
+            references_by_wavelength={
+                str(first_wavelength): self.reference_1310_spin.value(),
+                str(second_wavelength): self.reference_1550_spin.value(),
+            },
+            losses_by_wavelength={
+                str(first_wavelength): loss_1310,
+                str(second_wavelength): loss_1550,
+            },
+            source_wavelengths_nm=list(
+                self.measurement_configuration.source_wavelengths_nm
+            ),
+            measurement_classification=(
+                self.measurement_configuration.classification.value
+            ),
             acquisition_method=method,
             reading_state="temporary",
             both_wavelengths_complete=True,
@@ -643,8 +710,12 @@ class LiveILReadingDialog(QDialog):
             ),
             status="success" if validation.valid else "warning",
         )
-        self.reading_1310_label.setText("1310 nm IL: %.4f dB" % loss_1310)
-        self.reading_1550_label.setText("1550 nm IL: %.4f dB" % loss_1550)
+        self.reading_1310_label.setText(
+            "%d nm IL: %.4f dB" % (first_wavelength, loss_1310)
+        )
+        self.reading_1550_label.setText(
+            "%d nm IL: %.4f dB" % (second_wavelength, loss_1550)
+        )
         if self.repeatability_read_pending:
             self.repeatability_read_pending = False
             self._add_repeatability_reading(loss_1310, loss_1550)

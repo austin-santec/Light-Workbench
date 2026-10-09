@@ -139,6 +139,44 @@ def _reference_snapshots(measurements):
     return list(snapshots.values())
 
 
+def _measurement_payload(record):
+    """Serialize a reading without assigning SM names to MM values."""
+    values = {
+        "channel": record.channel,
+        "physical_port": record.physical_port,
+        "wavelength_mode": record.wavelength_mode,
+        "opm_wavelengths_nm": list(record.opm_wavelengths_nm),
+        "source_wavelengths_nm": list(record.source_wavelengths_nm),
+        "source_ids": list(record.source_ids),
+        "measurement_classification": record.measurement_classification,
+        "losses_by_wavelength": {
+            str(wavelength): loss
+            for wavelength, loss in record.losses_by_wavelength.items()
+        },
+        "reference": record.reference_snapshot,
+    }
+    if record.wavelength_mode == "SM":
+        values["loss_1310_db"] = record.loss_1310
+        values["loss_1550_db"] = record.loss_1550
+    return values
+
+
+def _wavelength_configuration(measurements, metadata):
+    if measurements:
+        record = measurements[0]
+        return {
+            "wavelength_mode": record.wavelength_mode,
+            "opm_wavelengths_nm": list(record.opm_wavelengths_nm),
+            "source_wavelengths_nm": list(record.source_wavelengths_nm),
+            "source_ids": list(record.source_ids),
+            "measurement_classification": record.measurement_classification,
+            "mode_selection_method": metadata.get("Mode selection method", ""),
+            "source_profile_id": metadata.get("Source profile", ""),
+            "source_profile_origin": metadata.get("Source profile origin", ""),
+        }
+    return None
+
+
 class RunRecorder:
     """Write the current table and run-level timing metadata to disk."""
 
@@ -277,18 +315,12 @@ class RunRecorder:
             "run_number": stored_metadata.get("Run number"),
             "warning_limit_db": self.limit,
             "criteria": self.criteria_snapshot,
+            "wavelength_configuration": _wavelength_configuration(
+                measurements, stored_metadata
+            ),
             "reference_snapshots": _reference_snapshots(measurements),
             "metadata": stored_metadata,
-            "measurements": [
-                {
-                    "channel": record.channel,
-                    "physical_port": record.physical_port,
-                    "loss_1310_db": record.loss_1310,
-                    "loss_1550_db": record.loss_1550,
-                    "reference": record.reference_snapshot,
-                }
-                for record in measurements
-            ],
+            "measurements": [_measurement_payload(record) for record in measurements],
             "measurement_attempts": [attempt.as_dict() for attempt in attempts],
             "switch_test_sessions": self.switch_test_sessions,
         }
@@ -507,9 +539,26 @@ class RunRecorder:
         return self.metadata
 
     def _write_csv(self, measurements, *, destination=None):
-        rows = [["channel", "1310 IL", "1550 IL"]]
+        wavelengths = (
+            measurements[0].opm_wavelengths_nm
+            if measurements
+            else (
+                (850, 1300)
+                if str(self.metadata.get("Wavelength mode", "SM")).upper() == "MM"
+                else (1310, 1550)
+            )
+        )
+        rows = [[
+            "channel",
+            "%d IL" % wavelengths[0],
+            "%d IL" % wavelengths[1],
+        ]]
         rows.extend(
-            [record.channel, "%.4f" % record.loss_1310, "%.4f" % record.loss_1550]
+            [
+                record.channel,
+                "%.4f" % record.loss_for(wavelengths[0]),
+                "%.4f" % record.loss_for(wavelengths[1]),
+            ]
             for record in measurements
         )
         metadata_rows = [["Metadata", "Value"]]
@@ -535,8 +584,8 @@ class RunRecorder:
                             + metadata
                             + [
                                 "",
-                                "Reference 1310 dBm",
-                                "Reference 1550 dBm",
+                                "Reference %d dBm" % wavelengths[0],
+                                "Reference %d dBm" % wavelengths[1],
                                 "Reference method",
                                 "Reference timestamp",
                                 "Reference snapshot ID",
@@ -546,13 +595,27 @@ class RunRecorder:
                     reference = None
                     if index > 0 and index - 1 < len(measurements):
                         reference = measurements[index - 1].reference_snapshot
+                    reference_values = (
+                        reference.get("references_by_wavelength", {})
+                        if isinstance(reference, dict)
+                        else {}
+                    )
+                    if isinstance(reference, dict) and not reference_values:
+                        reference_values = {
+                            "1310": reference.get("reference_1310_dbm"),
+                            "1550": reference.get("reference_1550_dbm"),
+                        }
                     reference_columns = [
-                        "%.2f" % reference["reference_1310_dbm"],
-                        "%.2f" % reference["reference_1550_dbm"],
+                        "%.2f" % float(reference_values[str(wavelengths[0])]),
+                        "%.2f" % float(reference_values[str(wavelengths[1])]),
                         reference.get("method", ""),
                         reference.get("established_at", ""),
                         reference.get("snapshot_id", ""),
-                    ] if isinstance(reference, dict) else ["", "", "", "", ""]
+                    ] if (
+                        isinstance(reference, dict)
+                        and reference_values.get(str(wavelengths[0])) is not None
+                        and reference_values.get(str(wavelengths[1])) is not None
+                    ) else ["", "", "", "", ""]
                     writer.writerow(measurement + [""] + metadata + [""] + reference_columns)
                 csv_file.flush()
                 os.fsync(csv_file.fileno())

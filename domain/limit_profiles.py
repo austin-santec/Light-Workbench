@@ -1,4 +1,4 @@
-"""Model-specific insertion-loss quality criteria.
+"""Model- and wavelength-mode-specific insertion-loss quality criteria.
 
 The optical-switch model determines which criteria apply.  Keeping this
 separate from the hardware driver prevents SCPI/VISA code from becoming the
@@ -11,6 +11,22 @@ from typing import Mapping
 
 
 SUPPORTED_SWITCH_MODELS = ("OSX-100", "OSX-150")
+SUPPORTED_WAVELENGTH_MODES = ("SM", "MM")
+
+
+def normalize_wavelength_mode(value: str | None) -> str:
+    text = str(value or "SM").strip().upper().replace("-", " ")
+    if text in {"MM", "MULTIMODE", "MULTI MODE"}:
+        return "MM"
+    return "SM"
+
+
+def profile_key(model: str, wavelength_mode: str = "SM") -> str:
+    """Return the stable persisted key for one model/mode profile."""
+    return "%s/%s" % (
+        normalize_switch_model(model),
+        normalize_wavelength_mode(wavelength_mode),
+    )
 
 
 def normalize_switch_model(value: str | None) -> str:
@@ -56,9 +72,11 @@ class LimitProfile:
     warning_enabled: bool
     warning_above_db: float | None
     fail_above_db: float
+    wavelength_mode: str = "SM"
 
     def validate(self) -> "LimitProfile":
         model = normalize_switch_model(self.model)
+        wavelength_mode = normalize_wavelength_mode(self.wavelength_mode)
         if model not in SUPPORTED_SWITCH_MODELS and model != "LEGACY":
             raise ValueError("Unsupported switch model: %s" % self.model)
         if not str(self.profile_name).strip() or not str(self.revision).strip():
@@ -85,11 +103,19 @@ class LimitProfile:
                 raise ValueError("Warning limit must be below the fail limit.")
         elif model == "OSX-150":
             raise ValueError("OSX-150 requires an optimization warning limit.")
+        object.__setattr__(self, "model", model)
+        object.__setattr__(self, "wavelength_mode", wavelength_mode)
         return self
 
-    def classify(self, loss_1310: float, loss_1550: float) -> LimitAssessment:
-        """Classify both wavelengths using strict boundary comparisons."""
-        losses = ((1310, float(loss_1310)), (1550, float(loss_1550)))
+    def classify(
+        self,
+        first_loss: float,
+        second_loss: float,
+        wavelengths: tuple[int, int] = (1310, 1550),
+    ) -> LimitAssessment:
+        """Classify both configured wavelengths using strict comparisons."""
+        first_wavelength, second_wavelength = tuple(wavelengths)
+        losses = ((first_wavelength, float(first_loss)), (second_wavelength, float(second_loss)))
         too_good = tuple(
             wavelength
             for wavelength, loss in losses
@@ -113,6 +139,7 @@ class LimitProfile:
         """Return the stable JSON-compatible run snapshot."""
         return {
             "model": normalize_switch_model(self.model),
+            "wavelength_mode": normalize_wavelength_mode(self.wavelength_mode),
             "profile_name": str(self.profile_name),
             "revision": str(self.revision),
             "too_good_below_db": float(self.too_good_below_db),
@@ -138,19 +165,58 @@ class LimitProfile:
             warning_enabled=bool(warning_enabled),
             warning_above_db=None if warning in (None, "", "none") else float(warning),
             fail_above_db=float(values["fail_above_db"]),
+            wavelength_mode=normalize_wavelength_mode(
+                values.get("wavelength_mode", values.get("mode", "SM"))
+            ),
         ).validate()
 
 
-def default_limit_profiles() -> dict[str, LimitProfile]:
-    """Return the shipped production defaults."""
-    return {
-        "OSX-100": LimitProfile(
-            "OSX-100", "OSX-100 standard", "1", 0.2, False, None, 0.8
-        ),
-        "OSX-150": LimitProfile(
-            "OSX-150", "OSX-150 standard", "1", 0.5, True, 2.25, 2.5
-        ),
-    }
+class LimitProfileCollection(dict):
+    """Mapping of all four profiles with legacy model-only lookup support."""
+
+    def __getitem__(self, key):
+        if isinstance(key, tuple):
+            key = profile_key(*key)
+        elif key in SUPPORTED_SWITCH_MODELS:
+            key = profile_key(key, "SM")
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __contains__(self, key):
+        if isinstance(key, tuple):
+            key = profile_key(*key)
+        elif key in SUPPORTED_SWITCH_MODELS:
+            key = profile_key(key, "SM")
+        return super().__contains__(key)
+
+    def for_model_mode(self, model, wavelength_mode):
+        return self[profile_key(model, wavelength_mode)]
+
+
+def default_limit_profiles() -> LimitProfileCollection:
+    """Return independent SM/MM profiles with the shipped criteria."""
+    profiles = LimitProfileCollection()
+    for model, too_good, warning_enabled, warning, fail in (
+        ("OSX-100", 0.2, False, None, 0.8),
+        ("OSX-150", 0.5, True, 2.25, 2.5),
+    ):
+        for mode in SUPPORTED_WAVELENGTH_MODES:
+            profiles[profile_key(model, mode)] = LimitProfile(
+                model,
+                "%s %s standard" % (model, mode),
+                "1",
+                too_good,
+                warning_enabled,
+                warning,
+                fail,
+                mode,
+            ).validate()
+    return profiles
 
 
 def legacy_limit_profile(warning_limit: float) -> LimitProfile:
@@ -164,14 +230,19 @@ def legacy_limit_profile(warning_limit: float) -> LimitProfile:
         True,
         limit,
         limit,
+        "SM",
     )
 
 
 __all__ = [
     "SUPPORTED_SWITCH_MODELS",
+    "SUPPORTED_WAVELENGTH_MODES",
+    "LimitProfileCollection",
     "LimitAssessment",
     "LimitProfile",
     "default_limit_profiles",
     "legacy_limit_profile",
     "normalize_switch_model",
+    "normalize_wavelength_mode",
+    "profile_key",
 ]

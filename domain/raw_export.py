@@ -25,8 +25,7 @@ def format_raw_measurements(
         "\t".join(
             (
                 str(record.channel),
-                format_string % record.loss_1310,
-                format_string % record.loss_1550,
+                *(format_string % value for value in record.ordered_losses),
             )
         )
         for record in sorted(records_by_channel.values(), key=lambda item: item.channel)

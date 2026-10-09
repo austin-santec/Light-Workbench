@@ -18,6 +18,8 @@ class DiagnosticTraceEvent:
     channel: int | None = None
     physical_port: int | None = None
     requested_wavelength_nm: int | None = None
+    requested_opm_wavelength_nm: int | None = None
+    nominal_source_wavelength_nm: int | None = None
     actual_wavelength_nm: int | None = None
     wavelength_index: int | None = None
     wavelength_count: int | None = None

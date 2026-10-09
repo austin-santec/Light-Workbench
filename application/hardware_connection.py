@@ -644,6 +644,10 @@ class HardwareConnectionManager(QObject):
             resource_address=info.resource_address,
             configured_channel_count=info.configured_channel_count,
             discovery_method=info.discovery_method,
+            source_profile_id=info.source_profile_id,
+            source_profile_origin=info.source_profile_origin,
+            source_ids=list(info.source_ids),
+            source_wavelengths_nm=list(info.source_wavelengths_nm),
             connection_state=info.state.value,
             error_message=info.error,
         )
@@ -765,6 +769,17 @@ class ManagedPowerMeter(_ManagedDevice):
 
     def measure_reference_wavelengths(self):
         return self._invoke("measure_reference_wavelengths")
+
+    def configure_measurement(self, configuration):
+        self._configure_optional("configure_measurement", configuration)
+
+    def source_capability_profile(self):
+        from domain.wavelengths import SM_SOURCE_PROFILE
+
+        if not self._acquired:
+            return SM_SOURCE_PROFILE
+        result = self._invoke_optional("source_capability_profile")
+        return result if result is not None else SM_SOURCE_PROFILE
 
     def _configure_optional(self, method_name, *args, **kwargs):
         if not self._acquired:

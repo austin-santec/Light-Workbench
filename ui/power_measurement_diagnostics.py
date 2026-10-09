@@ -36,6 +36,7 @@ from application.red_light_controller import RedLightTestController
 from application.timing import LIVE_UPDATE_PAUSE_MS
 from config.app_info import APP_VERSION
 from domain.models import ConnectionState, DeviceCategory
+from domain.wavelengths import measurement_configuration
 from domain.measurement import (
     format_dark_reference_error,
     validate_reference_measurements,
@@ -111,6 +112,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         switch_factory=None,
         support_logger=None,
         workflow_id="",
+        measurement_configuration_value=None,
     ):
         super().__init__(parent)
         self.hardware_factory = HardwareFactory()
@@ -118,12 +120,22 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self.switch_factory = switch_factory or self.hardware_factory.create_switch
         self.support_logger = support_logger
         self.workflow_id = str(workflow_id or "")
+        self.measurement_configuration = (
+            measurement_configuration_value or measurement_configuration()
+        )
+        self.wavelengths = self.measurement_configuration.opm_wavelengths_nm
 
         self.trace_recorder = DiagnosticTraceRecorder(APP_VERSION)
+        self.trace_recorder.update_metadata(
+            **self.measurement_configuration.as_dict()
+        )
         self.meter_controller = PowerDiagnosticsController(
             self,
             trace_callback=self.trace_recorder.record,
-            trace_metadata={"application_version": APP_VERSION},
+            trace_metadata={
+                "application_version": APP_VERSION,
+                **self.measurement_configuration.as_dict(),
+            },
         )
         self.switch_controller = RedLightTestController(self)
         self.meter_controller.connected.connect(self._meter_connected)
@@ -230,8 +242,8 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         reference_layout = QFormLayout(reference_box)
         self.reference_1310_spin = self._reference_spin(reference_1310)
         self.reference_1550_spin = self._reference_spin(reference_1550)
-        reference_layout.addRow("1310 nm:", self.reference_1310_spin)
-        reference_layout.addRow("1550 nm:", self.reference_1550_spin)
+        reference_layout.addRow("%d nm:" % self.wavelengths[0], self.reference_1310_spin)
+        reference_layout.addRow("%d nm:" % self.wavelengths[1], self.reference_1550_spin)
         reference_buttons = QHBoxLayout()
         self.calculate_reference_button = QPushButton("Calculate Reference")
         self.calculate_reference_button.clicked.connect(self.calculate_reference)
@@ -254,7 +266,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         current_layout.addWidget(QLabel("Calculation"), 0, 3)
         current_layout.addWidget(QLabel("Insertion loss"), 0, 4)
         self.current_labels = {}
-        for row, wavelength in enumerate((1310, 1550), start=1):
+        for row, wavelength in enumerate(self.wavelengths, start=1):
             current_layout.addWidget(QLabel("%d nm" % wavelength), row, 0)
             measured = QLabel("-")
             reference = QLabel("-")
@@ -282,12 +294,12 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
                 "Time",
                 "Channel",
                 "Physical port",
-                "1310 measured (dBm)",
-                "1310 reference (dBm)",
-                "1310 IL (dB)",
-                "1550 measured (dBm)",
-                "1550 reference (dBm)",
-                "1550 IL (dB)",
+                "%d measured (dBm)" % self.wavelengths[0],
+                "%d reference (dBm)" % self.wavelengths[0],
+                "%d IL (dB)" % self.wavelengths[0],
+                "%d measured (dBm)" % self.wavelengths[1],
+                "%d reference (dBm)" % self.wavelengths[1],
+                "%d IL (dB)" % self.wavelengths[1],
                 "Method",
             ]
         )
@@ -468,7 +480,10 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         if self._warn_if_hardware_active() or self.meter_controller.worker is not None:
             return
         try:
-            self.meter_controller.start(self.meter_factory)
+            self.meter_controller.start(
+                self.meter_factory,
+                self.measurement_configuration,
+            )
         except Exception as error:
             QMessageBox.critical(self, "Power diagnostics", str(error))
             return
@@ -539,7 +554,9 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         physical_port = (
             self.last_physical_port if self.switch_connected else None
         )
-        self.status_label.setText("Reading 1310 nm and 1550 nm absolute power...")
+        self.status_label.setText(
+            "Reading %d nm and %d nm absolute power..." % self.wavelengths
+        )
         self.meter_controller.read(
             self.reference_1310_spin.value(),
             self.reference_1550_spin.value(),
@@ -579,11 +596,18 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         )
         self._record_support(
             "measurement.two_wavelength_completed",
-            measured_power_dbm={"1310": measured[1310], "1550": measured[1550]},
-            reference_1310_dbm=reference_1310,
-            reference_1550_dbm=reference_1550,
-            loss_1310_db=loss_1310,
-            loss_1550_db=loss_1550,
+            wavelength_mode=self.measurement_configuration.wavelength_profile.code,
+            measured_power_dbm={
+                str(wavelength): measured[wavelength]
+                for wavelength in self.wavelengths
+            },
+            first_reference_dbm=reference_1310,
+            second_reference_dbm=reference_1550,
+            first_loss_db=loss_1310,
+            second_loss_db=loss_1550,
+            measurement_classification=(
+                self.measurement_configuration.classification.value
+            ),
             logical_channel=(self.channel_spin.value() if self.switch_connected else None),
             physical_port=(self.last_physical_port if self.switch_connected else None),
             acquisition_method=method,
@@ -609,8 +633,12 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         loss_1550,
     ):
         values = {
-            1310: (measured[1310], reference_1310, loss_1310),
-            1550: (measured[1550], reference_1550, loss_1550),
+            self.wavelengths[0]: (
+                measured[self.wavelengths[0]], reference_1310, loss_1310
+            ),
+            self.wavelengths[1]: (
+                measured[self.wavelengths[1]], reference_1550, loss_1550
+            ),
         }
         for wavelength, (power, reference, loss) in values.items():
             labels = self.current_labels[wavelength]
@@ -651,12 +679,21 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
                 if self.switch_connected and self.last_physical_port is not None
                 else None
             ),
-            measured_1310=float(measured[1310]),
+            measured_1310=float(measured[self.wavelengths[0]]),
             reference_1310=float(reference_1310),
             insertion_loss_1310=float(loss_1310),
-            measured_1550=float(measured[1550]),
+            measured_1550=float(measured[self.wavelengths[1]]),
             reference_1550=float(reference_1550),
             insertion_loss_1550=float(loss_1550),
+            wavelength_mode=self.measurement_configuration.wavelength_profile.code,
+            opm_wavelengths_nm=self.wavelengths,
+            source_wavelengths_nm=(
+                self.measurement_configuration.source_wavelengths_nm
+            ),
+            source_ids=self.measurement_configuration.source_ids,
+            measurement_classification=(
+                self.measurement_configuration.classification.value
+            ),
         )
         self.history.append(reading)
         row = self.history_table.rowCount()
@@ -712,8 +749,13 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self.reference_1310_spin.setValue(reference_1310)
         self.reference_1550_spin.setValue(reference_1550)
         self.last_reference_label.setText(
-            "1310: %.4f dBm; 1550: %.4f dBm"
-            % (measured[1310], measured[1550])
+            "%d: %.4f dBm; %d: %.4f dBm"
+            % (
+                self.wavelengths[0],
+                measured[self.wavelengths[0]],
+                self.wavelengths[1],
+                measured[self.wavelengths[1]],
+            )
         )
         self._close_reference_progress()
         self.status_label.setText(
@@ -733,11 +775,13 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
             return
         if self.last_reference_measurements is not None:
             validation = validate_reference_measurements(
-                self.last_reference_measurements
+                self.last_reference_measurements,
+                wavelengths=self.wavelengths,
             )
             if not validation.valid:
                 message = format_dark_reference_error(
-                    self.last_reference_measurements
+                    self.last_reference_measurements,
+                    wavelengths=self.wavelengths,
                 )
                 self._record_support(
                     "reference.apply_rejected_dark",
@@ -1102,7 +1146,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
             "Samples: %d (%s readings)" % (analysis.count, analysis.method.lower()),
             "",
         ]
-        for wavelength in (1310, 1550):
+        for wavelength in analysis.by_wavelength:
             statistics = analysis.by_wavelength[wavelength]
             lines.extend(
                 [

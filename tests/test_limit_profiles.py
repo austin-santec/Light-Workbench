@@ -6,10 +6,27 @@ from domain.limit_profiles import LimitProfile, default_limit_profiles, legacy_l
 class LimitProfileTests(unittest.TestCase):
     def test_defaults_match_model_rules(self):
         profiles = default_limit_profiles()
+        self.assertEqual(
+            set(profiles),
+            {"OSX-100/SM", "OSX-100/MM", "OSX-150/SM", "OSX-150/MM"},
+        )
         self.assertEqual(profiles["OSX-100"].warning_enabled, False)
         self.assertEqual(profiles["OSX-100"].fail_above_db, 0.8)
+        self.assertEqual(profiles["OSX-100/MM"].fail_above_db, 0.8)
         self.assertEqual(profiles["OSX-150"].warning_above_db, 2.25)
         self.assertEqual(profiles["OSX-150"].fail_above_db, 2.5)
+        self.assertEqual(profiles["OSX-150/MM"].warning_above_db, 2.25)
+
+    def test_model_and_mode_profiles_are_independent(self):
+        profiles = default_limit_profiles()
+        self.assertNotEqual(profiles["OSX-150/SM"].wavelength_mode, profiles["OSX-150/MM"].wavelength_mode)
+        self.assertNotEqual(profiles["OSX-100/SM"].wavelength_mode, profiles["OSX-100/MM"].wavelength_mode)
+
+    def test_legacy_model_lookup_aliases_only_the_sm_profile(self):
+        profiles = default_limit_profiles()
+        self.assertIn("OSX-100", profiles)
+        self.assertIs(profiles["OSX-100"], profiles["OSX-100/SM"])
+        self.assertIsNot(profiles["OSX-100"], profiles["OSX-100/MM"])
 
     def test_boundaries_are_not_triggered(self):
         profile = default_limit_profiles()["OSX-150"]

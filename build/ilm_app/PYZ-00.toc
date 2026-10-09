@@ -334,6 +334,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\models.py',
    'PYMODULE'),
+  ('domain.part_numbers',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\part_numbers.py',
+   'PYMODULE'),
   ('domain.raw_export',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\raw_export.py',
@@ -361,6 +365,10 @@
   ('domain.timing',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\timing.py',
+   'PYMODULE'),
+  ('domain.wavelengths',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\wavelengths.py',
    'PYMODULE'),
   ('email',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\email\\__init__.py',

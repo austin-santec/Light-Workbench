@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
-import re
 from pathlib import Path
 from typing import Mapping, Sequence
 
 from .limit_profiles import normalize_switch_model
 from .models import MeasurementRecord
+from .part_numbers import infer_front_panel_channel_count
 from .replacements import ReplacementReading, analyze_replacements
 
 
@@ -97,19 +97,6 @@ class CocPreparationResult:
         )
 
 
-def infer_front_panel_channel_count(part_number: str) -> int | None:
-    """Extract the known three-digit channel field from an OSX part number."""
-    match = re.match(
-        r"^OSX-(?:100|150)-[^-]+-(\d{3})(?:-|$)",
-        str(part_number or "").strip(),
-        re.IGNORECASE,
-    )
-    if match is None:
-        return None
-    count = int(match.group(1))
-    return count if 1 <= count <= COC_MAX_CHANNELS else None
-
-
 def prepare_coc(
     base_run: CocSourceRun,
     front_panel_channel_count: int,
@@ -126,6 +113,29 @@ def prepare_coc(
         raise ValueError("Base and replacement/retest runs must be different.")
 
     validation_issues = list(_compatibility_issues(base_run, supplemental_run))
+    if any(
+        issue.code in {
+            "unsupported_wavelength_mode",
+            "unsupported_supplemental_wavelength_mode",
+        }
+        for issue in validation_issues
+    ):
+        return CocPreparationResult(
+            front_panel_channel_count=count,
+            channels=(),
+            missing_channels=tuple(range(1, count + 1)),
+            failures=(),
+            invalid_readings=(),
+            validation_issues=tuple(validation_issues),
+            optimization_channels=(),
+            optimization_recommendations=(),
+            effective_criteria=dict(base_run.criteria or {}),
+            base_run_number=base_run.run_number,
+            supplemental_run_number=(
+                supplemental_run.run_number if supplemental_run is not None else None
+            ),
+            template_capacity=45 if count <= 45 else 48,
+        )
     replacements = _replacement_map(completed_replacements)
     base_records = _index_last(base_run.measurements)
     supplemental_records = (
@@ -284,6 +294,33 @@ def _compatibility_issues(
     supplemental_run: CocSourceRun | None,
 ) -> tuple[CocValidationIssue, ...]:
     issues = []
+    base_signatures = _measurement_signatures(base_run)
+    if str(base_run.metadata.get("Wavelength mode") or "SM").upper() != "SM":
+        issues.append(
+            CocValidationIssue(
+                "unsupported_wavelength_mode",
+                "COC generation supports approved SM (1310/1550 nm) runs only.",
+            )
+        )
+    if len(base_signatures) > 1:
+        issues.append(
+            CocValidationIssue(
+                "mixed_base_measurement_profiles",
+                "The base run contains mixed wavelength or source profiles.",
+            )
+        )
+    elif base_signatures and next(iter(base_signatures)) != (
+        "SM",
+        (1310, 1550),
+        "native",
+    ):
+        issues.append(
+            CocValidationIssue(
+                "unsupported_coc_measurement_profile",
+                "COC generation requires native SM readings made with "
+                "1310/1550 nm sources.",
+            )
+        )
     base_model = normalize_switch_model(
         str((base_run.criteria or {}).get("model") or "")
     )
@@ -297,6 +334,33 @@ def _compatibility_issues(
         )
     if supplemental_run is None:
         return tuple(issues)
+    if str(supplemental_run.metadata.get("Wavelength mode") or "SM").upper() != "SM":
+        issues.append(
+            CocValidationIssue(
+                "unsupported_supplemental_wavelength_mode",
+                "The supplemental run must also be an approved SM run.",
+            )
+        )
+    supplemental_signatures = _measurement_signatures(supplemental_run)
+    if len(supplemental_signatures) > 1:
+        issues.append(
+            CocValidationIssue(
+                "mixed_supplemental_measurement_profiles",
+                "The supplemental run contains mixed wavelength or source profiles.",
+            )
+        )
+    elif (
+        base_signatures
+        and supplemental_signatures
+        and base_signatures != supplemental_signatures
+    ):
+        issues.append(
+            CocValidationIssue(
+                "incompatible_measurement_profiles",
+                "The selected runs use different wavelength, source, or "
+                "measurement-classification profiles.",
+            )
+        )
     for key, label, required in (
         ("Main board serial", "Main Board serial", True),
         ("Part number", "Part Number", False),
@@ -348,6 +412,20 @@ def _compatibility_issues(
                 )
             )
     return tuple(issues)
+
+
+def _measurement_signatures(
+    source_run: CocSourceRun,
+) -> set[tuple[str, tuple[int, int], str]]:
+    """Return the wavelength/source validity signatures present in one run."""
+    return {
+        (
+            record.wavelength_mode,
+            tuple(record.source_wavelengths_nm),
+            record.measurement_classification,
+        )
+        for record in source_run.measurements
+    }
 
 
 def _criteria_signature(criteria: Mapping[str, object]) -> tuple[object, ...]:

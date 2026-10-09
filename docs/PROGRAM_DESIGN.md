@@ -63,6 +63,9 @@ configured channel count. This state is separate from persisted measurements:
 only the existing commit path writes a reading to the run.
 
 `domain/measurement.py` owns the instrument-independent insertion-loss formula.
+`domain/wavelengths.py` independently models the operator-selected OPM/source
+wavelength pair. The selected mode is authoritative for new runs; historical
+compatibility classifications remain readable for migration and review.
 Workers provide absolute measurements and reference powers to this service,
 which keeps calculation logic reusable for an integrated ILM or separate OPM
 and laser source.
@@ -84,17 +87,20 @@ and is never collected or written by normal production runs. Automatically
 suggested filenames use local time and deterministic numeric collision suffixes.
 The diagnostic hardware sequence performs a final `GetWavelength` verification
 after source settling and immediately before `ReadPower`; an unsupported or
-actual-wavelength mismatch blocks that sample. Index/count convention
+reported-OPM-wavelength mismatch blocks that sample. Index/count convention
 differences are retained as diagnostic warnings and do not stop a normal
-production run when the actual wavelength is correct.
+production run when the reported OPM wavelength is correct. This readback does
+not verify the physical laser wavelength.
 
 `domain/reference.py` owns the zero-reference-to-offset conversion and the
 immutable reference snapshot model. `application/reference_session.py` owns
-the session-only authorization state. Live IL and Power Measurement Diagnostics
+the session-only authorization bank, keyed by connected measurement context
+and selected SM/MM configuration. Live IL and Power Measurement Diagnostics
 may display temporary values, but only the main calculated-reference workflow,
 Admin Mode's explicit manual-apply action, or an explicit diagnostic Apply
 action can authorize a production run. Accepted readings persist the snapshot
-used for their calculation.
+used for their calculation. Loading historical runs never changes this bank;
+a confirmed ILM/power-meter disconnect clears it.
 
 `application/run_preflight.py` is the side-effect-free gate for production
 Start Run entry points. It normalizes channel selection through the existing
@@ -113,6 +119,12 @@ replacement events, and derivation of the effective replacement projection.
 It is kept independent of Qt, hardware adapters, and CSV/JSON file formats.
 Replacement events document changes performed outside Light Workbench; this
 workflow deliberately does not use `CLOSe?` or send mapping commands.
+
+`domain/part_numbers.py` owns supported OSX part-number parsing. Its validated
+three-digit channel field is the front-panel production count; it is separate
+from the physical channel count reported by the optical switch. Replacement
+analysis and COC preparation consume this derived value and do not expose a
+manual count override.
 
 `domain/coc_preparation.py` owns the report-publication boundary. It merges one
 explicit base run with at most one explicit replacement/retest run, preserves

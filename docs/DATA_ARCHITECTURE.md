@@ -40,8 +40,19 @@ The storage format should not determine how business logic represents data.
 
 The current CSV and JSON formats remain supported for compatibility. If a
 future schema changes, include a `schema_version` and provide a migration path.
-Run JSON currently uses schema version 4; unit JSON uses schema version 3.
+Run JSON currently uses schema version 5; unit JSON uses schema version 3.
 Migration helpers reject newer versions instead of silently dropping fields.
+
+Schema version 5 stores wavelength-aware measurements without assigning SM
+names to MM values. Each reading and accepted attempt records the operator-
+selected mode, ordered OPM wavelengths, nominal source wavelengths and source
+IDs, classification metadata, and a wavelength-keyed loss map. New records do
+not claim that SM/MM was detected from hardware; historical compatibility
+classifications remain readable.
+Legacy `loss_1310_db` and `loss_1550_db` fields remain available only for SM
+records. CSV measurement and reference headers are generated from the run's
+actual OPM wavelength pair. Files without wavelength metadata or generic maps
+continue to load as native SM 1310/1550 runs.
 
 ## Format responsibilities
 
@@ -69,7 +80,7 @@ Migration helpers reject newer versions instead of silently dropping fields.
   preserve the original record and do not query or command the switch.
 
 Accepted reading history is stored separately from the latest-reading
-projection. Run JSON schema version 4 contains `measurement_attempts`, an
+projection. Run JSON schema version 5 contains `measurement_attempts`, an
 append-only record for every accepted two-wavelength Write IL result. Each
 record has a stable attempt ID, run ID, logical channel, physical port, attempt
 number, both losses, UTC acceptance time, operator, write context, reference
@@ -93,7 +104,9 @@ individual wavelengths are never mixed. Changed physical ports must agree with
 the unit's completed replacement records. Source measurements, references,
 replacement records, and hardware state remain unchanged.
 
-The confirmed front-panel count defines required logical channels `1..N`.
+The three-digit channel field in the selected base run's supported OSX-100 or
+OSX-150 part number defines the confirmed front-panel count and required
+logical channels `1..N`. The operator does not enter this value manually.
 Every required channel must be present and valid, and each loss rounded to the
 established four-decimal display precision must be strictly below 2.5000 dB.
 Exactly 2.5000 dB is therefore not publishable. Readings above the front-panel
@@ -108,14 +121,33 @@ the copied workbook only. Output files use the local-time name format
 `COC OSX-150 <Main Board serial>_YYMMDD-HHMMSS.xlsx`, with a numeric collision
 suffix when multiple exports occur in the same second.
 
+COC preparation is intentionally restricted to approved SM 1310/1550 runs.
+MM data remain reviewable, analyzable, and exportable as run data, but cannot
+be merged into the current SM-only COC workflow. Historical compatibility
+records remain readable during the migration.
+
 ## Reference authorization and audit model
 
 Reference values are not authorized merely because numbers appear in the main
-window. The application keeps a session-only reference state with these
-important states: not referenced, calculating, valid calculated, valid manual
-admin, and invalidated. A production run requires a valid state. Disconnecting
-or changing the measurement hardware invalidates the session and requires a new
-reference calculation.
+window. The Reference panel lives inside Current readings, while the
+application keeps a session-only reference bank with these important states:
+not referenced, calculating, valid calculated, valid manual admin, and
+invalidated. A production run requires a valid reference for the exact current
+measurement context.
+
+The session bank can hold separate SM (1310/1550) and MM (850/1300)
+references for the connected meter/source configuration. Changing mode selects
+the matching cached reference when one exists; it does not erase the other
+mode's reference. Loading a run or CSV never imports its historical reference
+into the active session and never invalidates the session bank. Historical
+reference snapshots remain attached to their saved readings for auditability.
+
+A confirmed ILM/power-meter disconnection clears the session reference bank and
+requires a new reference after reconnection. Optical-switch-only changes do
+not clear it. A transient command failure is not treated as a confirmed
+disconnection. Reference recalculation is transactional: a failed replacement
+calculation leaves the previous valid reference active, and partial
+two-wavelength results are never applied.
 
 `Calculate Reference` creates an immutable snapshot containing a unique ID,
 both wavelength values, method, UTC timestamp, and connected meter/laser
@@ -127,7 +159,8 @@ diagnostic Apply action can authorize a calculated diagnostic snapshot.
 Every accepted measurement stores the snapshot used for its IL calculation in
 JSON and in the extended CSV audit columns. The JSON also contains a unique
 run-level `reference_snapshots` history. Loaded historical references are
-displayed for audit context but never authorize new hardware acquisition.
+displayed for audit context but never authorize new hardware acquisition or
+replace the active session reference.
 
 ## Persistence rules
 

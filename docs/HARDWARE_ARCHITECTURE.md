@@ -150,15 +150,49 @@ For each diagnostic wavelength, the OP815 sequence remains SetWavelength,
 wavelength settling, source enable, source settling, and ReadPower. The
 diagnostic path now inserts a final GetWavelength immediately after source
 settling and immediately before ReadPower. That verification records a
-`verified_before_read` trace event with the requested/actual wavelength,
-source state, and result. A wavelength mismatch or unsupported wavelength
+`verified_before_read` trace event with the requested/reported OPM wavelength,
+source state, and result. An OPM mismatch or unsupported OPM wavelength
 blocks ReadPower and therefore creates no diagnostic history row. If the
-actual wavelength is correct but the DLL's index/count convention differs from
+reported OPM wavelength is correct but the DLL's index/count convention differs from
 the assumed zero-based mapping, the trace records a warning with the raw
 values instead of treating the sample as a wrong-wavelength measurement.
-Normal production runs use the same actual-wavelength safety check but do not
+Normal production runs use the same OPM-setting safety check but do not
 fail solely on an index/count convention difference. The production
 wavelength order and settling constants are unchanged.
+
+The legacy trace field `actual_wavelength_nm` is retained for compatibility;
+it means the wavelength reported by the OPM readback, not a measurement of the
+physical source's emitted wavelength. New trace context also records
+`requested_opm_wavelength_nm` and `nominal_source_wavelength_nm` explicitly.
+
+## SM/MM wavelength profiles
+
+`domain/wavelengths.py` is the source of truth for the operator-selected mode.
+SM selects OPM/source 1310/1550 nm and MM selects OPM/source 850/1300 nm.
+Light Workbench does not infer the mode from ILM identity, firmware, serial
+number, product option, power readings, or cached history.
+
+The selected mode is stored with each reference and reading. New MM readings
+use the independent MM limit profile and normal analysis; the current COC
+workflow remains SM-only because its report templates and qualification rules
+are SM-specific. Historical compatibility records remain loadable for review.
+
+Device identity and any adapter capability metadata are recorded for support,
+but they do not select or override the operator's mode. The main window does
+not infer laser capability from `GetWavelength`, serial number, firmware, or
+product option. A future adapter can describe native MM hardware at the same
+boundary without changing the manual selection workflow.
+
+The application records both wavelength sets and the classification in
+references, accepted readings, diagnostic exports, traces, CSV/JSON run data,
+and accepted-attempt history. Mode changes are blocked during active hardware
+operations and select the matching session reference without deleting the
+other mode's reference. The laser/source order,
+settling constants, and `reference - measured power` calculation are unchanged.
+All profile-aware validation and diagnostic calls receive the active OPM pair
+explicitly. The operator selects this mode from the compact header control
+beside the Connected hardware panel; there is no compatibility warning
+indicator for new records.
 
 Live IL and Red Light now use the same session boundary for their individual
 meter-only and switch-only lifecycles. Their dialogs receive injected factory
@@ -232,6 +266,16 @@ operators must resolve every issue. Admin Mode can explicitly continue without
 descriptive metadata, but it cannot bypass disconnected hardware or a missing,
 invalidated, stale, or hardware-mismatched reference. Diagnostic tools and
 saved-run review retain their independent readiness requirements.
+
+The production reference controls are displayed in the Current readings
+panel, because the reference belongs to the connected measurement session
+rather than to the unit or run being viewed. The application keeps a separate
+session-only reference for each matching SM/MM configuration. Loading a saved
+run or CSV changes only the historical view; it does not replace the active
+reference. A confirmed ILM/power-meter disconnect clears all cached session
+references and requires a new two-wavelength reference after reconnection.
+Optical-switch-only disconnects do not clear the measurement reference.
+Transient communication errors remain distinct from confirmed disconnects.
 
 ## Measurement pipeline
 

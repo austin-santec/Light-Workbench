@@ -21,7 +21,7 @@ CRITERIA = {
 }
 
 
-def run(run_number, count):
+def run(run_number, count, front_panel_channel_count=36):
     return CocSourceRun(
         run_number,
         Path("Run-%d.csv" % run_number),
@@ -31,7 +31,8 @@ def run(run_number, count):
         ),
         {
             "Main board serial": "123",
-            "Part number": "OSX-150-1A-036-09-FA-00B-2H",
+            "Part number": "OSX-150-1A-%03d-09-FA-00B-2H"
+            % front_panel_channel_count,
             "Switch serial": "456",
             "Operating band": "O band",
         },
@@ -54,28 +55,33 @@ class CocExportDialogTests(unittest.TestCase):
         dialog = CocExportDialog(
             [CocRunOption(full), CocRunOption(partial)],
             prepare,
-            initial_channel_count=36,
             current_run_path=partial.source_path,
         )
         self.assertEqual(dialog.base_run.run_number, 1)
         self.assertEqual(dialog.base_run_combo.currentText(), "Run 1 — 36 written readings")
         self.assertTrue(dialog.use_supplemental_checkbox.isChecked())
         self.assertEqual(dialog.supplemental_run.run_number, 2)
+        self.assertFalse(hasattr(dialog, "channel_count_spin"))
+        self.assertEqual(dialog.front_panel_count_label.text(), "36")
         self.assertIn("Required front-panel channels: 36", dialog.summary.toPlainText())
         dialog.close()
 
-    def test_summary_updates_when_front_panel_count_changes(self):
+    def test_base_selection_updates_derived_front_panel_count(self):
         dialog = CocExportDialog(
-            [CocRunOption(run(1, 2))],
+            [
+                CocRunOption(run(1, 2, front_panel_channel_count=2)),
+                CocRunOption(run(2, 3, front_panel_channel_count=3)),
+            ],
             lambda base, count, supplemental: prepare_coc(
                 base, count, supplemental_run=supplemental
             ),
-            initial_channel_count=1,
         )
 
         self.assertIn("Missing channels: None", dialog.summary.toPlainText())
-        dialog.channel_count_spin.setValue(3)
-        self.assertIn("Missing channels: 3", dialog.summary.toPlainText())
+        dialog.base_run_combo.setCurrentIndex(0)
+        self.assertEqual(dialog.front_panel_count_label.text(), "2")
+        dialog.base_run_combo.setCurrentIndex(1)
+        self.assertEqual(dialog.front_panel_count_label.text(), "3")
         dialog.close()
 
     def test_default_base_prefers_compatible_run_before_greater_coverage(self):
@@ -93,7 +99,6 @@ class CocExportDialogTests(unittest.TestCase):
             lambda base, count, supplemental: prepare_coc(
                 base, count, supplemental_run=supplemental
             ),
-            initial_channel_count=2,
         )
 
         self.assertEqual(dialog.base_run.run_number, 1)
@@ -101,11 +106,10 @@ class CocExportDialogTests(unittest.TestCase):
 
     def test_successful_validation_accepts_dialog(self):
         dialog = CocExportDialog(
-            [CocRunOption(run(1, 1))],
+            [CocRunOption(run(1, 1, front_panel_channel_count=1))],
             lambda base, count, supplemental: prepare_coc(
                 base, count, supplemental_run=supplemental
             ),
-            initial_channel_count=1,
         )
 
         dialog._validate_and_accept()
@@ -118,7 +122,6 @@ class CocExportDialogTests(unittest.TestCase):
             lambda base, count, supplemental: prepare_coc(
                 base, count, supplemental_run=supplemental
             ),
-            initial_channel_count=1,
         )
         dialog.use_supplemental_checkbox.setChecked(False)
         self.assertFalse(dialog.supplemental_run_combo.isEnabled())
@@ -132,7 +135,6 @@ class CocExportDialogTests(unittest.TestCase):
             lambda base, count, supplemental: prepare_coc(
                 base, count, supplemental_run=supplemental
             ),
-            initial_channel_count=2,
             validation_blocked_callback=blocked_results.append,
         )
 
@@ -150,7 +152,6 @@ class CocExportDialogTests(unittest.TestCase):
             lambda base, count, supplemental: prepare_coc(
                 base, count, supplemental_run=supplemental
             ),
-            initial_channel_count=1,
         )
 
         dialog.prepare_callback = lambda *_args: (_ for _ in ()).throw(
@@ -160,6 +161,27 @@ class CocExportDialogTests(unittest.TestCase):
         self.assertIsInstance(dialog.preparation_error, RuntimeError)
         self.assertIn("repository unavailable", dialog.summary.toPlainText())
         self.assertFalse(dialog.write_button.isEnabled())
+        dialog.close()
+
+    def test_invalid_base_part_number_blocks_without_guessing(self):
+        source = run(1, 2)
+        source = CocSourceRun(
+            source.run_number,
+            source.source_path,
+            source.measurements,
+            {**source.metadata, "Part number": "not-a-part-number"},
+            source.criteria,
+        )
+        dialog = CocExportDialog(
+            [CocRunOption(source)],
+            lambda base, count, supplemental: prepare_coc(
+                base, count, supplemental_run=supplemental
+            ),
+        )
+
+        self.assertEqual(dialog.front_panel_count_label.text(), "Unavailable")
+        self.assertFalse(dialog.write_button.isEnabled())
+        self.assertIn("part number", dialog.summary.toPlainText().lower())
         dialog.close()
 
 

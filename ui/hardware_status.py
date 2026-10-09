@@ -31,6 +31,8 @@ class HardwareStatusPanel(QGroupBox):
         self.laser_source_status = QLabel()
         self.laser_source_status.setObjectName("laser_source_status")
         self.laser_source_status.hide()
+        self._test_mode_text = ""
+        self._last_device_info = {}
         for label in (
             self.power_meter_status,
             self.laser_source_status,
@@ -91,6 +93,7 @@ class HardwareStatusPanel(QGroupBox):
                 if info.failure_stage == "configuration"
                 else "Connection error"
             )
+        self._last_device_info[info.category] = info
         identity_details = []
         if info.serial_number:
             identity_details.append("S/N %s" % info.serial_number)
@@ -98,6 +101,8 @@ class HardwareStatusPanel(QGroupBox):
             identity_details.append("FW %s" % info.firmware_version)
         if info.configured_channel_count is not None:
             identity_details.append("%d channels" % info.configured_channel_count)
+        if info.category == DeviceCategory.POWER_METER and self._test_mode_text:
+            identity_details.append("Test mode: %s" % self._test_mode_text)
         if identity_details:
             details = ", ".join(identity_details)
         elif info.state == ConnectionState.DISCONNECTED:
@@ -120,6 +125,9 @@ class HardwareStatusPanel(QGroupBox):
                 info.transport_details,
                 "Discovery: %s" % info.discovery_method
                 if info.discovery_method else "",
+                "Source profile: %s (%s)"
+                % (info.source_profile_id, info.source_profile_origin or "unspecified")
+                if info.source_profile_id else "",
                 "Failure stage: %s" % info.failure_stage
                 if info.failure_stage else "",
                 "Failed command: %s" % info.failed_command
@@ -158,6 +166,12 @@ class HardwareStatusPanel(QGroupBox):
     def set_laser_visible(self, visible):
         """Show the laser entry only for separately composed source systems."""
         self.laser_source_status.setVisible(bool(visible))
+
+    def set_test_mode(self, mode_text):
+        """Display the operator-selected test mode, never a detected source mode."""
+        self._test_mode_text = str(mode_text or "")
+        for info in tuple(self._last_device_info.values()):
+            self.set_device_status(info)
 
 
 __all__ = ["HardwareStatusPanel"]

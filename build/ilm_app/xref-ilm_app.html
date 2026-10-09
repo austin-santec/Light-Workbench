@@ -44,18 +44,19 @@ imports:
  &#8226;   <a href="#config.app_info">config.app_info</a>
  &#8226;   <a href="#copyreg">copyreg</a>
  &#8226;   <a href="#datetime">datetime</a>
- &#8226;   <a href="#domain.coc_preparation">domain.coc_preparation</a>
  &#8226;   <a href="#domain.comparison">domain.comparison</a>
  &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
  &#8226;   <a href="#domain.timing">domain.timing</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#encodings">encodings</a>
  &#8226;   <a href="#encodings.aliases">encodings.aliases</a>
  &#8226;   <a href="#encodings.ascii">encodings.ascii</a>
@@ -417,6 +418,7 @@ imported by:
  &#8226;   <a href="#application.run_controller">application.run_controller</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#ui.admin_config">ui.admin_config</a>
+ &#8226;   <a href="#ui.coc_export_dialog">ui.coc_export_dialog</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
  &#8226;   <a href="#ui.reading_history">ui.reading_history</a>
@@ -508,6 +510,7 @@ imported by:
 imported by:
     <a href="#application.coc_workflow">application.coc_workflow</a>
  &#8226;   <a href="#domain.coc_preparation">domain.coc_preparation</a>
+ &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#et_xmlfile.xmlfile">et_xmlfile.xmlfile</a>
  &#8226;   <a href="#ui.coc_export_dialog">ui.coc_export_dialog</a>
 
@@ -1632,6 +1635,7 @@ imports:
  &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.device_identity">hardware.device_identity</a>
  &#8226;   <a href="#hardware.factory">hardware.factory</a>
  &#8226;   <a href="#threading">threading</a>
@@ -1722,6 +1726,7 @@ imports:
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.device_identity">hardware.device_identity</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#hardware.session">hardware.session</a>
@@ -1768,6 +1773,7 @@ imports:
  &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#hardware.session">hardware.session</a>
 
@@ -1832,6 +1838,7 @@ imports:
  &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#typing">typing</a>
 
@@ -1878,6 +1885,7 @@ imports:
  &#8226;   <a href="#application.timing">application.timing</a>
  &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
 
   </div>
@@ -3345,6 +3353,7 @@ imported by:
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.reporting">domain.reporting</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.factory">hardware.factory</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
@@ -3921,14 +3930,16 @@ imported by:
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
  &#8226;   <a href="#domain.reporting">domain.reporting</a>
  &#8226;   <a href="#domain.run_data">domain.run_data</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
+ &#8226;   <a href="#hardware.power_meter">hardware.power_meter</a>
  &#8226;   <a href="#hardware.visa_errors">hardware.visa_errors</a>
- &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
  &#8226;   <a href="#pprint">pprint</a>
  &#8226;   <a href="#pyvisa.rname">pyvisa.rname</a>
@@ -4054,6 +4065,7 @@ imports:
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
@@ -4073,6 +4085,7 @@ imported by:
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
@@ -4080,6 +4093,7 @@ imported by:
  &#8226;   <a href="#domain.run_data">domain.run_data</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
  &#8226;   <a href="#domain.timing">domain.timing</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
 
   </div>
 
@@ -4095,10 +4109,10 @@ imports:
  &#8226;   <a href="#domain">domain</a>
  &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
  &#8226;   <a href="#math">math</a>
  &#8226;   <a href="#pathlib">pathlib</a>
- &#8226;   <a href="#re">re</a>
  &#8226;   <a href="#typing">typing</a>
 
   </div>
@@ -4106,7 +4120,6 @@ imports:
 imported by:
     <a href="#application.coc_workflow">application.coc_workflow</a>
  &#8226;   <a href="#domain">domain</a>
- &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#ui.coc_export_dialog">ui.coc_export_dialog</a>
 
   </div>
@@ -4272,6 +4285,7 @@ imports:
     <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#enum">enum</a>
 
   </div>
@@ -4311,6 +4325,28 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="domain.part_numbers"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/part_numbers.py" type="text/plain"><tt>domain.part_numbers</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#re">re</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#domain">domain</a>
+ &#8226;   <a href="#domain.coc_preparation">domain.coc_preparation</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#ui.coc_export_dialog">ui.coc_export_dialog</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="domain.raw_export"></a>
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/raw_export.py" type="text/plain"><tt>domain.raw_export</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -4338,6 +4374,7 @@ imports:
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#enum">enum</a>
  &#8226;   <a href="#uuid">uuid</a>
 
@@ -4460,6 +4497,36 @@ imported by:
     <a href="#domain">domain</a>
  &#8226;   <a href="#domain.reporting">domain.reporting</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="domain.wavelengths"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/wavelengths.py" type="text/plain"><tt>domain.wavelengths</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#enum">enum</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application.hardware_connection">application.hardware_connection</a>
+ &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
+ &#8226;   <a href="#application.power_diagnostics_controller">application.power_diagnostics_controller</a>
+ &#8226;   <a href="#application.run_controller">application.run_controller</a>
+ &#8226;   <a href="#application.run_start">application.run_start</a>
+ &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.reference">domain.reference</a>
+ &#8226;   <a href="#hardware.power_meter">hardware.power_meter</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#op815_driver">op815_driver</a>
+ &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
+ &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
 
   </div>
 
@@ -7465,6 +7532,7 @@ imported by:
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
  &#8226;   <a href="#hardware.visa_errors">hardware.visa_errors</a>
  &#8226;   <a href="#http">http</a>
@@ -8003,7 +8071,9 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware">hardware</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
  &#8226;   <a href="#op815_driver">op815_driver</a>
@@ -8823,6 +8893,7 @@ imports:
  &#8226;   <a href="#domain.run_data">domain.run_data</a>
  &#8226;   <a href="#infrastructure">infrastructure</a>
  &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#re">re</a>
 
   </div>
   <div class="import">
@@ -8840,7 +8911,6 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#csv">csv</a>
- &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain.diagnostic_analysis">domain.diagnostic_analysis</a>
  &#8226;   <a href="#domain.diagnostic_trace">domain.diagnostic_trace</a>
@@ -10457,6 +10527,7 @@ imports:
     <a href="#ctypes">ctypes</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#pathlib">pathlib</a>
  &#8226;   <a href="#struct">struct</a>
  &#8226;   <a href="#time">time</a>
@@ -16529,7 +16600,7 @@ imported by:
  &#8226;   <a href="#ctypes.macholib.framework">ctypes.macholib.framework</a>
  &#8226;   <a href="#ctypes.util">ctypes.util</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
- &#8226;   <a href="#domain.coc_preparation">domain.coc_preparation</a>
+ &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#email._encoded_words">email._encoded_words</a>
  &#8226;   <a href="#email._header_value_parser">email._header_value_parser</a>
  &#8226;   <a href="#email.feedparser">email.feedparser</a>
@@ -16552,6 +16623,7 @@ imported by:
  &#8226;   <a href="#importlib.metadata._adapters">importlib.metadata._adapters</a>
  &#8226;   <a href="#importlib.metadata._text">importlib.metadata._text</a>
  &#8226;   <a href="#infrastructure.coc_export">infrastructure.coc_export</a>
+ &#8226;   <a href="#infrastructure.csv_run_loader">infrastructure.csv_run_loader</a>
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
  &#8226;   <a href="#infrastructure.support_log_writer">infrastructure.support_log_writer</a>
  &#8226;   <a href="#infrastructure.unit_persistence">infrastructure.unit_persistence</a>
@@ -17915,9 +17987,11 @@ imported by:
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/ui/coc_export_dialog.py" type="text/plain"><tt>ui.coc_export_dialog</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+    <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
+ &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
  &#8226;   <a href="#__future__">__future__</a>
  &#8226;   <a href="#domain.coc_preparation">domain.coc_preparation</a>
+ &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#pathlib">pathlib</a>
  &#8226;   <a href="#ui">ui</a>
 
@@ -17959,6 +18033,7 @@ imports:
  &#8226;   <a href="#application.timing">application.timing</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.factory">hardware.factory</a>
  &#8226;   <a href="#hardware.session">hardware.session</a>
  &#8226;   <a href="#ui">ui</a>
@@ -17988,6 +18063,7 @@ imports:
  &#8226;   <a href="#domain.diagnostic_analysis">domain.diagnostic_analysis</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.models">domain.models</a>
+ &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.device_identity">hardware.device_identity</a>
  &#8226;   <a href="#hardware.factory">hardware.factory</a>
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>

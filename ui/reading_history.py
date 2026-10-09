@@ -34,6 +34,24 @@ HISTORY_HEADERS = (
 )
 
 
+def history_headers(attempts: list[MeasurementAttempt]) -> tuple[str, ...]:
+    """Return wavelength-correct columns while preserving the legacy SM shape."""
+    if not attempts:
+        return HISTORY_HEADERS
+    first, second = attempts[0].opm_wavelengths_nm
+    return (
+        "Channel",
+        "Attempt",
+        "Status",
+        "%d nm IL (dB)" % first,
+        "%d nm IL (dB)" % second,
+        "Physical Port",
+        "Written At (UTC)",
+        "Operator",
+        "Context",
+    )
+
+
 def history_rows(
     attempts: list[MeasurementAttempt],
     *,
@@ -56,8 +74,8 @@ def history_rows(
                 str(attempt.channel),
                 str(attempt.attempt_number),
                 status,
-                "%.4f" % attempt.loss_1310_db,
-                "%.4f" % attempt.loss_1550_db,
+                "%.4f" % attempt.losses_by_wavelength[attempt.opm_wavelengths_nm[0]],
+                "%.4f" % attempt.losses_by_wavelength[attempt.opm_wavelengths_nm[1]],
                 "" if attempt.physical_port is None else str(attempt.physical_port),
                 attempt.accepted_at_utc or "Unknown",
                 attempt.operator_initials or "Unknown",
@@ -74,7 +92,7 @@ def history_tsv(
 ) -> str:
     """Format all accepted attempts as Excel-compatible tab-separated text."""
     rows = [
-        list(HISTORY_HEADERS),
+        list(history_headers(attempts)),
         *history_rows(attempts, status_source=status_source),
     ]
     return "\n".join("\t".join(row) for row in rows)
@@ -108,8 +126,9 @@ class ReadingHistoryDialog(QDialog):
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
 
-        self.history_table = QTableWidget(0, len(HISTORY_HEADERS))
-        self.history_table.setHorizontalHeaderLabels(HISTORY_HEADERS)
+        self.headers = history_headers(self._attempts)
+        self.history_table = QTableWidget(0, len(self.headers))
+        self.history_table.setHorizontalHeaderLabels(self.headers)
         self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.history_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.history_table.setAlternatingRowColors(True)
@@ -201,7 +220,7 @@ class ReadingHistoryDialog(QDialog):
             else:
                 with path.open("w", newline="", encoding="utf-8") as output:
                     writer = csv.writer(output)
-                    writer.writerow(HISTORY_HEADERS)
+                    writer.writerow(self.headers)
                     writer.writerows(
                         history_rows(attempts, status_source=self._attempts)
                     )
@@ -213,4 +232,10 @@ class ReadingHistoryDialog(QDialog):
         )
 
 
-__all__ = ["HISTORY_HEADERS", "ReadingHistoryDialog", "history_rows", "history_tsv"]
+__all__ = [
+    "HISTORY_HEADERS",
+    "ReadingHistoryDialog",
+    "history_headers",
+    "history_rows",
+    "history_tsv",
+]

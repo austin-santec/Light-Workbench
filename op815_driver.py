@@ -15,6 +15,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
+from domain.wavelengths import (
+    MeasurementConfiguration,
+    SM_SOURCE_PROFILE,
+    measurement_configuration,
+)
 
 
 # The two physical laser sources installed in this ILM.  The DLL numbers the
@@ -37,12 +42,13 @@ SOURCE_OFF_SETTLING_TIME_SECONDS = 0.1
 # not accidentally describe the previous wavelength or source state.
 WAVELENGTH_TRACE_CONTEXT_FIELDS = (
     "requested_wavelength_nm",
+    "requested_opm_wavelength_nm",
+    "nominal_source_wavelength_nm",
     "actual_wavelength_nm",
     "wavelength_index",
     "wavelength_count",
     "source_id",
     "source_enabled",
-    "reference_power_dbm",
 )
 
 # Reference calibration is intentionally slower than production measurements.
@@ -112,7 +118,21 @@ class OP815:
         self._trace_context = {}
         self._trace_metadata = {}
         self._diagnostic_verification_enabled = False
+        self.measurement_configuration = measurement_configuration(
+            "SM", SM_SOURCE_PROFILE
+        )
         self._bind_functions()
+
+    def configure_measurement(self, configuration: MeasurementConfiguration):
+        """Select OPM settings and nominal source mapping for later reads."""
+        if not isinstance(configuration, MeasurementConfiguration):
+            raise TypeError("A MeasurementConfiguration is required.")
+        if not configuration.is_supported:
+            raise ValueError(
+                "The connected source profile cannot provide the selected test mode."
+            )
+        self.measurement_configuration = configuration
+        self.set_trace_metadata(**configuration.as_dict())
 
     def set_trace_callback(self, callback):
         """Set the compatibility callback used by one diagnostic tool."""
@@ -429,7 +449,12 @@ class OP815:
 
     def turn_all_sources_off(self):
         """Put both laser sources into a known, safe off state."""
-        for source_id in sorted(set(SOURCE_ID_BY_WAVELENGTH.values())):
+        source_ids = getattr(
+            getattr(self, "measurement_configuration", None),
+            "source_ids",
+            tuple(SOURCE_ID_BY_WAVELENGTH.values()),
+        )
+        for source_id in sorted(set(source_ids)):
             self.set_source_state(source_id, False)
 
     def current_wavelength(self):
@@ -523,38 +548,48 @@ class OP815:
         self._require_success("ReadPower", status)
         return power.value
 
-    @staticmethod
     def _wavelength_validation_error(
+        self,
         requested_wavelength_nm,
         actual_wavelength_nm,
         wavelength_index,
         wavelength_count,
     ):
-        """Return an error only when the actual wavelength is unsafe."""
-        if actual_wavelength_nm not in WAVELENGTHS_NM:
-            return "The ILM reported an unsupported wavelength."
+        """Return an error when the reported OPM setting is not requested."""
+        configured = getattr(
+            getattr(self, "measurement_configuration", None),
+            "opm_wavelengths_nm",
+            WAVELENGTHS_NM,
+        )
+        if actual_wavelength_nm not in configured:
+            return "The ILM reported an unsupported OPM wavelength."
         if actual_wavelength_nm != requested_wavelength_nm:
             return (
-                "Requested %d nm, but the ILM selected %d nm."
+                "Requested the %d nm OPM setting, but the OPM selected %d nm."
                 % (requested_wavelength_nm, actual_wavelength_nm)
             )
         return None
 
-    @staticmethod
     def _wavelength_metadata_warning(
+        self,
         requested_wavelength_nm,
         wavelength_index,
         wavelength_count,
     ):
         """Describe an index/count convention difference without blocking power.
 
-        The vendor DLL's index fields are diagnostic metadata.  The actual
-        wavelength is the safety-critical value because it identifies which
-        source was selected.  Keeping this distinction prevents a harmless
-        one-based or vendor-specific index convention from stopping a normal
-        production run.
+        The vendor DLL's index fields are diagnostic metadata. The reported
+        wavelength validates the OPM calibration setting; it does not identify
+        or verify the physical source wavelength. Keeping this distinction
+        prevents a harmless one-based or vendor-specific index convention from
+        stopping a normal production run.
         """
-        expected_index = WAVELENGTHS_NM.index(requested_wavelength_nm)
+        configured = getattr(
+            getattr(self, "measurement_configuration", None),
+            "opm_wavelengths_nm",
+            WAVELENGTHS_NM,
+        )
+        expected_index = configured.index(requested_wavelength_nm)
         if wavelength_count <= 0 or not 0 <= wavelength_index < wavelength_count:
             return (
                 "The ILM reported wavelength %d nm with index %d of %d; "
@@ -569,9 +604,10 @@ class OP815:
             )
         return None
 
-    def _verify_wavelength_before_read(self, wavelength_nm):
-        """Verify wavelength immediately before ReadPower is allowed."""
-        source_id = SOURCE_ID_BY_WAVELENGTH[wavelength_nm]
+    def _verify_wavelength_before_read(self, wavelength_nm, source_id=None):
+        """Verify the OPM wavelength immediately before ReadPower."""
+        if source_id is None:
+            source_id = SOURCE_ID_BY_WAVELENGTH[wavelength_nm]
         verification_started = time.perf_counter()
         actual_wavelength = None
         wavelength_index = None
@@ -625,7 +661,7 @@ class OP815:
             if isinstance(error, RuntimeError):
                 raise
             raise RuntimeError(
-                "Could not verify the ILM wavelength before reading %d nm: %s"
+                "Could not verify the ILM OPM wavelength before reading %d nm: %s"
                 % (wavelength_nm, error)
             ) from error
 
@@ -654,14 +690,21 @@ class OP815:
         source_settling_seconds=SOURCE_SETTLING_TIME_SECONDS,
         source_off_settling_seconds=SOURCE_OFF_SETTLING_TIME_SECONDS,
         verify_before_read=False,
+        source_id=None,
+        nominal_source_wavelength_nm=None,
     ):
-        """Enable one laser, take one absolute-power reading, then disable it."""
-        if wavelength_nm not in SOURCE_ID_BY_WAVELENGTH:
-            raise ValueError("No source is configured for %d nm." % wavelength_nm)
-
-        source_id = SOURCE_ID_BY_WAVELENGTH[wavelength_nm]
+        """Configure the OPM, enable one source, read power, and disable it."""
+        if source_id is None:
+            if wavelength_nm not in SOURCE_ID_BY_WAVELENGTH:
+                raise ValueError("No source is configured for %d nm." % wavelength_nm)
+            source_id = SOURCE_ID_BY_WAVELENGTH[wavelength_nm]
+        source_id = int(source_id)
         self.clear_trace_context(*WAVELENGTH_TRACE_CONTEXT_FIELDS)
-        self.set_trace_context(requested_wavelength_nm=wavelength_nm)
+        self.set_trace_context(
+            requested_wavelength_nm=wavelength_nm,
+            requested_opm_wavelength_nm=wavelength_nm,
+            nominal_source_wavelength_nm=nominal_source_wavelength_nm,
+        )
         started = time.perf_counter()
         self._trace(
             "wavelength_measurement_started",
@@ -671,9 +714,13 @@ class OP815:
             status="started",
         )
 
-        # Only one laser should be active.  This matches the ILM front panel's
-        # rapid 1310-on/read/off then 1550-on/read/off sequence.
-        for other_source_id in set(SOURCE_ID_BY_WAVELENGTH.values()):
+        # Only one physical source should be active for each configured slot.
+        configured_source_ids = getattr(
+            getattr(self, "measurement_configuration", None),
+            "source_ids",
+            tuple(SOURCE_ID_BY_WAVELENGTH.values()),
+        )
+        for other_source_id in set(configured_source_ids):
             if other_source_id != source_id:
                 self.set_source_state(other_source_id, False)
 
@@ -738,10 +785,10 @@ class OP815:
         try:
             time.sleep(source_settling_seconds)
             # The source-settling interval can expose a stale or changed
-            # wavelength on some instrument/DLL combinations.  Never call
-            # ReadPower until the final wavelength check has passed.
+            # OPM setting on some instrument/DLL combinations. Never call
+            # ReadPower until the final OPM wavelength check has passed.
             if verify_before_read:
-                self._verify_wavelength_before_read(wavelength_nm)
+                self._verify_wavelength_before_read(wavelength_nm, source_id)
             power = self._read_power(wavelength_nm)
             self._trace(
                 "wavelength_measurement_completed",
@@ -765,7 +812,7 @@ class OP815:
         source_settling_seconds=SOURCE_SETTLING_TIME_SECONDS,
         source_off_settling_seconds=SOURCE_OFF_SETTLING_TIME_SECONDS,
     ):
-        """Return absolute dBm readings keyed by 1310 and 1550 wavelength."""
+        """Return absolute dBm readings for the configured OPM wavelengths."""
         self.clear_trace_context(*WAVELENGTH_TRACE_CONTEXT_FIELDS)
         original_wavelength = self.current_wavelength()
         self.clear_trace_context(*WAVELENGTH_TRACE_CONTEXT_FIELDS)
@@ -782,19 +829,29 @@ class OP815:
         try:
             self.turn_all_sources_off()
             time.sleep(source_off_settling_seconds)
-            for wavelength_nm in WAVELENGTHS_NM:
+            configuration = getattr(
+                self,
+                "measurement_configuration",
+                measurement_configuration("SM", SM_SOURCE_PROFILE),
+            )
+            for slot, wavelength_nm in enumerate(configuration.opm_wavelengths_nm):
                 measurements[wavelength_nm] = self.measure_wavelength(
                     wavelength_nm,
                     wavelength_settling_seconds,
                     source_settling_seconds,
                     source_off_settling_seconds,
                     verify_before_read,
+                    source_id=configuration.source_ids[slot],
+                    nominal_source_wavelength_nm=(
+                        configuration.source_wavelengths_nm[slot]
+                    ),
                 )
             self._trace(
                 "measurement_completed",
                 operation="measure_both_wavelengths",
                 status="success",
-                details="1310 nm and 1550 nm completed.",
+                details="%d nm and %d nm OPM readings completed."
+                % configuration.opm_wavelengths_nm,
             )
         finally:
             # Preserve the user's original display wavelength and never leave
@@ -817,7 +874,12 @@ class OP815:
         cleanup_error = None
         if self.driver_open:
             try:
-                for source_id in sorted(set(SOURCE_ID_BY_WAVELENGTH.values())):
+                source_ids = getattr(
+                    getattr(self, "measurement_configuration", None),
+                    "source_ids",
+                    tuple(SOURCE_ID_BY_WAVELENGTH.values()),
+                )
+                for source_id in sorted(set(source_ids)):
                     self.source_on(source_id, 0)
             except Exception as error:
                 cleanup_error = error
