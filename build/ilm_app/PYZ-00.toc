@@ -346,6 +346,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\reference.py',
    'PYMODULE'),
+  ('domain.reference_catalog',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\reference_catalog.py',
+   'PYMODULE'),
   ('domain.replacements',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\replacements.py',
