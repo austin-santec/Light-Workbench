@@ -61,10 +61,12 @@ the mode; the application does not infer it from hardware identity or cache.
 SM and MM use independent model/mode limit profiles. Historical compatibility
 classifications remain readable, but new MM runs use the selected MM mode.
 
-Production references are session-only and are shown in the Current readings
-panel. Separate SM and MM references may coexist for one connected measurement
-configuration. Loading historical runs does not overwrite them; a confirmed
-ILM/power-meter disconnect clears them and requires a new reference.
+Production references are session-only and are shown in the Reference panel
+beside Hardware Controls below Current readings. Hardware Test Setup can be
+collapsed without clearing its values so the readings table can use more
+vertical space. Separate SM and MM references may coexist for one connected
+measurement configuration. Loading historical runs does not overwrite them; a
+confirmed ILM/power-meter disconnect clears them and requires a new reference.
 
 The non-recording `Tools > Power Measurement Diagnostics...` workflow follows
 the hardware and lifecycle boundaries described here while displaying

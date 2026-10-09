@@ -1458,6 +1458,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\coc_export_dialog.py',
    'PYMODULE'),
+  ('ui.collapsible_group_box',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\collapsible_group_box.py',
+   'PYMODULE'),
   ('ui.hardware_status',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\hardware_status.py',

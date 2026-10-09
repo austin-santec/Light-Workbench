@@ -158,6 +158,7 @@ from ui.admin_config import AdminConfigDialog, AdminPasswordDialog
 from ui.reading_history import ReadingHistoryDialog
 from ui.coc_export_dialog import CocExportDialog, format_optimization_warning
 from ui.switch_ip import SwitchIpAddressDialog
+from ui.collapsible_group_box import CollapsibleGroupBox
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
 
@@ -212,6 +213,8 @@ QPushButton:disabled { background: #8b000b; color: #f3c7ca; }
 QToolButton { background: #e60013; color: white; border: none; border-radius: 4px; padding: 8px 12px; font-weight: 600; }
 QToolButton:hover { background: #b80010; }
 QToolButton:disabled { background: #8b000b; color: #f3c7ca; }
+QToolButton#collapse_toggle { background: transparent; color: #e60013; border: none; padding: 2px 6px; font-size: 11px; }
+QToolButton#collapse_toggle:hover { background: #ffe8e8; }
 QPushButton#hardware_primary_control { padding: 11px 20px; font-size: 16px; font-weight: 800; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: white; }
 QDoubleSpinBox { padding: 5px; }
@@ -251,6 +254,8 @@ QPushButton:disabled { background: #8b000b; color: #f3c7ca; }
 QToolButton { background: #e60013; color: white; border: none; border-radius: 4px; padding: 8px 12px; font-weight: 600; }
 QToolButton:hover { background: #b80010; }
 QToolButton:disabled { background: #8b000b; color: #f3c7ca; }
+QToolButton#collapse_toggle { background: transparent; color: #ff6670; border: none; padding: 2px 6px; font-size: 11px; }
+QToolButton#collapse_toggle:hover { background: #3a2529; }
 QPushButton#hardware_primary_control { padding: 11px 20px; font-size: 16px; font-weight: 800; }
 QPushButton#hardware_primary_control QLabel#button_title { font-size: 16px; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit { background: #373a40; color: #e8eaed; border: 1px solid #5a6069; selection-background-color: #e60013; selection-color: white; }
@@ -1616,11 +1621,11 @@ class MainWindow(QMainWindow):
         self.file_label.setObjectName("subtitle")
         root.addWidget(self.file_label)
 
-        setup_row = QHBoxLayout()
-
-        hardware_setup_box = QGroupBox("Hardware test setup")
+        hardware_setup_box = CollapsibleGroupBox("Hardware test setup")
         self.hardware_setup_box = hardware_setup_box
-        hardware_setup_layout = QGridLayout(hardware_setup_box)
+        self.hardware_setup_toggle_button = hardware_setup_box.toggle_button
+        hardware_setup_layout = QGridLayout()
+        hardware_setup_box.set_content_layout(hardware_setup_layout)
         hardware_setup_layout.addWidget(QLabel("Channel mode:"), 0, 0)
         self.hardware_channel_mode = QComboBox()
         self.hardware_channel_mode.addItems(["Full configured pass", "Single channel", "Specific channels/ranges"])
@@ -1763,9 +1768,8 @@ class MainWindow(QMainWindow):
         self._refresh_wavelength_mode_ui()
         self._refresh_front_panel_channel_count_label()
         self.update_channel_mode_controls(self.hardware_channel_mode.currentIndex())
-        setup_row.addWidget(hardware_setup_box, 1)
-
         controls_box = QGroupBox("Hardware controls")
+        self.hardware_controls_box = controls_box
         controls_layout = QVBoxLayout(controls_box)
         controls_layout.setSpacing(8)
 
@@ -1863,13 +1867,12 @@ class MainWindow(QMainWindow):
             self.write_hardware_button,
         ):
             button.setMinimumSize(125, 48)
-        controls_box.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        controls_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.update_shortcuts()
-        setup_row.addWidget(controls_box)
 
         readings_box = QGroupBox("Current readings")
         self.current_readings_box = readings_box
-        readings_box.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        readings_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         readings_layout = QVBoxLayout(readings_box)
         readings_layout.setSpacing(5)
         self.current_channel_label = QLabel("Channel: -")
@@ -1906,12 +1909,19 @@ class MainWindow(QMainWindow):
         reference_layout.addWidget(self.calculate_reference_button, 2, 0, 1, 2)
         reference_layout.addWidget(self.apply_manual_reference_button, 3, 0, 1, 2)
         reference_layout.addWidget(self.reference_status_label, 4, 0, 1, 2)
-        readings_layout.addWidget(reference_box)
-        setup_row.addWidget(readings_box)
-        root.addLayout(setup_row)
-
-        content_splitter = QSplitter(Qt.Horizontal)
-        self.content_splitter = content_splitter
+        # Keep the existing reference actions and values while allowing this
+        # panel to share a row with Hardware Controls at the default width.
+        for reference_widget in (
+            self.reference_1310_spin,
+            self.reference_1550_spin,
+            self.calculate_reference_button,
+            self.apply_manual_reference_button,
+        ):
+            reference_policy = reference_widget.sizePolicy()
+            reference_policy.setHorizontalPolicy(QSizePolicy.Ignored)
+            reference_widget.setSizePolicy(reference_policy)
+            reference_widget.setMinimumWidth(0)
+        reference_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         table_panel = QWidget()
         table_panel_layout = QVBoxLayout(table_panel)
         table_filter_layout = QHBoxLayout()
@@ -1950,7 +1960,6 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(True)
         self._refresh_wavelength_mode_ui()
         table_panel_layout.addWidget(self.table)
-        content_splitter.addWidget(table_panel)
 
         info_panel = QWidget()
         info_panel.setObjectName("info_panel")
@@ -2067,11 +2076,62 @@ class MainWindow(QMainWindow):
         self.info_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.info_scroll_area.viewport().setObjectName("info_scroll_viewport")
         self.info_scroll_area.setWidget(info_panel)
-        content_splitter.addWidget(self.info_scroll_area)
-        # Give the information column enough width for its controls and
-        # recommendation text on the initial 1120px-wide window.
-        content_splitter.setSizes([620, 450])
-        root.addWidget(content_splitter, 1)
+
+        # Keep setup and the readings table in one column, while the controls
+        # and operator-facing analysis remain together in the other column.
+        # This prevents the narrow default window from forcing the three
+        # top-level hardware panels into an overcrowded row.
+        workspace_splitter = QSplitter(Qt.Horizontal)
+        workspace_splitter.setObjectName("workspace_splitter")
+        workspace_splitter.setChildrenCollapsible(False)
+        self.workspace_splitter = workspace_splitter
+        # Preserve the established attribute for compatibility with existing
+        # callers and tests that use the main content splitter.
+        self.content_splitter = workspace_splitter
+
+        left_column = QWidget()
+        left_column.setObjectName("workspace_left_column")
+        left_column.setMinimumWidth(500)
+        self.workspace_left_column = left_column
+        left_layout = QVBoxLayout(left_column)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
+        left_layout.addWidget(hardware_setup_box)
+        left_layout.addWidget(table_panel, 1)
+
+        right_column = QWidget()
+        right_column.setObjectName("workspace_right_column")
+        right_column.setMinimumWidth(500)
+        self.workspace_right_column = right_column
+        right_layout = QVBoxLayout(right_column)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(6)
+        right_layout.addWidget(readings_box)
+
+        controls_reference_row = QWidget()
+        controls_reference_row.setObjectName("controls_reference_row")
+        self.controls_reference_row = controls_reference_row
+        controls_reference_layout = QHBoxLayout(controls_reference_row)
+        controls_reference_layout.setContentsMargins(0, 0, 0, 0)
+        controls_reference_layout.setSpacing(6)
+        controls_reference_layout.addWidget(controls_box, 1)
+        controls_reference_layout.addWidget(reference_box, 1)
+        right_layout.addWidget(controls_reference_row)
+        right_layout.addWidget(self.info_scroll_area, 1)
+
+        workspace_splitter.addWidget(left_column)
+        workspace_splitter.addWidget(right_column)
+        saved_splitter_state = self.settings.value("workspace_splitter_state")
+        if saved_splitter_state:
+            workspace_splitter.restoreState(saved_splitter_state)
+        else:
+            # Keep enough width on the right for the side-by-side controls and
+            # reference panels while preserving a larger table column.
+            workspace_splitter.setSizes([580, 520])
+        workspace_splitter.splitterMoved.connect(
+            lambda _position, _index: self._save_workspace_splitter_state()
+        )
+        root.addWidget(workspace_splitter, 1)
 
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
@@ -2081,17 +2141,28 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready. Open a saved CSV run to begin.")
         self._update_hardware_readiness_controls()
 
+    def _save_workspace_splitter_state(self):
+        """Remember the operator's main workspace column proportions."""
+        if hasattr(self, "workspace_splitter"):
+            self.settings.setValue(
+                "workspace_splitter_state", self.workspace_splitter.saveState()
+            )
+
     def _scale_hardware_setup_fonts(self, setup_box, scale):
         """Scale only the fonts contained in the Hardware test setup box."""
-        # Set descendants before the parent so inherited fonts are not doubled
-        # a second time when the child font is read.
+        # Use one absolute target size for every descendant. The collapsible
+        # content wrapper adds another inheritance level, so multiplying each
+        # widget's current font would scale nested controls more than once.
+        application_font = QApplication.font()
+        target_point_size = application_font.pointSizeF() * scale
+        target_pixel_size = application_font.pixelSize()
         widgets = [*setup_box.findChildren(QWidget), setup_box]
         for widget in widgets:
             font = widget.font()
             if font.pointSizeF() > 0:
-                font.setPointSizeF(font.pointSizeF() * scale)
-            elif font.pixelSize() > 0:
-                font.setPixelSize(round(font.pixelSize() * scale))
+                font.setPointSizeF(target_point_size)
+            elif font.pixelSize() > 0 and target_pixel_size > 0:
+                font.setPixelSize(round(target_pixel_size * scale))
             widget.setFont(font)
 
     def _theme_stylesheet(self, dark_mode):
@@ -5794,6 +5865,7 @@ class MainWindow(QMainWindow):
             "application.close_completed",
             status="success",
         )
+        self._save_workspace_splitter_state()
         if self.support_logger is not None:
             self.support_logger.flush(0.5)
         event.accept()

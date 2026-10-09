@@ -215,11 +215,13 @@ short range.
    number, operating band, operator initials, and the numbered run. First use the
    header `Connect Hardware...`
    menu; references default to 0.00 dBm until calculated or entered. The
-   Reference section is in Current readings because the value belongs to the
-   connected measurement session, not the loaded run. `Calculate Reference` is
+   The Reference panel is beside Hardware Controls below Current readings
+   because the value belongs to the connected measurement session, not the
+   loaded run. Hardware Test Setup can be collapsed without clearing its
+   fields. `Calculate Reference` is
    enabled when measurement hardware is connected; it borrows that connection,
    reads both wavelengths with a zero software reference, releases its lease, and applies the
-   resulting two-decimal offsets back to the Current readings panel without opening the Live IL
+   resulting two-decimal offsets back to the Reference panel without opening the Live IL
    window. Reference calibration uses a dedicated stabilized timing profile
    and does not slow normal production measurements.
    When a supported OSX connects and no run is loaded or active, the serial

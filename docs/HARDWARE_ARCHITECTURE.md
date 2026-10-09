@@ -267,13 +267,14 @@ descriptive metadata, but it cannot bypass disconnected hardware or a missing,
 invalidated, stale, or hardware-mismatched reference. Diagnostic tools and
 saved-run review retain their independent readiness requirements.
 
-The production reference controls are displayed in the Current readings
-panel, because the reference belongs to the connected measurement session
-rather than to the unit or run being viewed. The application keeps a separate
-session-only reference for each matching SM/MM configuration. Loading a saved
-run or CSV changes only the historical view; it does not replace the active
-reference. A confirmed ILM/power-meter disconnect clears all cached session
-references and requires a new two-wavelength reference after reconnection.
+The production reference controls are displayed in the Reference panel beside
+Hardware Controls below Current readings. The reference belongs to the
+connected measurement session rather than to the unit or run being viewed.
+The application keeps a separate session-only reference for each matching
+SM/MM configuration. Loading a saved run or CSV changes only the historical
+view; it does not replace the active reference. A confirmed ILM/power-meter
+disconnect clears all cached session references and requires a new
+two-wavelength reference after reconnection.
 Optical-switch-only disconnects do not clear the measurement reference.
 Transient communication errors remain distinct from confirmed disconnects.
 

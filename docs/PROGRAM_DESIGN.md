@@ -285,6 +285,15 @@ The main window remains in `ilm_app.py` as the application entry point. The
 standalone Live IL and Red Light dialogs live in `ui/`; their root-level module
 names remain compatibility facades for existing callers.
 
+The main workspace uses two resizable columns. Hardware Test Setup and the
+readings table share the left column; Hardware Test Setup can be collapsed
+without clearing its fields. Current Readings is at the top of the right
+column, followed by a horizontal row containing Hardware Controls and the
+session Reference panel, then the vertically scrollable
+analysis/replacement/run-information area. This is a presentation-only
+arrangement; the existing widgets and workflow callbacks remain the source of
+behavior.
+
 The Power Measurement Diagnostics dialog places its in-memory variation
 analysis beside the history table in a resizable splitter. The panel is
 presentation-only and can be hidden without clearing readings or analysis

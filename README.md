@@ -357,8 +357,10 @@ ILM wavelength matches the requested wavelength. A difference in the DLL's
 diagnostic index/count convention alone does not stop the run when the actual
 wavelength is correct; diagnostics retain those raw values as warnings.
 
-The reference powers are displayed in the Current readings panel and belong
-to the connected measurement session rather than the loaded run. Normal
+The reference powers are displayed in the Reference panel beside Hardware
+Controls below Current readings. Hardware Test Setup can be collapsed to give
+the readings table more vertical space. References belong to the connected
+measurement session rather than the loaded run. Normal
 operators cannot edit or authorize them directly. Use
 `Calculate Reference` with connected measurement hardware; Admin Mode provides
 an explicit `Apply Manual Reference` action for controlled exceptions. A real
@@ -372,8 +374,9 @@ the run metadata.
 
 Before a production run can start, use **Connect Hardware...** to connect all
 required hardware, complete the required Hardware test setup fields, and use
-`Calculate Reference`. The reference is displayed in Current readings and
-belongs to the connected measurement session rather than the loaded run. A
+`Calculate Reference`. The reference is displayed beside Hardware Controls in
+the right column and belongs to the connected measurement session rather than
+the loaded run. A
 production run cannot start until a valid calculated reference exists for the
 connected measurement hardware. Loading another run or CSV does not replace
 the active session reference. A confirmed ILM disconnect clears it and

@@ -129,8 +129,9 @@ records remain readable during the migration.
 ## Reference authorization and audit model
 
 Reference values are not authorized merely because numbers appear in the main
-window. The Reference panel lives inside Current readings, while the
-application keeps a session-only reference bank with these important states:
+window. The Reference panel is beside Hardware Controls below Current
+readings, while the application keeps a session-only reference bank with these
+important states:
 not referenced, calculating, valid calculated, valid manual admin, and
 invalidated. A production run requires a valid reference for the exact current
 measurement context.

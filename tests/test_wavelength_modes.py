@@ -411,7 +411,7 @@ class WavelengthModeUiTests(unittest.TestCase):
         finally:
             window.close()
 
-    def test_reference_controls_are_in_current_readings_panel(self):
+    def test_reference_controls_are_in_right_column_panel(self):
         from ilm_app import MainWindow
 
         window = MainWindow()
@@ -421,12 +421,20 @@ class WavelengthModeUiTests(unittest.TestCase):
                 window.reference_first_label.parentWidget(),
             )
             self.assertIs(
-                window.reference_1310_spin.parentWidget().parentWidget(),
-                window.current_readings_box,
+                window.reference_1310_spin.parentWidget(),
+                window.reference_box,
             )
             self.assertIsNot(
                 window.reference_1310_spin.parentWidget(),
                 window.hardware_setup_box,
+            )
+            self.assertIs(
+                window.reference_box.parentWidget(),
+                window.controls_reference_row,
+            )
+            self.assertIs(
+                window.hardware_controls_box.parentWidget(),
+                window.controls_reference_row,
             )
         finally:
             window.close()

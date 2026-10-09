@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtGui import QCloseEvent
 from PyQt5.QtWidgets import QApplication, QDialog, QGroupBox, QMessageBox
-from PyQt5.QtCore import QEventLoop, QObject, QTimer, Qt, pyqtSignal
+from PyQt5.QtCore import QEventLoop, QObject, QSettings, QTimer, Qt, pyqtSignal
 from PyQt5.QtTest import QTest
 
 from application.coc_workflow import CocRunOption
@@ -1035,7 +1035,7 @@ class MainWindowTests(unittest.TestCase):
 
     def test_hardware_setup_fields_use_requested_positions(self):
         window = MainWindow()
-        layout = window.hardware_setup_box.layout()
+        layout = window.hardware_setup_box.content_widget.layout()
 
         def position(widget):
             row, column, _row_span, _column_span = layout.getItemPosition(
@@ -1070,9 +1070,13 @@ class MainWindowTests(unittest.TestCase):
                 window.lookup_part_number_button.font().pointSizeF(),
                 expected_size,
             )
-            self.assertEqual(
+            # The primary-control stylesheet supplies its own 16px visual
+            # size, so Qt reports an explicit stylesheet font rather than the
+            # inherited application point size. It must not receive the
+            # Hardware test setup 1.2x font scaling.
+            self.assertNotEqual(
                 window.start_hardware_button.font().pointSizeF(),
-                QApplication.font().pointSizeF(),
+                expected_size,
             )
         finally:
             window.close()
@@ -1450,53 +1454,121 @@ class MainWindowTests(unittest.TestCase):
         finally:
             window.close()
 
-    def test_current_readings_share_the_top_row_with_hardware_controls(self):
+    def test_main_workspace_uses_two_columns_and_side_by_side_panels(self):
+        settings = QSettings("Light Workbench", "LightWorkbench")
+        saved_splitter_state = settings.value("workspace_splitter_state")
+        settings.remove("workspace_splitter_state")
         window = MainWindow()
-        group_boxes = {
-            box.title(): box for box in window.findChildren(type(window.current_readings_box))
-        }
+        try:
+            window.show()
+            self.application.processEvents()
+            left_column = window.workspace_splitter.widget(0)
+            right_column = window.workspace_splitter.widget(1)
+            self.assertIs(window.hardware_setup_box.parentWidget(), left_column)
+            self.assertIs(window.current_readings_box.parentWidget(), right_column)
+            self.assertIs(
+                window.hardware_controls_box.parentWidget(),
+                window.controls_reference_row,
+            )
+            self.assertIs(
+                window.reference_box.parentWidget(),
+                window.controls_reference_row,
+            )
+            left_layout = window.workspace_left_column.layout()
+            right_layout = window.workspace_right_column.layout()
+            self.assertLess(
+                left_layout.indexOf(window.hardware_setup_box),
+                left_layout.indexOf(window.table.parentWidget()),
+            )
+            self.assertLess(
+                right_layout.indexOf(window.current_readings_box),
+                right_layout.indexOf(window.controls_reference_row),
+            )
+            self.assertLess(
+                right_layout.indexOf(window.controls_reference_row),
+                right_layout.indexOf(window.info_scroll_area),
+            )
+            self.assertEqual(
+                window.hardware_controls_box.geometry().top(),
+                window.reference_box.geometry().top(),
+            )
+            self.assertGreater(window.workspace_splitter.sizes()[0], 0)
+            self.assertGreater(window.workspace_splitter.sizes()[1], 0)
+            splitter_sizes = window.workspace_splitter.sizes()
+            left_ratio = splitter_sizes[0] / sum(splitter_sizes)
+            self.assertGreaterEqual(left_ratio, 0.45)
+            self.assertLessEqual(left_ratio, 0.65)
+            self.assertEqual(window.start_hardware_button.text(), "Start Run")
+            for button in (
+                window.start_hardware_button,
+                window.stop_hardware_button,
+                window.continue_hardware_button,
+                window.write_hardware_button,
+            ):
+                self.assertEqual(button.minimumWidth(), 125)
+                self.assertEqual(button.minimumHeight(), 48)
+                self.assertEqual(button.objectName(), "hardware_primary_control")
+            for button in (window.write_coc_button, window.copy_raw_data_button):
+                self.assertEqual(button.minimumWidth(), 125)
+                self.assertEqual(button.maximumWidth(), 125)
+                self.assertEqual(button.minimumHeight(), 48)
+                self.assertEqual(button.maximumHeight(), 48)
+            self.assertIn(
+                "QPushButton#hardware_primary_control { padding: 11px 20px; font-size: 16px",
+                window.styleSheet(),
+            )
+            self.assertIn(
+                "QPushButton#hardware_primary_control QLabel#button_title { font-size: 16px; }",
+                window.styleSheet(),
+            )
+            self.assertEqual(
+                window.continue_hardware_button.title_label.text(), "Live Reading"
+            )
+            self.assertEqual(window.write_hardware_button.title_label.text(), "Write IL")
+            self.assertEqual(
+                window.continue_hardware_button.shortcut_label.text(),
+                "[%s]" % window.continue_shortcut.key().toString(),
+            )
+            self.assertEqual(
+                window.write_hardware_button.shortcut_label.text(),
+                "[%s]" % window.write_shortcut.key().toString(),
+            )
+            self.assertTrue(window.demo_channel_label.isHidden())
+        finally:
+            window.close()
+            if saved_splitter_state is None:
+                settings.remove("workspace_splitter_state")
+            else:
+                settings.setValue("workspace_splitter_state", saved_splitter_state)
 
-        self.assertEqual(
-            group_boxes["Current readings"].geometry().y(),
-            group_boxes["Hardware controls"].geometry().y(),
-        )
-        self.assertEqual(window.start_hardware_button.text(), "Start Run")
-        for button in (
-            window.start_hardware_button,
-            window.stop_hardware_button,
-            window.continue_hardware_button,
-            window.write_hardware_button,
-        ):
-            self.assertEqual(button.minimumWidth(), 125)
-            self.assertEqual(button.minimumHeight(), 48)
-            self.assertEqual(button.objectName(), "hardware_primary_control")
-        for button in (window.write_coc_button, window.copy_raw_data_button):
-            self.assertEqual(button.minimumWidth(), 125)
-            self.assertEqual(button.maximumWidth(), 125)
-            self.assertEqual(button.minimumHeight(), 48)
-            self.assertEqual(button.maximumHeight(), 48)
-        self.assertIn(
-            "QPushButton#hardware_primary_control { padding: 11px 20px; font-size: 16px",
-            window.styleSheet(),
-        )
-        self.assertIn(
-            "QPushButton#hardware_primary_control QLabel#button_title { font-size: 16px; }",
-            window.styleSheet(),
-        )
-        self.assertEqual(
-            window.continue_hardware_button.title_label.text(), "Live Reading"
-        )
-        self.assertEqual(window.write_hardware_button.title_label.text(), "Write IL")
-        self.assertEqual(
-            window.continue_hardware_button.shortcut_label.text(),
-            "[%s]" % window.continue_shortcut.key().toString(),
-        )
-        self.assertEqual(
-            window.write_hardware_button.shortcut_label.text(),
-            "[%s]" % window.write_shortcut.key().toString(),
-        )
-        self.assertTrue(window.demo_channel_label.isHidden())
-        window.close()
+    def test_hardware_setup_can_collapse_without_clearing_values(self):
+        window = MainWindow()
+        try:
+            window.show()
+            self.application.processEvents()
+            window.hardware_main_board_serial.setText("MB-123")
+            window.hardware_channel_mode.setCurrentIndex(1)
+            window.hardware_single_channel.setValue(7)
+            table_height = window.table.height()
+
+            window.hardware_setup_toggle_button.click()
+            self.application.processEvents()
+
+            self.assertFalse(window.hardware_setup_box.is_expanded)
+            self.assertFalse(window.hardware_setup_box.content_widget.isVisible())
+            self.assertTrue(window.hardware_setup_toggle_button.isVisible())
+            self.assertGreater(window.table.height(), table_height)
+            self.assertEqual(window.hardware_main_board_serial.text(), "MB-123")
+            self.assertEqual(window.hardware_single_channel.value(), 7)
+
+            window.hardware_setup_toggle_button.click()
+            self.application.processEvents()
+            self.assertTrue(window.hardware_setup_box.is_expanded)
+            self.assertTrue(window.hardware_setup_box.content_widget.isVisible())
+            self.assertEqual(window.hardware_main_board_serial.text(), "MB-123")
+            self.assertEqual(window.hardware_single_channel.value(), 7)
+        finally:
+            window.close()
 
     def test_information_panels_are_inside_a_vertical_scroll_area(self):
         window = MainWindow()
