@@ -291,4 +291,10 @@ do not turn a table row red or prevent writing a reading; only formal failures
 are red and are selected by the failure-selection control. Each new run stores
 the resolved model, profile name/revision, and all threshold values in its JSON
 criteria snapshot. Legacy run JSON remains readable through its original
-warning limit.
+warning limit. Loading a run restores that snapshot for both SM and MM; the
+active connected switch is not used to reinterpret historical data. Legacy
+runs without a snapshot infer a model from persisted metadata and the mode
+from the run wavelengths. If a snapshot is contradictory or a safe model/mode
+profile cannot be found, limits are unavailable and the run remains viewable
+without an unsafe OSX-150 fallback. Legacy SM files may still use their
+original single warning limit when no better identity is available.

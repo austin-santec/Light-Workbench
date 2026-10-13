@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.29.2**. The single
+The current source release is **Light Workbench 1.29.3**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -47,7 +47,10 @@ product options, power readings, and cached history are not used to infer the
 mode. Run schema version 6 stores wavelength-keyed losses plus OPM/source
 pairs, selected mode, selection method, profile origin, and classification
 metadata; legacy files remain readable. SM and MM have independent model/mode
-limit profiles. MM supports normal analysis and replacement analysis. OSX-100
+limit profiles. Loaded runs restore their saved model/mode criteria for both SM
+and MM; older runs infer the model from persisted metadata. Contradictory or
+unresolved MM criteria leave limits unavailable instead of assuming OSX-150.
+MM supports normal analysis and replacement analysis. OSX-100
 SM and MM use matching COC workflows; OSX-150 MM remains blocked from COC
 export. Historical compatibility classifications are preserved when loading
 older records.

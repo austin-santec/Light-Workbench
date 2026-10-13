@@ -1863,6 +1863,47 @@ class MainWindowTests(unittest.TestCase):
             self.assertTrue(window.write_coc_action.isEnabled())
             window.close()
 
+    def test_loading_osx100_mm_run_restores_saved_criteria_without_hardware(self):
+        with tempfile.TemporaryDirectory() as directory:
+            csv_path = Path(directory) / "Run-1.csv"
+            csv_path.write_text(
+                "channel,850 IL,1300 IL,,Metadata,Value\n"
+                "1,0.3600,0.4200,,Part number,OSX-100-1A-048-09-FA-00B-3H\n"
+                ",,,,Wavelength mode,MM\n",
+                encoding="utf-8",
+            )
+            (Path(directory) / "Run-1.json").write_text(
+                json.dumps(
+                    {
+                        "criteria": {
+                            "model": "OSX-100",
+                            "wavelength_mode": "MM",
+                            "profile_name": "OSX-100 MM standard",
+                            "revision": "1",
+                            "too_good_below_db": 0.2,
+                            "warning_enabled": False,
+                            "warning_above_db": None,
+                            "fail_above_db": 0.8,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            window = MainWindow(str(csv_path))
+            try:
+                profile = window._profile_for_current_run()
+                self.assertEqual(profile.model, "OSX-100")
+                self.assertEqual(profile.wavelength_mode, "MM")
+                self.assertEqual(profile.too_good_below_db, 0.2)
+                self.assertEqual(profile.fail_above_db, 0.8)
+                self.assertFalse(
+                    profile.classify(0.36, 0.42, (850, 1300)).is_too_good
+                )
+                self.assertEqual(window.metric_labels["too_good"].text(), "0")
+            finally:
+                window.close()
+
     def test_coc_controls_remain_disabled_for_osx150_mm_runs(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "Run-1.csv"

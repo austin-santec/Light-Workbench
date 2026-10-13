@@ -171,6 +171,91 @@ class LimitProfile:
         ).validate()
 
 
+@dataclass(frozen=True)
+class LoadedLimitProfileResolution:
+    """Result of resolving criteria for a persisted run."""
+
+    profile: LimitProfile | None
+    source: str
+    reason: str = ""
+
+
+def resolve_loaded_run_profile(
+    criteria_snapshot: Mapping[str, object] | None,
+    metadata: Mapping[str, object] | None,
+    wavelength_mode: str,
+    profiles: Mapping[str, LimitProfile],
+    *,
+    criteria_present: bool = False,
+    legacy_warning_limit: float | None = None,
+) -> LoadedLimitProfileResolution:
+    """Resolve a saved run's model/mode criteria without hardware fallbacks.
+
+    A valid persisted criteria snapshot is authoritative.  Older runs without
+    a snapshot may infer a supported model from their saved part number, but a
+    contradictory snapshot is never replaced with an unrelated device model.
+    """
+    mode = normalize_wavelength_mode(wavelength_mode)
+    if criteria_present:
+        if not isinstance(criteria_snapshot, Mapping):
+            return LoadedLimitProfileResolution(
+                None,
+                "unavailable",
+                "The saved criteria snapshot is missing or malformed.",
+            )
+        try:
+            profile = LimitProfile.from_mapping(criteria_snapshot)
+        except (KeyError, TypeError, ValueError):
+            return LoadedLimitProfileResolution(
+                None,
+                "unavailable",
+                "The saved criteria snapshot is invalid.",
+            )
+        if profile.wavelength_mode != mode:
+            return LoadedLimitProfileResolution(
+                None,
+                "unavailable",
+                "The saved criteria mode does not match the run wavelength mode.",
+            )
+        return LoadedLimitProfileResolution(profile, "saved_snapshot")
+
+    saved_metadata = dict(metadata or {})
+    model = ""
+    for key in ("Switch model", "Part number"):
+        candidate = normalize_switch_model(saved_metadata.get(key))
+        if candidate in SUPPORTED_SWITCH_MODELS:
+            model = candidate
+            break
+    if model:
+        profile = profiles.get(profile_key(model, mode))
+        if profile is not None:
+            return LoadedLimitProfileResolution(profile, "persisted_identity")
+        return LoadedLimitProfileResolution(
+            None,
+            "unavailable",
+            "No configured limit profile exists for %s %s." % (model, mode),
+        )
+
+    if mode == "SM" and legacy_warning_limit is not None:
+        try:
+            return LoadedLimitProfileResolution(
+                legacy_limit_profile(float(legacy_warning_limit)),
+                "legacy_warning_limit",
+            )
+        except (TypeError, ValueError):
+            return LoadedLimitProfileResolution(
+                None,
+                "unavailable",
+                "The legacy warning limit is invalid.",
+            )
+
+    return LoadedLimitProfileResolution(
+        None,
+        "unavailable",
+        "The saved switch model and limit criteria could not be determined.",
+    )
+
+
 class LimitProfileCollection(dict):
     """Mapping of all four profiles with legacy model-only lookup support."""
 
@@ -240,9 +325,11 @@ __all__ = [
     "LimitProfileCollection",
     "LimitAssessment",
     "LimitProfile",
+    "LoadedLimitProfileResolution",
     "default_limit_profiles",
     "legacy_limit_profile",
     "normalize_switch_model",
     "normalize_wavelength_mode",
     "profile_key",
+    "resolve_loaded_run_profile",
 ]

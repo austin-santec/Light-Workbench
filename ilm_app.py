@@ -112,6 +112,7 @@ from domain.limit_profiles import (
     legacy_limit_profile,
     normalize_switch_model,
     profile_key,
+    resolve_loaded_run_profile,
 )
 from domain.comparison import comparison_values, index_measurements
 from domain.measurement_attempts import (
@@ -810,6 +811,8 @@ class MainWindow(QMainWindow):
         self._run_terminal_status = None
         self._run_completion_reason = ""
         self._run_completed_at_utc = ""
+        self._loaded_run_profile_unavailable = False
+        self._loaded_run_profile_reason = ""
         self.reference_workflow = None
         self._support_log_size_warning_shown = False
         self.run_data: RunData | None = None
@@ -2572,6 +2575,8 @@ class MainWindow(QMainWindow):
 
     def _profile_for_current_run(self):
         """Resolve the run snapshot or the current model/mode profile."""
+        if self.run_data is not None and self._loaded_run_profile_unavailable:
+            return None
         if self.run_data is not None and self.run_data.criteria_snapshot:
             try:
                 return LimitProfile.from_mapping(self.run_data.criteria_snapshot)
@@ -2616,6 +2621,20 @@ class MainWindow(QMainWindow):
         self.limit_spin.blockSignals(True)
         self.limit_spin.setValue(compatibility_limit)
         self.limit_spin.blockSignals(False)
+
+    def _set_limits_unavailable(self, reason):
+        """Clear stale criteria after a loaded run fails profile resolution."""
+        self.active_limit_profile = None
+        self._loaded_run_profile_unavailable = True
+        self._loaded_run_profile_reason = str(reason or "Unknown criteria error")
+        if hasattr(self, "criteria_profile_label"):
+            self.criteria_profile_label.setText(
+                "Limits unavailable: %s" % self._loaded_run_profile_reason
+            )
+        self.statusBar().showMessage(
+            "Loaded run; limits unavailable: %s" % self._loaded_run_profile_reason,
+            10000,
+        )
 
     def toggle_admin_mode(self):
         """Enter or leave the session-only administrator mode."""
@@ -3803,6 +3822,11 @@ class MainWindow(QMainWindow):
 
         self.run_data = run_data
         self.run_recorder = None
+        self._loaded_run_profile_unavailable = False
+        self._loaded_run_profile_reason = ""
+        self.active_limit_profile = self.limit_profiles.get(
+            profile_key("OSX-150", "SM")
+        )
         self._active_planned_channels = None
         self._run_completion_reason = ""
         self._run_terminal_status = None
@@ -3878,6 +3902,7 @@ class MainWindow(QMainWindow):
             str(self.hardware_run_number.value())
         )
         loaded_run_id = ""
+        payload = {}
         json_path = self.run_repository.find_json_path(path)
         if json_path.is_file():
             try:
@@ -3960,31 +3985,50 @@ class MainWindow(QMainWindow):
                         )
                         for record in run_data.measurements
                     ]
-                if run_data.wavelength_mode == "SM":
-                    criteria = payload.get("criteria")
-                    if isinstance(criteria, dict):
-                        try:
-                            profile = LimitProfile.from_mapping(criteria)
-                        except (ValueError, TypeError, KeyError):
-                            profile = legacy_limit_profile(
-                                float(payload.get("warning_limit_db", 2.0))
-                            )
-                    else:
-                        # Runs created before model-specific criteria retain their
-                        # original single warning limit and are marked legacy.
-                        profile = legacy_limit_profile(
-                            float(payload.get("warning_limit_db", 2.0))
-                        )
-                    run_data.criteria_snapshot = profile.as_dict()
-                    run_data.warning_limit = profile.warning_above_db
-                    self._set_active_limit_profile(profile)
-                else:
-                    run_data.criteria_snapshot = None
-                    run_data.warning_limit = None
-            except (OSError, ValueError, TypeError, KeyError):
+            except (AttributeError, OSError, ValueError, TypeError, KeyError):
+                payload = {}
                 self.statusBar().showMessage(
                     "Loaded CSV; the companion run.json could not be read."
                 )
+        profile_resolution = resolve_loaded_run_profile(
+            payload.get("criteria"),
+            run_data.metadata,
+            run_data.wavelength_mode,
+            self.limit_profiles,
+            criteria_present=(
+                "criteria" in payload and payload.get("criteria") is not None
+            ),
+            legacy_warning_limit=payload.get("warning_limit_db"),
+        )
+        profile = profile_resolution.profile
+        if profile is not None:
+            run_data.criteria_snapshot = profile.as_dict()
+            run_data.warning_limit = profile.warning_above_db
+            self._set_active_limit_profile(profile)
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "run.loaded_criteria_resolved",
+                criteria_source=profile_resolution.source,
+                switch_model=profile.model,
+                wavelength_mode=profile.wavelength_mode,
+                criteria_profile=profile.profile_name,
+                criteria_revision=profile.revision,
+                too_good_limit_db=profile.too_good_below_db,
+                fail_limit_db=profile.fail_above_db,
+                status="success",
+            )
+        else:
+            run_data.criteria_snapshot = None
+            run_data.warning_limit = None
+            self._set_limits_unavailable(profile_resolution.reason)
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "run.loaded_criteria_unavailable",
+                criteria_source=profile_resolution.source,
+                wavelength_mode=run_data.wavelength_mode,
+                reason=profile_resolution.reason,
+                status="warning",
+            )
         if not run_data.measurement_attempts:
             run_data.measurement_attempts = normalise_attempts(
                 [],
@@ -4043,6 +4087,8 @@ class MainWindow(QMainWindow):
         self.demo_channel = 1
         self.demo_measurement = None
         self.clear_current_reading(self.demo_channel)
+        self._loaded_run_profile_unavailable = False
+        self._loaded_run_profile_reason = ""
         self.run_data = RunData(
             Path("Simulation"),
             [],
@@ -4606,6 +4652,8 @@ class MainWindow(QMainWindow):
             self.reference_session.snapshot.as_dict()
         )
         if not retest and run_mode == "new":
+            self._loaded_run_profile_unavailable = False
+            self._loaded_run_profile_reason = ""
             self.run_data = RunData(
                 self.unit_repository.run_directory_for_number(
                     selected_unit_directory,
@@ -7490,6 +7538,8 @@ class MainWindow(QMainWindow):
         """Return whether a saved record belongs in the selected table view."""
         filter_index = self.reading_filter.currentIndex()
         profile = self._profile_for_current_run()
+        if profile is None:
+            return True
         assessment = profile.classify(
             *record.ordered_losses,
             record.opm_wavelengths_nm,

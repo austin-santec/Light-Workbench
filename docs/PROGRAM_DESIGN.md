@@ -216,7 +216,13 @@ stores administrator-controlled profiles in the per-user INI file, while
 `application/admin_session.py` keeps authorization in memory only and
 `ui/admin_config.py` provides the editing dialog. A new run stores a criteria
 snapshot so later review uses the rules that were active when the run began.
-Older runs remain loadable through a legacy single-warning-limit profile.
+When a saved run is loaded, valid criteria snapshots are restored for both SM
+and MM. Older runs without a snapshot infer the model from persisted metadata,
+primarily the part number, and combine it with the run's wavelength mode. A
+contradictory or unresolved MM profile produces unavailable limits rather than
+silently inheriting the connected device or an OSX-150 default. Older runs
+remain loadable through a legacy single-warning-limit profile where that is
+safe.
 
 `infrastructure/run_persistence.py` owns run folder naming, atomic CSV/JSON
 recording, continuation renaming, and legacy JSON loading. The root
