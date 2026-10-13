@@ -381,7 +381,9 @@ actual wavelength still blocks `ReadPower`.
 
 `hardware/optical_switch.py` tries the operator's manual address, a separately
 remembered automatic address, then a targeted `USB?*::INSTR` enumeration
-filtered by Santec VID/PID 0x2428 / 0xD00D. Each candidate gets a fresh LF and,
+filtered by Santec VID 0x2428 and either OSX-100 PID 0xD003 or OSX-150 PID
+0xD00D. The VISA fields are parsed individually, so a serial number cannot
+create a false product-ID match. Each candidate gets a fresh LF and,
 if needed, CRLF `*IDN?` probe. A supported identity is followed by channel-count
 validation; zero or invalid channel counts retain detailed transient diagnostic
 information but block routing and close the session safely. It uses:

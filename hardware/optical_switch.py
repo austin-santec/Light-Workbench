@@ -21,7 +21,13 @@ from hardware.visa_errors import (
 SWITCH_SETTLING_TIME_SECONDS = 0.25
 MIN_SWITCH_CHANNEL = 1
 SANTEC_USB_VENDOR_ID = "0x2428"
-SANTEC_USB_PRODUCT_ID = "0xD00D"
+SANTEC_OSX100_USB_PRODUCT_ID = "0xD003"
+SANTEC_OSX150_USB_PRODUCT_ID = "0xD00D"
+# Compatibility alias: older callers used this name for the OSX-150 PID.
+SANTEC_USB_PRODUCT_ID = SANTEC_OSX150_USB_PRODUCT_ID
+SANTEC_SWITCH_USB_PRODUCT_IDS = frozenset(
+    (SANTEC_OSX100_USB_PRODUCT_ID, SANTEC_OSX150_USB_PRODUCT_ID)
+)
 SANTEC_USB_RESOURCE_QUERY = "USB?*::INSTR"
 SWITCH_WRITE_TERMINATIONS = ("\n", "\r\n")
 LOG = logging.getLogger(__name__)
@@ -131,6 +137,37 @@ SANTEC_SWITCH_PROFILES = {
 }
 NORMALIZED_SANTEC_MODEL_PATTERN = re.compile(r"OSX[- ]?(\d+)", re.IGNORECASE)
 SCPI_ERROR_RESPONSE_PATTERN = re.compile(r'^-\d+\s*,\s*"')
+USB_VISA_RESOURCE_PATTERN = re.compile(r"^USB\d*::", re.IGNORECASE)
+
+
+def _parse_hex_resource_token(value: object) -> int | None:
+    """Parse a VISA hexadecimal field with or without a ``0x`` prefix."""
+    token = str(value or "").strip()
+    if token.lower().startswith("0x"):
+        token = token[2:]
+    if not token or re.fullmatch(r"[0-9a-fA-F]+", token) is None:
+        return None
+    return int(token, 16)
+
+
+def parse_santec_usb_resource(address: object) -> tuple[int, int] | None:
+    """Return ``(vendor_id, product_id)`` for a well-formed USB VISA address.
+
+    VISA resource fields are parsed individually so a serial number containing
+    a product-ID-looking substring cannot make an unrelated resource appear to
+    be a supported Santec switch.
+    """
+    resource = str(address or "").strip()
+    if USB_VISA_RESOURCE_PATTERN.match(resource) is None:
+        return None
+    fields = resource.split("::")
+    if len(fields) < 4:
+        return None
+    vendor_id = _parse_hex_resource_token(fields[1])
+    product_id = _parse_hex_resource_token(fields[2])
+    if vendor_id is None or product_id is None:
+        return None
+    return vendor_id, product_id
 
 
 def detect_santec_switch_model(identity: object) -> str | None:
@@ -290,13 +327,34 @@ class SantecOpticalSwitch:
 
     @staticmethod
     def _is_santec_usb_resource(address: object) -> bool:
-        """Quickly filter VISA resources using Santec vendor/product IDs."""
-        normalized_address = str(address or "").upper()
-        return (
-            normalized_address.startswith("USB")
-            and SANTEC_USB_VENDOR_ID.upper() in normalized_address
-            and SANTEC_USB_PRODUCT_ID.upper() in normalized_address
-        )
+        """Return whether a VISA address has a supported Santec USB VID/PID."""
+        identifiers = parse_santec_usb_resource(address)
+        if identifiers is None:
+            return False
+        vendor_id, product_id = identifiers
+        supported_product_ids = {
+            int(value, 0) for value in SANTEC_SWITCH_USB_PRODUCT_IDS
+        }
+        return vendor_id == int(SANTEC_USB_VENDOR_ID, 0) and product_id in supported_product_ids
+
+    @staticmethod
+    def _usb_resource_filter_reason(address: object) -> str:
+        """Explain why an enumerated USB resource was not a Santec candidate."""
+        resource = str(address or "").strip()
+        if USB_VISA_RESOURCE_PATTERN.match(resource) is None:
+            return "not_usb_resource"
+        identifiers = parse_santec_usb_resource(resource)
+        if identifiers is None:
+            return "malformed_usb_resource"
+        vendor_id, product_id = identifiers
+        if vendor_id != int(SANTEC_USB_VENDOR_ID, 0):
+            return "unsupported_vendor_id"
+        supported_product_ids = {
+            int(value, 0) for value in SANTEC_SWITCH_USB_PRODUCT_IDS
+        }
+        if product_id not in supported_product_ids:
+            return "unsupported_product_id"
+        return "not_supported"
 
     @staticmethod
     def _configure_instrument(instrument, write_termination: str) -> None:
@@ -372,7 +430,10 @@ class SantecOpticalSwitch:
             return
 
         for address in listed:
-            if self._is_santec_usb_resource(address) and address not in seen:
+            address = str(address)
+            if address in seen:
+                continue
+            if self._is_santec_usb_resource(address):
                 seen.add(address)
                 self._trace(
                     "switch_discovery_candidate",
@@ -381,6 +442,14 @@ class SantecOpticalSwitch:
                     status="candidate",
                 )
                 yield address, SwitchDiscoveryMethod.AUTOMATIC_USB.value
+            elif USB_VISA_RESOURCE_PATTERN.match(address) is not None:
+                self._trace(
+                    "switch_discovery_resource_ignored",
+                    resource_address=address,
+                    discovery_method=SwitchDiscoveryMethod.AUTOMATIC_USB.value,
+                    reason=self._usb_resource_filter_reason(address),
+                    status="ignored",
+                )
 
     def _probe_identity(
         self,
@@ -828,9 +897,11 @@ class SantecOpticalSwitch:
                 diagnostics = SwitchConnectionDiagnostics(
                     failure_stage=SwitchConnectionStage.DISCOVERY.value,
                     user_message=(
-                        "No Santec OSX USB resource was found. Confirm that the "
-                        "switch is powered on, connected by USB, and visible to the "
-                        "installed VISA runtime."
+                        "No supported Santec OSX USB resource was found. Light "
+                        "Workbench accepts Santec VID 0x2428 with OSX-100 PID "
+                        "0xD003 or OSX-150 PID 0xD00D. Confirm that the switch is "
+                        "powered on, connected by USB, and visible to the installed "
+                        "VISA runtime."
                     ),
                 )
             if attempted_address and not diagnostics.resource_address:
@@ -1026,6 +1097,9 @@ __all__ = [
     "SantecSwitchProfile",
     "SantecSwitchProfileResolution",
     "SANTEC_SWITCH_PROFILES",
+    "SANTEC_OSX100_USB_PRODUCT_ID",
+    "SANTEC_OSX150_USB_PRODUCT_ID",
+    "SANTEC_SWITCH_USB_PRODUCT_IDS",
     "SANTEC_USB_PRODUCT_ID",
     "SANTEC_USB_RESOURCE_QUERY",
     "SANTEC_USB_VENDOR_ID",
@@ -1039,5 +1113,6 @@ __all__ = [
     "SwitchModelDetection",
     "detect_santec_switch_model",
     "extract_santec_serial",
+    "parse_santec_usb_resource",
     "resolve_santec_switch_profile",
 ]

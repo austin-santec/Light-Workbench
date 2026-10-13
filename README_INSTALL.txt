@@ -24,6 +24,8 @@ The target computer needs:
   * The ILM/OP815 USB driver.
   * A compatible 32-bit VISA runtime, such as NI-VISA with 32-bit support.
   * The ILM and supported OSX-100/OSX-150 connected by USB and powered on for hardware tests.
+    Automatic switch discovery supports Santec USB vendor ID 0x2428 with OSX-100
+    product ID 0xD003 or OSX-150 product ID 0xD00D.
   * Quality criteria are selected from the connected model. Normal users
     cannot edit them during a run. Administrators can use Edit > Admin Mode...
     and Edit > Admin Config... to change the per-user profiles stored under
