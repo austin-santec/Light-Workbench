@@ -39,6 +39,44 @@ def unit_directory_for_metadata(root, metadata):
     return Path(root) / build_unit_directory_name(metadata)
 
 
+def _normalise_identity(value):
+    return " ".join(str(value or "").strip().split()).casefold()
+
+
+def unit_identity_matches(unit_record, metadata):
+    """Return whether persisted unit identity matches the current setup fields.
+
+    Main-board serial is the authoritative identity when either record has one.
+    Part number is only a fallback when both records lack a serial.  Switch
+    serial is intentionally excluded because a switch may be replaced while
+    the instrument unit remains the same.
+    """
+    persisted_metadata = dict((unit_record or {}).get("unit_metadata") or {})
+    current_metadata = dict(metadata or {})
+    persisted_serial = _normalise_identity(
+        persisted_metadata.get("Main board serial")
+    )
+    current_serial = _normalise_identity(
+        current_metadata.get("Main board serial")
+    )
+    if persisted_serial or current_serial:
+        return bool(
+            persisted_serial
+            and current_serial
+            and persisted_serial == current_serial
+        )
+
+    persisted_part_number = _normalise_identity(
+        persisted_metadata.get("Part number")
+    )
+    current_part_number = _normalise_identity(current_metadata.get("Part number"))
+    return bool(
+        persisted_part_number
+        and current_part_number
+        and persisted_part_number == current_part_number
+    )
+
+
 def unit_json_path(unit_directory):
     return Path(unit_directory) / UNIT_FILENAME
 
@@ -260,6 +298,7 @@ __all__ = [
     "run_directory_candidates",
     "run_directory_for_number",
     "save_unit_record",
+    "unit_identity_matches",
     "unit_directory_for_metadata",
     "unit_json_path",
 ]

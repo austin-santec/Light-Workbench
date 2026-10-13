@@ -240,7 +240,7 @@ class CocPreparationTests(unittest.TestCase):
         self.assertIn("incompatible_operating_band", codes)
         self.assertIn("incompatible_criteria", codes)
 
-    def test_incompatible_or_unsupported_model_is_blocked(self):
+    def test_osx100_model_is_supported_with_its_own_fail_limit(self):
         result = prepare_coc(
             source(
                 1,
@@ -250,9 +250,76 @@ class CocPreparationTests(unittest.TestCase):
             1,
         )
 
+        self.assertTrue(result.eligible)
+        self.assertEqual(result.failures, ())
+
+    def test_unknown_model_is_blocked(self):
+        result = prepare_coc(
+            source(
+                1,
+                [MeasurementRecord(1, 1.0, 1.1, 1)],
+                criteria={**CRITERIA, "model": "OSX-200"},
+            ),
+            1,
+        )
+
         self.assertFalse(result.eligible)
         self.assertTrue(
             any(item.code == "unsupported_coc_model" for item in result.validation_issues)
+        )
+
+    def test_osx100_mm_uses_850_1300_values_and_limit(self):
+        criteria = {
+            "model": "OSX-100",
+            "profile_name": "OSX-100 MM standard",
+            "revision": "1",
+            "too_good_below_db": 0.2,
+            "warning_enabled": False,
+            "warning_above_db": None,
+            "fail_above_db": 0.8,
+        }
+        result = prepare_coc(
+            source(
+                1,
+                [
+                    MeasurementRecord.from_wavelengths(
+                        1,
+                        {850: 0.6, 1300: 0.7},
+                        physical_port=1,
+                        wavelength_mode="MM",
+                        source_wavelengths_nm=(850, 1300),
+                    )
+                ],
+                criteria=criteria,
+                **{"Wavelength mode": "MM"},
+            ),
+            1,
+        )
+
+        self.assertTrue(result.eligible)
+        self.assertEqual(result.measurements[0].ordered_losses, (0.6, 0.7))
+        self.assertEqual(result.measurements[0].opm_wavelengths_nm, (850, 1300))
+
+    def test_osx150_mm_remains_unsupported(self):
+        result = prepare_coc(
+            source(
+                1,
+                [
+                    MeasurementRecord.from_wavelengths(
+                        1,
+                        {850: 0.6, 1300: 0.7},
+                        physical_port=1,
+                        wavelength_mode="MM",
+                    )
+                ],
+                **{"Wavelength mode": "MM"},
+            ),
+            1,
+        )
+
+        self.assertFalse(result.eligible)
+        self.assertTrue(
+            any(item.code == "unsupported_wavelength_mode" for item in result.validation_issues)
         )
 
     def test_optimization_recommendation_excludes_active_ports(self):

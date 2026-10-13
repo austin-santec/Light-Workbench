@@ -29,7 +29,11 @@ if (-not (Test-Path -LiteralPath $internalDirectory -PathType Container)) {
 
 $requiredTemplates = @(
     "OSX-150 Single Mode COC Template 2 (45max).xlsx",
-    "OSX-150 Single Mode COC Template 1 (48max).xlsx"
+    "OSX-150 Single Mode COC Template 1 (48max).xlsx",
+    "OSX-100 Single Mode COC Template 2 (45max).xlsx",
+    "OSX-100 Single Mode COC Template 1 (48max).xlsx",
+    "OSX-100 Multi Mode COC Template 2 (45max).xlsx",
+    "OSX-100 Multi Mode COC Template 1 (48max).xlsx"
 )
 $templateDirectory = Join-Path $internalDirectory "Templates"
 foreach ($templateName in $requiredTemplates) {

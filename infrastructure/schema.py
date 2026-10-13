@@ -44,6 +44,7 @@ def migrate_run_payload(payload: Mapping[str, object]) -> dict:
             if isinstance(snapshot, Mapping)
         ]
     migrated.setdefault("wavelength_configuration", None)
+    migrated.setdefault("run_status", {})
     if "measurement_attempts" not in migrated:
         migrated["measurement_attempts"] = migrated.get("attempts", [])
     migrated["schema_version"] = CURRENT_RUN_SCHEMA_VERSION

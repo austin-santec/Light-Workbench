@@ -41,12 +41,16 @@ changes must follow that document before adding bindings.
 
 The Santec optical-switch adapter tries addresses in a bounded order: the optional manual
 address, a separately stored last-known automatic address, then resources from
-`list_resources("USB?*::INSTR")` filtered to Santec's USB VID/PID. This avoids
-the backend failure seen with broad, all-interface VISA enumeration. Automatic
-success updates only the last-known setting; it never overwrites the operator's
-manual address.
+`list_resources("USB?*::INSTR")` filtered to Santec's USB VID/PID. Automatic
+discovery currently accepts vendor ID `0x2428` with either the OSX-100 product
+ID `0xD003` or the OSX-150 product ID `0xD00D`. VISA fields are parsed
+structurally so a serial number cannot create a false product-ID match. This
+avoids the backend failure seen with broad, all-interface VISA enumeration.
+Automatic success updates only the last-known setting; it never overwrites the
+operator's manual address.
 
-For each candidate, the adapter opens a fresh session and probes only `*IDN?`
+The product ID only identifies a discovery candidate. For each candidate, the
+adapter opens a fresh session and probes only `*IDN?`
 with LF, then CRLF if needed. A supported identity selects the session ending.
 It then queries `CFG:SWT:END?` and requires a positive configured channel count
 before the switch is considered ready. `CLOSe?` is not used during connection;

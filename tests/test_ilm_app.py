@@ -15,6 +15,8 @@ from PyQt5.QtTest import QTest
 from application.coc_workflow import CocRunOption
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
 from domain.coc_preparation import CocSourceRun, prepare_coc
+from domain.limit_profiles import default_limit_profiles
+from domain.run_status import COMPLETION_COMPLETE, RESULT_PASS
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
 from domain.measurement_attempts import new_measurement_attempt
 from ilm_app import (
@@ -25,6 +27,7 @@ from ilm_app import (
     MainWindow,
     STANDARD_PART_NUMBERS,
     format_channel_summary,
+    main as app_main,
 )
 from run_data import MeasurementRecord, RunData
 
@@ -110,6 +113,28 @@ class MainWindowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.application = QApplication.instance() or QApplication([])
 
+    def test_application_starts_main_window_maximized(self):
+        application = MagicMock()
+        application.exec_.return_value = 0
+        support_logger = MagicMock()
+        window = MagicMock()
+        with patch(
+            "ilm_app.SupportLoggingService.create_default",
+            return_value=support_logger,
+        ), patch("ilm_app.set_support_logging_service"), patch(
+            "ilm_app.install_exception_hooks"
+        ), patch("ilm_app.QApplication", return_value=application), patch(
+            "ilm_app.bundled_asset_path", return_value=None
+        ), patch("ilm_app.MainWindow", return_value=window), patch(
+            "ilm_app.sys.argv", ["ilm_app.py"]
+        ):
+            result = app_main()
+
+        self.assertEqual(result, 0)
+        window.showMaximized.assert_called_once_with()
+        window.show.assert_not_called()
+        support_logger.shutdown.assert_called_once_with()
+
     def test_loads_saved_limit_and_run_number_from_companion_json(self):
         with tempfile.TemporaryDirectory() as directory:
             csv_path = Path(directory) / "output.csv"
@@ -160,6 +185,33 @@ class MainWindowTests(unittest.TestCase):
         self.assertTrue(window.view_history_button.isEnabled())
         window.close()
 
+    def test_run_status_is_displayed_next_to_comparison_and_ignores_filter(self):
+        window = MainWindow()
+        profile = default_limit_profiles().for_model_mode("OSX-150", "SM")
+        window.run_data = RunData(
+            Path("saved.csv"),
+            [
+                MeasurementRecord(1, 1.0, 1.1, 1),
+                MeasurementRecord(2, 1.1, 1.2, 2),
+            ],
+            {
+                "Part number": "OSX-150-1A-002-09-FA-00B-1H",
+                "Run number": "1",
+                "Planned channel count": "2",
+            },
+            criteria_snapshot=profile.as_dict(),
+        )
+        window._run_terminal_status = COMPLETION_COMPLETE
+        window.refresh_analysis()
+
+        self.assertIn("Run: Complete", window.completion_status_label.text())
+        self.assertIn("2/2", window.completion_status_label.text())
+        self.assertEqual(window.result_status_label.text(), "Result: Pass")
+        window.reading_filter.setCurrentIndex(2)
+        window.refresh_table()
+        self.assertEqual(window.result_status_label.text(), "Result: Pass")
+        window.close()
+
     def test_open_csv_starts_in_default_run_folder(self):
         window = MainWindow()
         with patch(
@@ -170,6 +222,149 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertEqual(file_dialog.call_args.args[2], str(DEFAULT_RUN_ROOT))
         window.close()
+
+    def test_load_run_uses_loaded_nested_unit_directory_for_numbered_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loaded_unit = Path(directory) / "Sample Runs" / "Unit-150Status-Partial"
+            run_directory = loaded_unit / "Run-2-SW2"
+            run_directory.mkdir(parents=True)
+            run_csv = run_directory / "Run-2-SW2.csv"
+            run_csv.write_text("channel,1310 IL,1550 IL\n1,0.6500,0.5000\n", encoding="utf-8")
+            (loaded_unit / "unit.json").write_text(
+                json.dumps(
+                    {
+                        "unit_metadata": {
+                            "Main board serial": "17688",
+                            "Part number": "OSX-150-1A-002",
+                        },
+                        "runs": [
+                            {
+                                "run_number": 2,
+                                "directory": run_directory.name,
+                                "csv_file": run_csv.name,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            window = MainWindow()
+            try:
+                window.unit_directory = loaded_unit
+                window.hardware_main_board_serial.setText("17688")
+                window.hardware_part_number.setCurrentText("OSX-150-1A-002")
+                window.hardware_switch_serial.setText("SW2")
+                window.hardware_run_number.setValue(2)
+
+                with patch.object(window, "load_path") as load_path:
+                    window.load_selected_unit_run()
+
+                load_path.assert_called_once_with(run_csv)
+            finally:
+                window.close()
+
+    def test_load_run_rejects_mismatched_loaded_unit_and_uses_canonical_folder(self):
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "ilm_app.DEFAULT_RUN_ROOT", Path(directory) / "canonical"
+        ):
+            loaded_unit = Path(directory) / "Sample Runs" / "Unit-old"
+            loaded_unit.mkdir(parents=True)
+            (loaded_unit / "unit.json").write_text(
+                json.dumps(
+                    {
+                        "unit_metadata": {
+                            "Main board serial": "17688",
+                            "Part number": "OSX-150-1A-002",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            canonical_unit = Path(directory) / "canonical" / "Unit-99999"
+            canonical_run = canonical_unit / "Run-1-SW1"
+            canonical_run.mkdir(parents=True)
+            canonical_csv = canonical_run / "Run-1-SW1.csv"
+            canonical_csv.write_text("channel,1310 IL,1550 IL\n1,0.6500,0.5000\n", encoding="utf-8")
+            (canonical_unit / "unit.json").write_text(
+                json.dumps(
+                    {
+                        "unit_metadata": {
+                            "Main board serial": "99999",
+                            "Part number": "OSX-150-1A-002",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            window = MainWindow()
+            try:
+                window.unit_directory = loaded_unit
+                window.hardware_main_board_serial.setText("99999")
+                window.hardware_part_number.setCurrentText("OSX-150-1A-002")
+                window.hardware_switch_serial.setText("SW1")
+                window.hardware_run_number.setValue(1)
+
+                with patch.object(window, "load_path") as load_path:
+                    window.load_selected_unit_run()
+
+                load_path.assert_called_once_with(canonical_csv)
+            finally:
+                window.close()
+
+    def test_load_run_not_found_reports_search_folder_and_available_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loaded_unit = Path(directory) / "Sample Runs" / "Unit-Partial"
+            run_directory = loaded_unit / "Run-1-SW1"
+            run_directory.mkdir(parents=True)
+            (run_directory / "Run-1-SW1.csv").write_text(
+                "channel,1310 IL,1550 IL\n1,0.6500,0.5000\n",
+                encoding="utf-8",
+            )
+            (loaded_unit / "unit.json").write_text(
+                json.dumps(
+                    {"unit_metadata": {"Main board serial": "17688"}}
+                ),
+                encoding="utf-8",
+            )
+
+            window = MainWindow()
+            try:
+                window.unit_directory = loaded_unit
+                window.hardware_main_board_serial.setText("17688")
+                window.hardware_switch_serial.setText("SW1")
+                window.hardware_run_number.setValue(2)
+
+                with patch("ilm_app.QMessageBox.information") as information:
+                    window.load_selected_unit_run()
+
+                message = information.call_args.args[2]
+                self.assertIn(str(loaded_unit), message)
+                self.assertIn("Available runs: 1", message)
+            finally:
+                window.close()
+
+    def test_load_run_ignores_malformed_loaded_unit_record(self):
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "ilm_app.DEFAULT_RUN_ROOT", Path(directory) / "canonical"
+        ):
+            loaded_unit = Path(directory) / "Sample Runs" / "Unit-broken"
+            loaded_unit.mkdir(parents=True)
+            (loaded_unit / "unit.json").write_text("not json", encoding="utf-8")
+
+            window = MainWindow()
+            try:
+                window.unit_directory = loaded_unit
+                resolved = window._run_lookup_unit_directory(
+                    {"Main board serial": "17688", "Part number": "OSX-150"}
+                )
+                self.assertEqual(
+                    resolved,
+                    Path(directory) / "canonical" / "Unit-17688",
+                )
+            finally:
+                window.close()
 
     def test_main_window_close_is_rejected_when_hardware_shutdown_times_out(self):
         window = MainWindow()
@@ -1634,7 +1829,7 @@ class MainWindowTests(unittest.TestCase):
             self.assertTrue(window.write_coc_action.isEnabled())
             window.close()
 
-    def test_coc_controls_remain_disabled_for_mm_runs(self):
+    def test_coc_controls_enable_for_osx100_mm_runs(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "Run-1.csv"
             path.write_text("channel,850 IL,1300 IL\n1,0.6000,0.5000\n", encoding="utf-8")
@@ -1651,6 +1846,91 @@ class MainWindowTests(unittest.TestCase):
                     )
                 ],
                 {"Wavelength mode": "MM"},
+                criteria_snapshot={
+                    "model": "OSX-100",
+                    "profile_name": "OSX-100 MM standard",
+                    "revision": "1",
+                    "too_good_below_db": 0.2,
+                    "warning_enabled": False,
+                    "warning_above_db": None,
+                    "fail_above_db": 0.8,
+                    "wavelength_mode": "MM",
+                },
+            )
+            path.write_text("channel,850 IL,1300 IL\n1,0.6000,0.5000\n", encoding="utf-8")
+            window.refresh_coc_controls()
+            self.assertTrue(window.write_coc_button.isEnabled())
+            self.assertTrue(window.write_coc_action.isEnabled())
+            window.close()
+
+    def test_loading_osx100_mm_run_restores_saved_criteria_without_hardware(self):
+        with tempfile.TemporaryDirectory() as directory:
+            csv_path = Path(directory) / "Run-1.csv"
+            csv_path.write_text(
+                "channel,850 IL,1300 IL,,Metadata,Value\n"
+                "1,0.3600,0.4200,,Part number,OSX-100-1A-048-09-FA-00B-3H\n"
+                ",,,,Wavelength mode,MM\n",
+                encoding="utf-8",
+            )
+            (Path(directory) / "Run-1.json").write_text(
+                json.dumps(
+                    {
+                        "criteria": {
+                            "model": "OSX-100",
+                            "wavelength_mode": "MM",
+                            "profile_name": "OSX-100 MM standard",
+                            "revision": "1",
+                            "too_good_below_db": 0.2,
+                            "warning_enabled": False,
+                            "warning_above_db": None,
+                            "fail_above_db": 0.8,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            window = MainWindow(str(csv_path))
+            try:
+                profile = window._profile_for_current_run()
+                self.assertEqual(profile.model, "OSX-100")
+                self.assertEqual(profile.wavelength_mode, "MM")
+                self.assertEqual(profile.too_good_below_db, 0.2)
+                self.assertEqual(profile.fail_above_db, 0.8)
+                self.assertFalse(
+                    profile.classify(0.36, 0.42, (850, 1300)).is_too_good
+                )
+                self.assertEqual(window.metric_labels["too_good"].text(), "0")
+            finally:
+                window.close()
+
+    def test_coc_controls_remain_disabled_for_osx150_mm_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Run-1.csv"
+            path.write_text("channel,850 IL,1300 IL\n1,0.6000,0.5000\n", encoding="utf-8")
+            window = MainWindow()
+            window.run_data = RunData(
+                path,
+                [
+                    MeasurementRecord.from_wavelengths(
+                        1,
+                        {850: 0.6, 1300: 0.5},
+                        wavelength_mode="MM",
+                        measurement_classification="native",
+                        source_wavelengths_nm=(850, 1300),
+                    )
+                ],
+                {"Wavelength mode": "MM"},
+                criteria_snapshot={
+                    "model": "OSX-150",
+                    "profile_name": "OSX-150 MM standard",
+                    "revision": "1",
+                    "too_good_below_db": 0.5,
+                    "warning_enabled": True,
+                    "warning_above_db": 2.25,
+                    "fail_above_db": 2.5,
+                    "wavelength_mode": "MM",
+                },
             )
             window.refresh_coc_controls()
             self.assertFalse(window.write_coc_button.isEnabled())

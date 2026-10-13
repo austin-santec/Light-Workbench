@@ -10,7 +10,9 @@ from coc_export import (
     export_coc,
     find_part_number,
     inspect_coc_template_capacity,
+    inspect_coc_template_profile,
     template_filename_for_channel_count,
+    template_filename_for_profile,
 )
 from infrastructure.coc_export import export_coc as infrastructure_export_coc
 from run_data import MeasurementRecord
@@ -108,6 +110,59 @@ class CocExportTests(unittest.TestCase):
         self.assertEqual(inspect_coc_template_capacity(template_48), 48)
         self.assertEqual(template_filename_for_channel_count(45), template_45.name)
         self.assertEqual(template_filename_for_channel_count(46), template_48.name)
+
+    def test_all_model_mode_capacity_template_profiles_are_available(self):
+        template_root = Path(__file__).resolve().parents[1] / "Templates"
+        expected = {
+            ("OSX-100", "SM", 45): "OSX-100 Single Mode COC Template 2 (45max).xlsx",
+            ("OSX-100", "SM", 48): "OSX-100 Single Mode COC Template 1 (48max).xlsx",
+            ("OSX-100", "MM", 45): "OSX-100 Multi Mode COC Template 2 (45max).xlsx",
+            ("OSX-100", "MM", 48): "OSX-100 Multi Mode COC Template 1 (48max).xlsx",
+            ("OSX-150", "SM", 45): "OSX-150 Single Mode COC Template 2 (45max).xlsx",
+            ("OSX-150", "SM", 48): "OSX-150 Single Mode COC Template 1 (48max).xlsx",
+        }
+        for (model, mode, capacity), filename in expected.items():
+            with self.subTest(model=model, mode=mode, capacity=capacity):
+                path = template_root / filename
+                profile = inspect_coc_template_profile(path)
+                self.assertEqual(
+                    (profile.model, profile.wavelength_mode, profile.capacity),
+                    (model, mode, capacity),
+                )
+                self.assertEqual(
+                    template_filename_for_profile(model, mode, capacity), filename
+                )
+
+    def test_exports_osx100_multimode_values_and_filename(self):
+        template = (
+            Path(__file__).resolve().parents[1]
+            / "Templates"
+            / "OSX-100 Multi Mode COC Template 2 (45max).xlsx"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = export_coc(
+                template,
+                directory,
+                [
+                    MeasurementRecord.from_wavelengths(
+                        1,
+                        {850: 0.6123, 1300: 0.7345},
+                        wavelength_mode="MM",
+                    )
+                ],
+                "OSX-100-1A-001-09-FA-00B-1H",
+                "00100",
+                front_panel_channel_count=1,
+                switch_model="OSX-100",
+                wavelength_mode="MM",
+                export_timestamp=datetime(2026, 9, 16, 11, 26, 20),
+            )
+            workbook = load_workbook(output)
+            sheet = workbook["OSX Template"]
+            self.assertEqual(output.name, "COC OSX-100 00100_260916-112620.xlsx")
+            self.assertEqual(sheet["D11"].value, 0.6123)
+            self.assertEqual(sheet["E11"].value, 0.7345)
+            workbook.close()
 
     def test_template_selection_boundaries(self):
         template_45 = "OSX-150 Single Mode COC Template 2 (45max).xlsx"

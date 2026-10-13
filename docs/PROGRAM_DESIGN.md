@@ -135,8 +135,11 @@ manual count override.
 explicit base run with at most one explicit replacement/retest run, preserves
 whole two-wavelength samples and provenance, validates physical-port changes
 against completed replacements, requires every front-panel channel, applies
-the strict `< 2.5000 dB` COC rule, and derives non-blocking optimization
-recommendations. It has no Qt, filesystem, workbook, or hardware dependency.
+the model-specific fail limit, and derives non-blocking optimization
+recommendations when the selected profile enables them. It validates the
+approved COC combinations: OSX-100 SM (1310/1550), OSX-100 MM (850/1300),
+and OSX-150 SM (1310/1550). OSX-150 MM remains unsupported. It has no Qt,
+filesystem, workbook, or hardware dependency.
 COC preparation is operator-initiated only: the main window's explicit
 Write COC... button and File-menu action call the validated workflow. Run
 completion, manual stop, failure, and worker cleanup do not offer or prepare a
@@ -164,6 +167,14 @@ file-backed CSV/JSON run storage and numbered-run lookup. The established
 facades, so the UI no longer needs to know which file-backed repository
 implementation is selected.
 
+`domain/run_status.py` owns the derived two-part run assessment. Completion is
+based on accepted readings compared with the saved hardware plan, while result
+quality is based on the active criteria, front-panel coverage, replacement
+analysis, and the existing validated COC preparation service. The main window
+renders the assessment beside the table filters and persists only additive
+completion metadata. Cross-run analysis is read-only and never creates a COC
+or changes source run data.
+
 Accepted measurement history is modeled by `domain/measurement_attempts.py`.
 The application appends an immutable attempt only after a complete two-
 wavelength reading is accepted with Write IL. The current `measurements`
@@ -175,6 +186,11 @@ is not needed to reconstruct retests.
 `infrastructure/unit_repository.py` provides the corresponding boundary for
 unit JSON records, unit-level replacement/spare data, and numbered run-folder
 resolution. Unit identity remains separate from run-specific switch identity.
+When `Load Run` follows an already loaded numbered run, the repository first
+reuses that run's validated unit directory. This preserves nested or renamed
+sample-unit folders while requiring the persisted main-board serial to match;
+part number is used only when both sides have no serial, and switch serial is
+never used as the unit identity.
 
 `infrastructure/coc_exporter.py` provides the COC/report boundary for part
 lookup, serial normalization, and XLSX generation. Template preservation and
@@ -200,7 +216,13 @@ stores administrator-controlled profiles in the per-user INI file, while
 `application/admin_session.py` keeps authorization in memory only and
 `ui/admin_config.py` provides the editing dialog. A new run stores a criteria
 snapshot so later review uses the rules that were active when the run began.
-Older runs remain loadable through a legacy single-warning-limit profile.
+When a saved run is loaded, valid criteria snapshots are restored for both SM
+and MM. Older runs without a snapshot infer the model from persisted metadata,
+primarily the part number, and combine it with the run's wavelength mode. A
+contradictory or unresolved MM profile produces unavailable limits rather than
+silently inheriting the connected device or an OSX-150 default. Older runs
+remain loadable through a legacy single-warning-limit profile where that is
+safe.
 
 `infrastructure/run_persistence.py` owns run folder naming, atomic CSV/JSON
 recording, continuation renaming, and legacy JSON loading. The root
@@ -210,9 +232,9 @@ recording, continuation renaming, and legacy JSON loading. The root
 paths, and persistence/migration of shared replacement history and designated
 spares. The root `unit_persistence.py` module remains a compatibility facade.
 
-`infrastructure/coc_export.py` owns capacity-aware template validation, COC
-workbook creation, merged-cell/row cleanup, print-area adjustment, and
-preservation of the template's drawing package. The
+`infrastructure/coc_export.py` owns model/mode/capacity-aware template
+validation, COC workbook creation, merged-cell/row cleanup, print-area
+adjustment, and preservation of the template's drawing package. The
 root `coc_export.py` module remains a compatibility facade, while
 `infrastructure/coc_exporter.py` remains the application-facing adapter.
 

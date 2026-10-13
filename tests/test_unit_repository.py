@@ -47,6 +47,15 @@ class FileUnitRepositoryTests(unittest.TestCase):
 
             self.assertEqual(repository.infer_unit_directory(csv_path), unit_directory)
 
+    def test_repository_matches_unit_identity_without_using_switch_serial(self):
+        repository = FileUnitRepository()
+        self.assertTrue(
+            repository.unit_identity_matches(
+                {"unit_metadata": {"Main board serial": "17688"}},
+                {"Main board serial": "17688", "Switch serial": "SW2"},
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

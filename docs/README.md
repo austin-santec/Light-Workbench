@@ -88,7 +88,9 @@ table. The application derives the front-panel count from the selected base
 run's part number; the operator selects a base run and optionally one
 compatible replacement/retest run. Export is blocked for missing, invalid, or
 formally failing values; the generated workbook uses the appropriate bundled
-45- or 48-channel OSX-150 template and removes rows beyond the selected count.
+model/mode-specific 45- or 48-channel template and removes rows beyond the
+selected count. OSX-100 supports SM and MM templates; OSX-150 supports SM
+templates only.
 
 The normal window includes a compact Connected hardware panel and a
 `Connect Hardware...` split/menu button in the top header. The main action

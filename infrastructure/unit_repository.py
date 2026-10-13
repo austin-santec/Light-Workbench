@@ -12,6 +12,7 @@ from infrastructure.unit_persistence import (
     run_directory_for_number as _run_directory_for_number,
     save_unit_record as _save_unit_record,
     unit_directory_for_metadata as _unit_directory_for_metadata,
+    unit_identity_matches as _unit_identity_matches,
 )
 
 
@@ -119,6 +120,10 @@ class FileUnitRepository:
     ) -> Path:
         """Resolve a unit directory without creating it."""
         return _unit_directory_for_metadata(root, metadata)
+
+    def unit_identity_matches(self, unit_record: dict, metadata: dict) -> bool:
+        """Check whether a persisted unit belongs to the current setup fields."""
+        return _unit_identity_matches(unit_record, metadata)
 
 
 __all__ = ["FileUnitRepository"]

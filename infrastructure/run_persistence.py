@@ -19,6 +19,16 @@ from infrastructure.schema import CURRENT_RUN_SCHEMA_VERSION, migrate_run_payloa
 from domain.support_events import SupportEventCategory, SupportLogLevel
 
 
+def _optional_int(value):
+    """Return a persisted integer or ``None`` for legacy/missing values."""
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _run_metadata(metadata):
     """Keep CSV/JSON metadata focused on settings for this test run."""
     excluded_exact = {
@@ -342,6 +352,25 @@ class RunRecorder:
             "reference_snapshots": reference_catalog.snapshots(),
             "reference_catalog": reference_catalog.persisted_entries(),
             "metadata": stored_metadata,
+            "run_status": {
+                "completion_status": str(
+                    self.metadata.get("completion_status") or "unknown"
+                ),
+                "completion_reason": str(
+                    self.metadata.get("completion_reason") or ""
+                ),
+                "planned_channel_count": _optional_int(
+                    self.metadata.get("planned_channel_count")
+                    or self.metadata.get("Planned channel count")
+                ),
+                "completed_channel_count": _optional_int(
+                    self.metadata.get("completed_channel_count")
+                    or self.metadata.get("Completed channel count")
+                ),
+                "completed_at_utc": str(
+                    self.metadata.get("completed_at_utc") or ""
+                ),
+            },
             "measurements": [
                 _measurement_payload(record, reference_catalog)
                 for record in measurements

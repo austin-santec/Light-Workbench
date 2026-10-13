@@ -6,11 +6,15 @@ from pyvisa.errors import VisaIOError
 from domain.models import ConnectionState, DeviceCategory
 from hardware.optical_switch import (
     OSX150 as HardwareOSX150,
+    SANTEC_OSX100_USB_PRODUCT_ID,
+    SANTEC_OSX150_USB_PRODUCT_ID,
+    SANTEC_SWITCH_USB_PRODUCT_IDS,
     SANTEC_USB_RESOURCE_QUERY,
     SantecSwitchProfile,
     SwitchIpAddressError,
     SwitchConnectionError,
     detect_santec_switch_model,
+    parse_santec_usb_resource,
     resolve_santec_switch_profile,
 )
 from osx150_driver import OSX150
@@ -20,10 +24,15 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
     def test_legacy_module_reexports_hardware_adapter(self):
         self.assertIs(OSX150, HardwareOSX150)
 
-    def test_santec_resource_filter_requires_expected_usb_identity(self):
+    def test_santec_resource_filter_accepts_known_usb_product_ids(self):
         self.assertTrue(
             HardwareOSX150._is_santec_usb_resource(
                 "USB0::0x2428::0xD00D::SWITCH::INSTR"
+            )
+        )
+        self.assertTrue(
+            HardwareOSX150._is_santec_usb_resource(
+                "usb0::0X2428::0xd003::SWITCH::INSTR"
             )
         )
         self.assertFalse(
@@ -33,8 +42,29 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         )
         self.assertFalse(
             HardwareOSX150._is_santec_usb_resource(
+                "USB0::0x2428::0x1234::D003-SERIAL::INSTR"
+            )
+        )
+        self.assertFalse(
+            HardwareOSX150._is_santec_usb_resource(
                 "TCPIP0::192.0.2.10::inst0::INSTR"
             )
+        )
+
+    def test_santec_usb_resource_parser_requires_structured_fields(self):
+        self.assertEqual(
+            parse_santec_usb_resource("USB0::0x2428::0xD003::18::INSTR"),
+            (0x2428, 0xD003),
+        )
+        self.assertEqual(
+            parse_santec_usb_resource("USB0::2428::d00d::SWITCH::INSTR"),
+            (0x2428, 0xD00D),
+        )
+        self.assertIsNone(parse_santec_usb_resource("USB0::0x2428::D003"))
+        self.assertIsNone(parse_santec_usb_resource("TCPIP0::0x2428::0xD003"))
+        self.assertEqual(
+            SANTEC_SWITCH_USB_PRODUCT_IDS,
+            frozenset((SANTEC_OSX100_USB_PRODUCT_ID, SANTEC_OSX150_USB_PRODUCT_ID)),
         )
 
     def test_santec_model_detection_is_ready_for_future_profiles(self):
@@ -362,6 +392,48 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         self.assertEqual(switch.address, found)
         switch.close()
 
+    def test_stale_osx_150_address_falls_through_to_osx_100_discovery(self):
+        stale = "USB0::0x2428::0xD00D::STALE::INSTR"
+        found = "USB0::0x2428::0xD003::18::INSTR"
+        opened = []
+
+        class Instrument:
+            def query(self, command):
+                if command == "*IDN?":
+                    return "SANTEC,OSX,18,02.11.29"
+                if command == "CFG:SWT:END?":
+                    return "25"
+                raise AssertionError(command)
+
+            def close(self):
+                pass
+
+        class ResourceManager:
+            def list_resources(self, query):
+                return (found,)
+
+            def open_resource(self, address):
+                opened.append(address)
+                if address == stale:
+                    raise VisaIOError(-1073807343)
+                return Instrument()
+
+            def close(self):
+                pass
+
+        switch = HardwareOSX150(last_known_address=stale)
+        with patch(
+            "hardware.optical_switch.pyvisa.ResourceManager",
+            return_value=ResourceManager(),
+        ):
+            switch.connect()
+
+        self.assertEqual(opened, [stale, stale, found])
+        self.assertEqual(switch.address, found)
+        self.assertEqual(switch.model, "OSX-100")
+        self.assertEqual(switch.get_device_info().configured_channel_count, 25)
+        switch.close()
+
     def test_explicit_osx_100_profile_connects_and_reports_legacy_metadata(self):
         class Instrument:
             def query(self, command):
@@ -448,6 +520,81 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         self.assertEqual(connected["model"], "OSX-100")
         self.assertEqual(connected["model_detection_method"], "legacy_generic_osx")
         switch.close()
+
+    def test_automatic_osx_100_d003_discovery_connects_and_remembers_address(self):
+        address = "USB0::0x2428::0xD003::18::INSTR"
+        remembered = []
+        events = []
+
+        class Instrument:
+            def query(self, command):
+                if command == "*IDN?":
+                    return "SANTEC,OSX,18,02.11.29"
+                if command == "CFG:SWT:END?":
+                    return "25"
+                raise AssertionError(command)
+
+            def close(self):
+                pass
+
+        class ResourceManager:
+            def list_resources(self, query):
+                self.query = query
+                return (address,)
+
+            def open_resource(self, _address):
+                return Instrument()
+
+            def close(self):
+                pass
+
+        manager = ResourceManager()
+        switch = HardwareOSX150(
+            address_observer=remembered.append,
+            trace_callback=events.append,
+        )
+        with patch("hardware.optical_switch.pyvisa.ResourceManager", return_value=manager):
+            switch.connect()
+
+        info = switch.get_device_info(state=ConnectionState.CONNECTED)
+        self.assertEqual(info.model, "OSX-100")
+        self.assertEqual(info.serial_number, "18")
+        self.assertEqual(info.firmware_version, "02.11.29")
+        self.assertEqual(info.configured_channel_count, 25)
+        self.assertEqual(remembered, [address])
+        self.assertEqual(switch.address, address)
+        self.assertIn(
+            "switch_connected",
+            [event["event"] for event in events],
+        )
+        switch.close()
+
+    def test_unsupported_enumerated_usb_resource_is_traced_and_not_opened(self):
+        unsupported = "USB0::0x2428::0x1234::18::INSTR"
+        events = []
+
+        class ResourceManager:
+            def list_resources(self, query):
+                return (unsupported,)
+
+            def open_resource(self, _address):
+                raise AssertionError("Unsupported USB product must not be opened")
+
+            def close(self):
+                pass
+
+        switch = HardwareOSX150(trace_callback=events.append)
+        with patch("hardware.optical_switch.pyvisa.ResourceManager", return_value=ResourceManager()):
+            with self.assertRaises(SwitchConnectionError) as caught:
+                switch.connect()
+
+        self.assertIn("No supported Santec OSX USB resource", str(caught.exception))
+        ignored = next(
+            event
+            for event in events
+            if event["event"] == "switch_discovery_resource_ignored"
+        )
+        self.assertEqual(ignored["reason"], "unsupported_product_id")
 
     def test_unsupported_explicit_osx_model_is_rejected(self):
         class Instrument:

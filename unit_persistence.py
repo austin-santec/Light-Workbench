@@ -14,6 +14,7 @@ from infrastructure.unit_persistence import (
     run_directory_for_number,
     save_unit_record,
     unit_directory_for_metadata,
+    unit_identity_matches,
     unit_json_path,
 )
 
@@ -31,5 +32,6 @@ __all__ = [
     "run_directory_for_number",
     "save_unit_record",
     "unit_directory_for_metadata",
+    "unit_identity_matches",
     "unit_json_path",
 ]

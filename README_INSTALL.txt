@@ -24,6 +24,8 @@ The target computer needs:
   * The ILM/OP815 USB driver.
   * A compatible 32-bit VISA runtime, such as NI-VISA with 32-bit support.
   * The ILM and supported OSX-100/OSX-150 connected by USB and powered on for hardware tests.
+    Automatic switch discovery supports Santec USB vendor ID 0x2428 with OSX-100
+    product ID 0xD003 or OSX-150 product ID 0xD00D.
   * Quality criteria are selected from the connected model. Normal users
     cannot edit them during a run. Administrators can use Edit > Admin Mode...
     and Edit > Admin Config... to change the per-user profiles stored under
@@ -69,7 +71,9 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.27.0; an existing executable keeps its prior version until rebuilt.
+1.29.3; an existing executable keeps its prior version until rebuilt. The main
+window opens maximized by default and can be restored with the normal Windows
+title-bar control.
 
 
 3. VERIFY VISA
@@ -101,8 +105,8 @@ folder; install VISA through the approved vendor installer.
      should be connected. Successful connections remain available between runs.
   4. Select SM (1310/1550) or MM (850/1300), then select Single channel and
      choose one channel for the first test. SM/MM is manually selected rather
-     than inferred from hardware identity; MM results are reviewable but are
-     not eligible for the current SM-only COC generation.
+     than inferred from hardware identity; OSX-100 SM and MM results use their
+     matching COC templates, while OSX-150 MM is not eligible for COC generation.
   5. Enter the serial numbers. References start at 0.00 dBm. After measurement
      hardware is connected, click Calculate Reference, which reads both wavelengths from the ILM/OP815 and
      applies the measured offsets automatically; the values remain manually
@@ -143,6 +147,14 @@ serial are restored into Hardware test setup. If they are corrected, the
 program asks whether to update the saved metadata and whether to rename the run
 folder, CSV/JSON files, and existing COC workbook. The original run timestamp
 is preserved and existing files are never overwritten.
+
+When using Load Run to switch between numbered runs, the program reuses the
+currently loaded unit folder when its saved main-board identity matches the
+setup fields. This also supports nested or descriptive sample-unit folders.
+Part number is used only when both records lack a main-board serial, and switch
+serial is not used as the unit identity. If no validated loaded folder exists,
+the canonical unit folder is searched and a not-found message identifies that
+folder and its available runs.
 
 The front-panel channel count is derived automatically from the three-digit
 channel field in the part number. It is displayed read-only; COC preparation
@@ -210,16 +222,19 @@ saved run files.
 
 Write COC... derives the front-panel channel count from the selected base run's
 part number and lets the operator choose a persisted base run, with an optional
-replacement/retest run. It requires every front-panel channel
-and blocks any 1310/1550 value at or above 2.5000 dB. Supplemental readings
+replacement/retest run. It requires every front-panel channel and applies the
+selected model's fail limit: OSX-100 uses 0.8000 dB, while OSX-150 uses
+2.5000 dB. Supplemental readings
 replace complete wavelength pairs and changed physical ports must match the
 unit's recorded replacements. A passing result above 2.2500 dB produces an
 optimization warning only when a measured replacement candidate is available.
 
 The 45-channel template is selected for counts 1-45 and the 48-channel template
-for counts 46-48. Unused rows are removed from the exported workbook. Excel
-does not need to be installed. COC files use the name format
-COC OSX-150 <Main Board serial>_YYMMDD-HHMMSS.xlsx. For automatic part-number
+for counts 46-48. The model/mode selects the template family: OSX-100 has SM
+and MM templates, while OSX-150 has SM templates only. Unused rows are removed
+from the exported workbook. Excel does not need to be installed. COC files use
+the name format
+COC <OSX-100 or OSX-150> <Main Board serial>_YYMMDD-HHMMSS.xlsx. For automatic part-number
 lookup, the computer must have access to:
 
   U:\Product Log\Units-COCs-Param Files\OSX-150
@@ -232,7 +247,9 @@ entered Switch serial.
 Template graphics are preserved in exported files when present.
 The three-digit field in an OSX-100/OSX-150 part number defines the front-panel
 count. Missing or invalid part numbers block COC preparation; the application
-does not guess from the switch capacity or number of readings.
+does not guess from the switch capacity or number of readings. OSX-150 MM
+remains unavailable for COC export because no approved OSX-150 MM templates
+exist.
 Replacement recommendations are calculated for the selected run but are not
 stored as permanent results. Completed replacements and designated spare ports
 are stored in the shared unit.json record.

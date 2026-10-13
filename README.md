@@ -38,8 +38,9 @@ Workbench does not infer SM/MM from the ILM identity, firmware, serial number,
 product option, power, or cached history. SM configures the 1310/1550 sequence
 and MM configures the 850/1300 sequence. The selected mode is stored with the
 reference, readings, logs, and run metadata. Each mode has its own model
-limits. MM data can be reviewed, analyzed, and exported, but the current COC
-workflow remains SM-only until approved MM report rules and templates exist.
+limits. OSX-100 data can be reviewed, analyzed, and exported through the
+matching SM or MM COC workflow. OSX-150 MM data remains reviewable and
+analyzable, but OSX-150 MM COC export is not supported.
 
 For every channel, it can:
 
@@ -233,6 +234,10 @@ redaction, and support-bundle details.
 | `OP815M.dll` | Vendor library used to communicate with the ILM |
 | `Templates/OSX-150 Single Mode COC Template 2 (45max).xlsx` | Bundled OSX-150 COC template for 1-45 front-panel channels |
 | `Templates/OSX-150 Single Mode COC Template 1 (48max).xlsx` | Bundled OSX-150 COC template for 46-48 front-panel channels |
+| `Templates/OSX-100 Single Mode COC Template 2 (45max).xlsx` | Bundled OSX-100 SM COC template for 1-45 front-panel channels |
+| `Templates/OSX-100 Single Mode COC Template 1 (48max).xlsx` | Bundled OSX-100 SM COC template for 46-48 front-panel channels |
+| `Templates/OSX-100 Multi Mode COC Template 2 (45max).xlsx` | Bundled OSX-100 MM COC template for 1-45 front-panel channels |
+| `Templates/OSX-100 Multi Mode COC Template 1 (48max).xlsx` | Bundled OSX-100 MM COC template for 46-48 front-panel channels |
 | `assets/C&C lulu.png` | Normal application and header icon |
 | `assets/C&C lulu white eyes.png` | Admin Mode application and header icon |
 | `README_INSTALL.txt` | Light Workbench ZIP deployment, prerequisite, and quick-start instructions |
@@ -274,8 +279,11 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.27.0**; an existing executable keeps its prior
+current source version is **1.29.3**; an existing executable keeps its prior
 version until rebuilt.
+
+The desktop application opens maximized by default while retaining the normal
+Windows title bar, taskbar access, and restore controls.
 
 For architecture, coding standards, testing, and contribution guidance, see
 the [`docs/README.md`](docs/README.md) documentation index.
@@ -424,6 +432,12 @@ designated spare ports belong to the unit. The switch serial belongs to the
 individual run because a failed switch can be replaced without changing the
 unit. Use `Load Run`
 beside the run number to open an existing numbered run for the entered unit.
+After a run has been loaded from a numbered-run folder, `Load Run` continues
+searching that folder, including nested or descriptive sample-unit folders,
+after validating the persisted main-board identity. A switch serial does not
+identify the unit because the switch can be replaced. If the loaded context
+cannot be validated, the application falls back to the canonical unit folder
+and includes the searched folder and available runs in a not-found message.
 Replacement recommendations are recalculated from the selected run and are not
 stored as permanent results.
 
@@ -501,30 +515,33 @@ logs with a `coc_attempt_id`; if the workbook was created but provenance
 metadata could not be saved, the operator is told where the partially saved
 workbook is located.
 Saved readings remain available for a later explicit export.
-Supplemental readings replace complete 1310/1550 pairs by logical channel;
-the source run and reported physical port remain traceable. A changed physical
-port must match a completed Current Port -> Replacement Port record.
+Supplemental readings replace complete configured wavelength pairs by logical
+channel; the source run and reported physical port remain traceable. A changed
+physical port must match a completed Current Port -> Replacement Port record.
 
 The report is blocked if a required front-panel channel is missing, invalid,
-negative, physically inconsistent, or has either displayed four-decimal value
-greater than or equal to 2.5000 dB. There is no incomplete-report override.
-When the combined result passes but a channel is above 2.2500 dB and a measured
-replacement candidate is available, the operator is warned and may return to
-the run or write the passing COC anyway. Source run measurements are never
-changed by preparing or exporting a combined report.
+negative, physically inconsistent, or reaches the fail limit for the selected
+model profile after four-decimal rounding. OSX-100 uses a 0.8000 dB fail limit
+and has no optimization-warning band. OSX-150 uses a 2.5000 dB fail limit and
+2.2500 dB optimization-warning limit. There is no incomplete-report override.
+When the combined OSX-150 result passes but a channel is above 2.2500 dB and
+a measured replacement candidate is available, the operator is warned and may
+return to the run or write the passing COC anyway. Source run measurements are
+never changed by preparing or exporting a combined report.
 
 The 45-channel template is selected automatically for counts 1-45; the
-48-channel template is selected for counts 46-48. The `OSX Template` sheet
+48-channel template is selected for counts 46-48. The model and wavelength
+mode select the template family: OSX-100 SM uses 1310/1550 nm, OSX-100 MM
+uses 850/1300 nm, and OSX-150 SM uses 1310/1550 nm. The `OSX Template` sheet
 uses rows 11-55 for channels 1-45 and rows 67-69 for channels 46-48. The
-1310 nm values go in column D and 1550 nm values go in column E. The Part
+first and second configured wavelengths go in columns D and E. The Part
 Number is written to merged `B4:C4` through `B4`, the Main Board serial to
 merged `D4:E4` through `D4`, the current date to `F4`, and the Tested by
-initials to `G4`. Other template
-values and formatting are preserved. Rows below the final required channel are
-removed, affected merged ranges are repaired, and the print area ends at the
-completed report.
+initials to `G4`. Other template values and formatting are preserved. Rows
+below the final required channel are removed, affected merged ranges are
+repaired, and the print area ends at the completed report.
 
-The first output is named `COC OSX-150 <Main Board serial>_YYMMDD-HHMMSS.xlsx`
+The first output is named `COC <OSX-100 or OSX-150> <Main Board serial>_YYMMDD-HHMMSS.xlsx`
 and is saved in the selected base run folder. Existing files receive a numeric suffix instead of being
 overwritten. The original template is never modified. The COC export uses
 `openpyxl`, so Microsoft Excel is not required on the target computer.
@@ -836,6 +853,13 @@ share one reference while preserving the exact reference used by every row.
 Older CSVs that repeat the complete reference fields on every row remain
 loadable. JSON retains the detailed labeled reference history, including
 references used only by superseded retest attempts.
+
+The readings table also shows `Run` and `Result` status beside `Compare with:`.
+Run status reports progress against that run's own channel plan. Result status
+separately reports pass/fail quality, optimization or review recommendations,
+and validated opportunities to combine compatible runs. A partial retest may
+be complete for its own plan while being marked supplemental for production
+coverage. These statuses do not generate a COC or modify run data.
 
 The operating band is currently hardcoded to `O band`. A `TODO` comment in
 `ILMReadLoss.py` marks this as something to query or prompt for later.

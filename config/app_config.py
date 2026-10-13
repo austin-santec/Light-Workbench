@@ -13,6 +13,16 @@ DEFAULT_PART_LOOKUP_ROOT = Path(
 )
 COC_TEMPLATE_45_FILENAME = "OSX-150 Single Mode COC Template 2 (45max).xlsx"
 COC_TEMPLATE_48_FILENAME = "OSX-150 Single Mode COC Template 1 (48max).xlsx"
+# The bundled COC catalog is keyed by switch model, wavelength mode, and
+# report capacity.  The legacy constants above remain OSX-150 SM aliases.
+COC_TEMPLATE_PROFILE_FILENAMES = {
+    ("OSX-100", "SM", 45): "OSX-100 Single Mode COC Template 2 (45max).xlsx",
+    ("OSX-100", "SM", 48): "OSX-100 Single Mode COC Template 1 (48max).xlsx",
+    ("OSX-100", "MM", 45): "OSX-100 Multi Mode COC Template 2 (45max).xlsx",
+    ("OSX-100", "MM", 48): "OSX-100 Multi Mode COC Template 1 (48max).xlsx",
+    ("OSX-150", "SM", 45): COC_TEMPLATE_45_FILENAME,
+    ("OSX-150", "SM", 48): COC_TEMPLATE_48_FILENAME,
+}
 # Compatibility name for older imports. New code selects by channel capacity.
 COC_TEMPLATE_FILENAME = COC_TEMPLATE_45_FILENAME
 # Support logs are retained indefinitely. The 500 MB value is a warning
@@ -62,12 +72,24 @@ class AppPaths:
         return self.project_root / "Templates" / self.coc_template_filename
 
     def coc_template_path_for_capacity(self, capacity: int) -> Path:
-        """Return the approved OSX-150 template for a report capacity."""
-        filename = (
-            COC_TEMPLATE_45_FILENAME
-            if int(capacity) <= 45
-            else COC_TEMPLATE_48_FILENAME
+        """Return the legacy OSX-150 SM template for a report capacity."""
+        return self.coc_template_path_for_profile("OSX-150", "SM", capacity)
+
+    def coc_template_path_for_profile(
+        self, model: str, wavelength_mode: str, capacity: int
+    ) -> Path:
+        """Return the bundled template for a model, mode, and capacity."""
+        normalized_model = str(model or "").strip().upper().replace("_", "-")
+        normalized_mode = str(wavelength_mode or "SM").strip().upper()
+        report_capacity = 45 if int(capacity) <= 45 else 48
+        filename = COC_TEMPLATE_PROFILE_FILENAMES.get(
+            (normalized_model, normalized_mode, report_capacity)
         )
+        if filename is None:
+            raise ValueError(
+                "No bundled COC template is approved for %s %s (%d channels)."
+                % (normalized_model or "unknown model", normalized_mode, report_capacity)
+            )
         return self.project_root / "Templates" / filename
 
     @property

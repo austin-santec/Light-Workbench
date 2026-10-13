@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.27.0**. The single
+The current source release is **Light Workbench 1.29.3**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -47,9 +47,13 @@ product options, power readings, and cached history are not used to infer the
 mode. Run schema version 6 stores wavelength-keyed losses plus OPM/source
 pairs, selected mode, selection method, profile origin, and classification
 metadata; legacy files remain readable. SM and MM have independent model/mode
-limit profiles. MM supports normal analysis and replacement analysis, while
-the current COC workflow remains SM-only. Historical compatibility
-classifications are preserved when loading older records.
+limit profiles. Loaded runs restore their saved model/mode criteria for both SM
+and MM; older runs infer the model from persisted metadata. Contradictory or
+unresolved MM criteria leave limits unavailable instead of assuming OSX-150.
+MM supports normal analysis and replacement analysis. OSX-100
+SM and MM use matching COC workflows; OSX-150 MM remains blocked from COC
+export. Historical compatibility classifications are preserved when loading
+older records.
 
 | File | Responsibility |
 | --- | --- |
@@ -291,11 +295,12 @@ channel count; the operator chooses one base run and may choose one compatible
 replacement/retest run. Supplemental complete pairs
 override the base by logical channel only when any changed physical port is
 supported by a completed unit replacement record. Every required channel must
-be present, finite, nonnegative, and strictly below 2.5000 dB after display
-rounding; there is no incomplete or failing override. Eligible channels above
-2.25 dB trigger an optimization confirmation only when a viable measured spare
-recommendation exists. `infrastructure/coc_export.py` selects the bundled 45-
-or 48-channel XLSX template, writes the `OSX Template` sheet's split rows and
+be present, finite, nonnegative, and below the selected model's fail limit after
+display rounding; there is no incomplete or failing override. OSX-100 uses a
+0.8000 dB fail limit and no optimization-warning band. OSX-150 uses a 2.5000
+dB fail limit and a 2.25 dB optimization warning, only when a viable measured
+spare recommendation exists. `infrastructure/coc_export.py` selects the bundled model/mode-specific 45- or
+48-channel XLSX template, writes the `OSX Template` sheet's split rows and
 metadata, deletes unused report rows in the output copy, repairs merged ranges,
 and updates the print area. It uses `openpyxl`, so Excel is not required. The
 default part lookup is
@@ -381,7 +386,9 @@ actual wavelength still blocks `ReadPower`.
 
 `hardware/optical_switch.py` tries the operator's manual address, a separately
 remembered automatic address, then a targeted `USB?*::INSTR` enumeration
-filtered by Santec VID/PID 0x2428 / 0xD00D. Each candidate gets a fresh LF and,
+filtered by Santec VID 0x2428 and either OSX-100 PID 0xD003 or OSX-150 PID
+0xD00D. The VISA fields are parsed individually, so a serial number cannot
+create a false product-ID match. Each candidate gets a fresh LF and,
 if needed, CRLF `*IDN?` probe. A supported identity is followed by channel-count
 validation; zero or invalid channel counts retain detailed transient diagnostic
 information but block routing and close the session safely. It uses:
@@ -443,6 +450,14 @@ initials are run-specific. Legacy timestamped runs and
 older unsuffixed `Run-N` folders remain supported and can still be opened
 directly.
 
+`Load Run` prefers the validated directory of the currently loaded numbered
+run. This keeps navigation working for nested or renamed sample-unit folders.
+Main-board serial is the authoritative unit identity; part number is only a
+fallback when both persisted and current serials are absent, and switch serial
+is deliberately ignored because a switch can be replaced. If the loaded
+context cannot be validated, the canonical unit folder is used and a missing
+run message reports the exact searched folder and available runs.
+
 Both run files and unit records are written through temporary files and
 `os.replace()` so an accepted row is not lost to a partial write. Real switch
 runs add readable timing metadata for first start, latest stop, continuation
@@ -456,6 +471,13 @@ the CSV and current-reading projection continue to show only the latest value
 per channel. `View Reading History...` in Run information displays current and
 superseded attempts. Temporary, rejected, and diagnostic readings remain
 outside this authoritative run history.
+
+`domain/run_status.py` provides the derived completion/result assessment shown
+beside the table comparison control. Completion uses the saved channel plan;
+result quality uses the existing limit, replacement, and validated COC
+preparation rules. JSON adds an additive `run_status` object for the future
+database `completion_status` field. Legacy runs with no reconstructable plan
+remain loadable and show unknown completion rather than an unsafe guess.
 
 The difference between project-local legacy output and Documents-based desktop
 output is intentional in the current code but should be resolved or clearly
@@ -485,8 +507,9 @@ overrides. The current XLSX mapping is
 `D67:D69` and `E67:E69` for channels 46-48, `B4` for the merged part-number
 cell, `D4` for the merged Main Board serial cell, `F4` for the date, and `G4`
 for the Tested by initials. COC filenames use the local-time pattern
-`COC OSX-150 <Main Board serial>_YYMMDD-HHMMSS.xlsx`, with a numeric suffix
-when a same-second export collides.
+`COC <OSX-100 or OSX-150> <Main Board serial>_YYMMDD-HHMMSS.xlsx`, with a
+numeric suffix when a same-second export collides. OSX-100 SM and MM use
+their matching templates; OSX-150 MM remains unsupported for COC export.
 
 ## Known issues and inconsistencies
 
