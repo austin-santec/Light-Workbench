@@ -2,350 +2,450 @@
 
 ## Purpose
 
-This roadmap turns `docs/DATABASE_ARCHITECTURE.md` into small, testable
-milestones. Each milestone should leave the current application usable and
-should be completed with tests and documentation before the next begins.
+This roadmap implements the approved SQL Server schema in
+`docs/DATABASE_ARCHITECTURE.md`. It applies to the database-focused development
+branch and intentionally starts with future data. Existing local runs are not
+scheduled for bulk import.
 
-The current CSV/JSON workflow is the compatibility baseline. No milestone may
-remove or weaken that workflow without a separate approved change.
+The current file-backed application remains usable while development proceeds.
+The database branch does not become SQL Server-primary until its write, query,
+failure, and recovery behavior has been verified against the existing domain
+rules.
 
-## Milestone 0 - Confirm requirements and ownership
+## Milestone 0 - Freeze the database contract
 
 ### Implement
 
-- Confirm PostgreSQL or company-supported SQL Server.
-- Identify the network host and IT owner.
-- Decide how users are authenticated.
-- Confirm who can submit, include, exclude, restore, and supersede runs.
-- Confirm historical import scope.
-- Confirm backup, retention, and restore expectations.
-- Approve the run classification vocabulary.
+- Approve the eight tables and two read-only views.
+- Approve SQL Server types, nullable fields, status vocabularies, and JSON
+  shapes.
+- Approve identity, foreign-key, unique, check, and append-only rules.
+- Define database-unavailable and stale-`in_progress` behavior.
+- Confirm that historical bulk import, SQLite, and local synchronization are
+  out of scope.
 
 ### Deliverables
 
-- Approved data dictionary.
-- Approved user/permission matrix.
-- Approved run-status workflow.
-- Test data set containing production, test, partial, and invalid examples.
+- Reviewed data dictionary.
+- Entity relationship diagram.
+- Status transition table.
+- JSON examples for channel maps, hardware, limits, and references.
+- Permission matrix for application read/write and reporting read-only roles.
 
 ### Exit criteria
 
-- Stakeholders agree what is included in normal analysis.
-- Stakeholders agree what local-only guarantees.
-- No code or database deployment is required yet.
+- No unresolved naming or ownership questions remain in the initial schema.
+- Completion status is separate from derived pass/fail quality.
+- Unit/switch assignments and replacement ownership are unambiguous.
 
-## Milestone 1 - Stable IDs and schema metadata
+## Milestone 1 - SQL Server foundation
+
+Status: complete. Migration `0001_initial_schema.sql`, checksum/history
+validation, the eight tables, two views, least-privilege database roles,
+guarded reset tooling, and isolated SQL integration tests are implemented. The
+local `LWBTestDB_Integration` database has been reset, migrated, backed up,
+restored to a temporary database, checked with `DBCC CHECKDB`, and cleaned up
+using 32-bit Python, `pyodbc`, Windows Authentication, and ODBC Driver 18.
 
 ### Implement
 
-- Add stable unit and run identifiers to the domain model.
-- Add migration support for older JSON records.
-- Preserve existing folder and filename loading.
-- Record explicit schema versions.
-- Ensure run identity survives continuation and filename changes.
-- Record source-file lineage where appropriate.
-
-### Do not change
-
-- CSV column layout.
-- COC output.
-- Hardware behavior.
-- Current operator workflow.
+- Create forward-only migration scripts for `LWBTestDB`.
+- Create `UNITS`, `SWITCHES`, `UNIT_SWITCH_ASSIGNMENTS`, `IL_RUNS`,
+  `IL_MEASUREMENTS`, `CHANNEL_REPLACEMENTS`, `DESIGNATED_SPARES`, and
+  `SCHEMA_MIGRATIONS`.
+- Create `vw_CurrentILMeasurements` and `vw_CurrentChannelMap`.
+- Add foreign keys, checks, unique constraints, filtered active-assignment
+  indexes, and reporting indexes.
+- Configure Windows Authentication roles.
+- Create a separate integration-test database, such as
+  `LWBTestDB_Integration`.
+- Verify that the selected ODBC driver works with supported 32-bit Python.
 
 ### Tests
 
-- Legacy JSON migration.
-- New JSON round-trip.
-- Stable run identity after continuation.
-- Filename changes without changing run identity.
-- Unsupported future schema rejection.
+- Apply all migrations to an empty database.
+- Re-running the migration command makes no duplicate changes.
+- A modified migration checksum is detected.
+- Unsupported future schema versions are rejected.
+- Constraints reject invalid JSON, duplicate UUIDs, invalid status values,
+  duplicate active assignments, and incomplete measurement pairs.
+- Back up and restore the disposable integration database before applying the
+  same operational process to development or production data.
 
 ### Exit criteria
 
-- Existing runs load unchanged.
-- New runs have stable identities.
-- All file-backed tests pass.
+- A clean SQL Server Express instance can be prepared repeatably.
+- The schema is inspectable in SQL Server Management Studio.
+- The integration database can be reset without touching development data.
 
-## Milestone 2 - Direct central database repository
+## Milestone 2 - Connection and configuration boundary
+
+Status: complete. Non-secret per-user SQL Server settings, a bounded
+Windows-authenticated connection factory, short transaction contexts,
+read-only migration compatibility preflight, classified operator diagnostics,
+and credential-free support events are implemented. Database use remains
+disabled by default and is not yet connected to run persistence; that begins
+with repository work in Milestone 3.
 
 ### Implement
 
-- Add a database repository behind the existing infrastructure boundary.
-- Add central schema migrations and foreign-key constraints.
-- Add direct queries for units, runs, measurements, replacements, and spares.
-- Use parameterized SQL, bounded connections, and short transactions.
-- Add stable IDs and idempotent insert/update behavior.
-- Keep SQL and connection handling out of the UI and hardware controllers.
-
-### Initial behavior
-
-- CSV/JSON remain the operational source.
-- The central database is an optional destination for accepted data.
-- Hardware operations do not require a successful database connection.
-- File-backed reports remain available while database reporting is introduced.
-- The repository can be replaced by an API client later if required.
+- Add configurable SQL Server instance and database settings.
+- Use Windows Authentication without embedded credentials.
+- Add a database connection factory under `infrastructure/`.
+- Add bounded connections, parameterized commands, and short transactions.
+- Add startup/explicit connection diagnostics and schema compatibility checks.
+- Classify authentication, server unavailable, timeout, permission, and schema
+  errors for operator feedback and local support logs.
 
 ### Tests
 
-- Submit a complete run.
-- Submit a partial run without treating it as complete.
-- Ignore transient and overwritten readings.
-- Retry an accepted run without creating duplicates.
-- Query one unit and all units through the repository.
-- Confirm database report totals match file-backed reports.
+- Valid Windows-authenticated connection.
+- Unavailable server and invalid instance.
+- Missing database.
+- Insufficient permissions.
+- Unsupported schema version.
+- Connection cleanup after success and failure.
 
 ### Exit criteria
 
-- Multiple workstations can use the same central schema safely.
-- Repeating a submission is safe and idempotent.
-- Removing database access does not remove local production run files.
+- UI and hardware modules do not know connection-string or SQL details.
+- Connection failures are actionable and do not expose credentials.
 
-## Milestone 3 - Run classification and local submission controls
+### Operator/developer diagnostic
 
-### Implement
+Database settings are stored in
+`%LOCALAPPDATA%\LightWorkbench\config\database.ini`. The file contains only
+the endpoint, database, driver, encryption policy, and bounded timeouts. It
+never stores a username or password because the process uses Windows
+Authentication.
 
-- Add run purpose: Production, Engineering/Test, Training/Demo, or
-  Calibration/Equipment Check.
-- Add submission policy: Submit when complete, Local only, or Review before
-  submitting.
-- Add analysis status: Pending review, Included, Excluded, or Superseded.
-- Add exclusion reason and notes.
-- Add completion status for complete, partial, stopped, and failed runs.
-- Add an explicit Submit Run workflow.
+Run the read-only readiness check with:
 
-### Recommended behavior
-
-- Local-only runs never upload automatically.
-- Invalid runs require an exclusion reason.
-- Reports exclude pending, excluded, and superseded runs by default.
-- A run can later be restored or explicitly submitted.
-
-### Tests
-
-- Test-only run remains local.
-- Production run can be submitted explicitly.
-- Invalid run is excluded from normal report totals.
-- Superseded run is retained but excluded from current-result reports.
-- Partial run does not affect complete-run timing metrics.
-
-### Exit criteria
-
-- Operators can perform exploratory work without contaminating production
-  analysis.
-- No run is silently deleted.
-- Status changes are auditable locally.
-
-## Milestone 4 - Direct-write reliability and offline recovery
-
-### Implement
-
-- Save CSV/JSON before attempting database submission.
-- Add an asynchronous database worker with bounded connections.
-- Add submission status and error details to the run state.
-- Retry failed submissions using stable run IDs and source-file hashes.
-- Add a manual retry or submit-selected-run operation.
-- Add central audit events after successful transactions.
-- Keep database writes non-blocking for hardware operations.
-
-### Tests
-
-- Network failure leaves local data intact.
-- Retry eventually succeeds.
-- Duplicate retry does not duplicate data.
-- Local-only runs are never submitted.
-- A run remains usable while database submission is pending.
-- A successful database write followed by a local status failure is safe to
-  retry.
-
-### Exit criteria
-
-- A disconnected workstation can complete a full test.
-- Pending submissions are visible and recoverable from local files.
-- No hardware operation waits on the database.
-
-## Milestone 5 - Central database pilot
-
-### Implement
-
-- Implement central schema migrations.
-- Configure approved direct database authentication.
-- Restrict database network access to approved workstations or segments.
-- Implement direct run and measurement transactions.
-- Validate payload schema and application compatibility.
-- Add central duplicate and conflict detection.
-- Add audit records for submission and status changes.
-
-An API is not required for this milestone. If direct database access is later
-rejected by IT or security, the repository contract should be retained and an
-API-backed repository can replace the direct implementation.
-
-### Pilot scope
-
-- One or two test workstations.
-- Non-critical test data first.
-- Central backup and restore verification before production use.
-
-### Tests
-
-- Authenticated direct submission.
-- Invalid payload rejection.
-- Duplicate upload handling.
-- Concurrent update conflict detection.
-- Server unavailable behavior.
-- Backup restore into a test database.
-
-### Exit criteria
-
-- Pilot workstations submit data without changing their local workflow.
-- Central records match local accepted measurements.
-- Conflicts are visible and resolvable.
-
-## Milestone 6 - Historical data import
-
-### Implement
-
-- Scan existing `Unit-*` folders through the repository boundary.
-- Import legacy layouts supported by current loaders.
-- Preserve source paths and hashes.
-- Mark uncertain or incomplete records for review.
-- Produce an import report with counts and errors.
-
-### Import rules
-
-- Import accepted/written measurements only.
-- Do not infer missing metadata silently.
-- Do not treat replacement recommendations as permanent replacement records.
-- Do not mark uncertain historical runs as production-included automatically.
-
-### Exit criteria
-
-- Import can be repeated without duplicates.
-- Every imported run is traceable to its source file.
-- Uncertain records are separated from normal production reports.
-
-## Milestone 7 - Database reporting service
-
-### Implement
-
-- Add report query interfaces independent of the database vendor.
-- Add filters for unit, run, switch, band, operator, date, and status.
-- Add timing, limit, completion, replacement, and trend summaries.
-- Keep normal reports limited to eligible production data.
-- Add advanced views for excluded, test, partial, and superseded data.
-- Support CSV export of report results.
-
-### Exit criteria
-
-- Reports can compare hundreds or thousands of runs efficiently.
-- Complete and incomplete runs are clearly distinguished.
-- Excluded data cannot enter normal metrics accidentally.
-
-## Milestone 8 - Reporting GUI
-
-### Implement
-
-Choose either a read-only area under `Tools` or a separate Light Workbench
-Reports application. The first version should provide:
-
-- Search and filtering.
-- Unit history.
-- Run detail.
-- Production-only summary dashboard.
-- Operator timing summary.
-- Over-limit channel summary.
-- Synchronization and pending-review status.
-- Export.
-
-Editing production measurements should not be part of the first GUI. Status
-correction should require explicit permissions and an audit trail.
-
-### Exit criteria
-
-- Users can answer the initial analysis questions without opening individual
-  run folders.
-- The GUI remains usable when the central service is temporarily unavailable,
-  where local cached data is available.
-
-## Milestone 9 - Production hardening
-
-### Implement
-
-- Scheduled backup verification.
-- Restore drills.
-- API and database health checks.
-- Permission review.
-- Conflict-resolution procedures.
-- Retention and archival procedures.
-- Deployment and upgrade documentation.
-- User training for run classification and submission.
-- Monitoring for synchronization failures.
-
-### Exit criteria
-
-- The organization can recover from workstation, API, and database failure.
-- A new workstation can be configured from documented instructions.
-- Users understand local-only, pending, included, excluded, and superseded
-  runs.
-
-## Proposed source placement
-
-When implementation begins, use the existing project boundaries:
-
-```text
-domain/                    Run classification and reporting rules
-application/               Submission and synchronization orchestration
-infrastructure/            Database repository, file import, SQL, repositories
-config/                    Database and service configuration defaults
-ui/                        Status, submission, review, and reporting screens
-tests/                     Hardware-free repository and workflow tests
-docs/                      Architecture, operations, and migration guidance
+```powershell
+python -m tools.check_database_connection
 ```
 
-The central database remains outside the desktop executable. Direct database
-access belongs in an infrastructure repository with configuration and secret
-handling kept separate from hardware and UI code. An API can be added later
-behind the same repository contract if required.
+The diagnostic validates connectivity and migration history but never applies
+migrations automatically.
+
+## Milestone 3 - Repository contracts
+
+### Implement
+
+- Define repository protocols for units, switches, assignments, runs,
+  measurements, replacements, and spares.
+- Implement fake/in-memory repositories for hardware-free workflow tests.
+- Implement SQL Server repositories in `infrastructure/`.
+- Keep entity validation and status transitions in `domain/` or
+  `application/`, not in Qt widgets.
+- Keep SQL statements private to infrastructure modules.
+
+### Required operations
+
+```text
+UnitRepository.get_or_create(...)
+SwitchRepository.get_or_create(...)
+AssignmentRepository.get_active(...)
+AssignmentRepository.install(...)
+AssignmentRepository.remove(...)
+RunRepository.create(...)
+RunRepository.finish(...)
+RunRepository.find_stale_in_progress(...)
+MeasurementRepository.append_attempt(...)
+MeasurementRepository.current_for_run(...)
+MeasurementRepository.history_for_run(...)
+ReplacementRepository.append(...)
+SpareRepository.append_event(...)
+```
+
+### Tests
+
+- Repository contract tests run against fakes and the integration database.
+- SQL injection-like input remains data rather than executable SQL.
+- Duplicate UUID retries resolve existing records safely.
+- Failed operations roll back their transactions.
+
+### Exit criteria
+
+- Application workflows can depend on repository interfaces without importing
+  database-specific packages.
+
+## Milestone 4 - Unit, switch, and assignment workflow
+
+### Implement
+
+1. Resolve or create a unit by main-board serial.
+2. Resolve or create a switch by switch serial.
+3. Find the active unit/switch assignment.
+4. Create the baseline logical-to-physical map for a new assignment.
+5. Close an old assignment when a physical switch is removed.
+6. Create a new assignment for the replacement switch.
+7. Prevent one unit or switch from participating in conflicting active
+   assignments.
+
+### Tests
+
+- Reconnecting the same unit/switch reuses the active assignment.
+- Replacing a switch preserves the old assignment and its runs.
+- A switch cannot be active in two units simultaneously.
+- Invalid or missing baseline channel maps are rejected.
+- Physical channel count and front-panel channel count remain distinct.
+
+### Exit criteria
+
+- Every future run can reference one unambiguous installed unit/switch pair.
+
+## Milestone 5 - Run lifecycle persistence
+
+### Implement
+
+- Require a successful database/schema preflight before a production run.
+- Generate `client_run_uuid` before the first insertion attempt.
+- Allocate the unit's operator-facing run number transactionally.
+- Insert an `in_progress` run with part-number, channel-count, hardware, and
+  limit snapshots.
+- Transition the run to `complete`, `stopped`, or `failed` with
+  `run_ended_at_utc`.
+- Add production, engineering, training, and calibration purpose choices.
+- Add pending, included, excluded, and superseded analysis status.
+- Require an exclusion reason when appropriate.
+- Detect stale `in_progress` runs and present an explicit resume/close
+  workflow.
+
+### Tests
+
+- Duplicate create retry does not create a second run.
+- Completion status never doubles as measurement pass/fail.
+- A complete run may contain formally failing measurements.
+- A stopped run retains accepted measurements.
+- A failed run records the technical end state.
+- Engineering/training data is excluded from normal production analysis.
+- A stale run is not silently marked complete.
+
+### Exit criteria
+
+- Every database-backed run has stable identity, assignment, context, and a
+  valid lifecycle state.
+
+## Milestone 6 - Atomic measurement persistence
+
+### Implement
+
+- Generate `measurement_uuid` before insertion.
+- Validate a complete two-wavelength sample before writing.
+- Store both wavelength/IL pairs and the reference snapshot in one row and one
+  transaction.
+- Allocate `attempt_number` safely for each run/logical channel.
+- Mark a reading accepted in the UI only after commit succeeds.
+- Leave failed writes temporary and retryable without advancing the channel.
+- Keep raw power, temporary readings, live samples, and rejected samples out of
+  `IL_MEASUREMENTS`.
+
+### Tests
+
+- SM 1310/1550 and MM 850/1300 rows round-trip at four-decimal precision.
+- A transaction cannot produce a one-wavelength measurement.
+- Retrying the same UUID is idempotent.
+- Parallel or repeated attempts cannot claim the same attempt number.
+- Database failure does not alter the current accepted projection.
+- Invalid/negative/unwritten readings are absent from the database.
+
+### Exit criteria
+
+- Write IL is atomic, retry-safe, and preserves the existing acceptance rules.
+
+## Milestone 7 - Retest and current-value queries
+
+### Implement
+
+- Use append-only rows for accepted retests.
+- Use `vw_CurrentILMeasurements` for the current result per channel.
+- Back Reading History with all attempt rows.
+- Move readings-table, run-status, comparison, Copy Raw Data, analysis, COC,
+  and replacement inputs to repository queries over the current view.
+- Preserve existing logical channel ordering and table-filter independence.
+
+### Tests
+
+- Retesting appends an attempt and preserves the original.
+- The current view selects the highest attempt only.
+- History returns every accepted attempt in order.
+- COC, analysis, clipboard, and visible readings agree on the current values.
+- Temporary readings never appear in history or current views.
+
+### Exit criteria
+
+- Current behavior remains latest-only where expected while complete accepted
+  history is queryable.
+
+## Milestone 8 - Replacement and spare persistence
+
+### Implement
+
+- Store replacements against `assignment_id` rather than permanently against a
+  unit.
+- Append reason, operator, timestamp, previous port, replacement port, and
+  optional related run.
+- Append spare designation and undesignation events.
+- Use `vw_CurrentChannelMap` to combine the baseline assignment map with the
+  latest replacement per logical channel.
+- Keep replacement recommendations derived and temporary.
+- Do not command or verify external switch mapping changes.
+
+### Tests
+
+- Multiple replacements of one channel retain complete history.
+- Replacements from a removed switch do not affect a new assignment.
+- Current-map queries return the latest effective port.
+- Spare designation history produces the correct active set.
+- Replacement records survive run changes and remain attributable.
+
+### Exit criteria
+
+- Database queries can reconstruct the effective map and full documentation
+  history for each assignment.
+
+## Milestone 9 - Database-primary cutover
+
+### Development transition
+
+During development, compare database repository results with the existing file
+repository using controlled test runs and synthetic data. This is verification,
+not a permanent dual-write architecture.
+
+### Final behavior
+
+- SQL Server becomes authoritative for new run data on this branch.
+- New runs no longer require automatic CSV/JSON persistence.
+- Existing files may remain viewable, but opening one does not upload it.
+- Explicit CSV/JSON exports remain available if retained as an operator feature.
+- COC and diagnostic exports remain generated files.
+- Support logs remain local.
+- Red Light Test and Power Measurement Diagnostics may operate without the
+  run database because they do not write production runs.
+
+### Database outage behavior
+
+- Start Run is blocked if database/schema preflight fails.
+- A mid-run failed Write IL stays temporary in memory and offers retry.
+- The application does not advance in a way that loses the pending reading.
+- Support logs record the database failure but never act as a measurement
+  outbox.
+
+### Tests
+
+- Database-backed results match established domain behavior.
+- No automatic local run file is required after cutover.
+- Explicit exports do not become authoritative storage.
+- Startup and mid-run database failures provide clear operator guidance.
+- Existing non-recording tools remain available as designed.
+
+### Exit criteria
+
+- New production data can be created, resumed, queried, analyzed, and exported
+  using SQL Server as the source of truth.
+
+## Milestone 10 - Reporting
+
+### Implement
+
+- Add read-only queries for unit, switch, assignment, run, and channel history.
+- Filter by model, mode, operator, date, completion, purpose, and analysis
+  status.
+- Add retest-frequency and replacement-outcome reporting.
+- Derive pass/fail and optimization from current measurements and the saved
+  limit snapshot.
+- Exclude pending, excluded, superseded, and non-production data from normal
+  production metrics unless explicitly requested.
+- Add CSV export of report results.
+
+### Exit criteria
+
+- Users can answer normal production and troubleshooting questions without
+  scanning local run folders.
+- Derived results can be reproduced from stored measurements and snapshots.
+
+## Milestone 11 - Network pilot and production hardening
+
+### Implement
+
+- Deploy the migrations to the approved network SQL Server.
+- Configure Windows/domain groups and least-privilege roles.
+- Enable encrypted database connections.
+- Pilot with one or two workstations and non-critical future data.
+- Test concurrent run creation and measurement writes.
+- Measure database growth and query performance.
+- Configure backup, retention, restore drills, and database health monitoring.
+- Document workstation configuration, database outage procedures, and stale-run
+  recovery.
+
+### Exit criteria
+
+- Multiple workstations create future data without duplicate identities or
+  conflicting assignments.
+- Backup restoration is demonstrated.
+- Expected capacity is confirmed with measured pilot data.
+- Operators and support staff have documented recovery procedures.
+
+## Source placement
+
+```text
+domain/          Database-independent entities, validation, status, and rules
+application/     Run/measurement/assignment orchestration and recovery flows
+infrastructure/  SQL Server connection factory, migrations, and repositories
+config/          Non-secret database endpoint and application settings
+ui/              Connection status, recovery prompts, and reporting screens
+tests/           Fake repository tests and isolated SQL integration tests
+docs/            Architecture, operations, and schema guidance
+```
+
+Root-level compatibility facades should not become SQL ownership boundaries.
+No hardware adapter or Qt widget should execute database commands directly.
 
 ## Testing strategy
 
-Every milestone should include:
+Every milestone includes:
 
-- Unit tests for domain rules.
-- Repository tests with temporary directories and a disposable test database
-  or database test container.
-- Migration tests using representative old records.
-- Synchronization tests using a fake API.
-- Failure and retry tests.
+- Hardware-free unit tests for domain and application rules.
+- Shared repository contract tests.
+- SQL integration tests against `LWBTestDB_Integration`, never development or
+  production data.
+- Transaction rollback and idempotency tests.
+- Failure classification and recovery tests.
 - Qt tests only for visible workflow behavior.
-- No connected hardware requirement.
+- No connected hardware requirement for automated tests.
 
-Before implementation is considered complete, run the project checks from
-`docs/TESTING_AND_RELEASE.md`, including the hardware-free unittest suite,
-Python compilation, and `git diff --check`.
+Run the project checks from `docs/TESTING_AND_RELEASE.md`, including the full
+unittest suite, compilation of changed Python modules, and `git diff --check`.
 
-## Release and rollout strategy
+## Release strategy
 
-1. Release local classification fields first.
-2. Pilot direct database submission with non-critical data.
-3. Verify direct-write retry and offline recovery.
-4. Verify backup and restore.
-5. Import historical data in a separate controlled operation.
-6. Enable reporting for a small user group.
-7. Expand to all workstations after reconciliation checks pass.
+1. Freeze and document the schema.
+2. Validate migrations and Windows Authentication locally.
+3. Implement repository contracts and fakes.
+4. Persist unit/switch assignments and run lifecycle.
+5. Persist accepted measurements and retests atomically.
+6. Move replacement/spare history and current-value queries to SQL Server.
+7. Complete controlled database/file parity testing.
+8. Cut the database branch over to SQL Server-primary behavior.
+9. Pilot future data on the network server.
+10. Enable reporting after backup and restore procedures are proven.
 
-The existing executable should continue to function at every step. Database
-features should be optional until the central service and operating procedures
-are proven.
+The executable must not be rebuilt merely because documentation or database
+scripts changed. Follow the normal version and build policy once runtime code
+is introduced.
 
 ## Success criteria
 
-The architecture is successful when:
+The implementation is successful when:
 
-- Operators can test hardware while offline.
-- Existing CSV/JSON data remains intact and usable.
-- Test-only work does not contaminate production reports.
-- Invalid and superseded runs remain traceable but excluded by default.
-- Multiple computers can synchronize without duplicate or silent data loss.
-- Reports use accepted/written readings only.
-- The central system can be backed up and restored.
-- Future hardware configurations can reuse the same run and measurement model.
+- Every future production run has stable unit, switch, assignment, and UUID
+  identity.
+- Every accepted reading is a complete, atomic two-wavelength record.
+- Retests remain append-only and the current projection is deterministic.
+- Replacement and spare history cannot leak across switch assignments.
+- Non-production and excluded runs do not contaminate normal analysis.
+- Local support logs remain independent from analytical storage.
+- Database failures are visible and cannot silently lose or falsely accept a
+  reading.
+- SQL Server can be backed up, restored, and queried by approved workstations.

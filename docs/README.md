@@ -27,10 +27,13 @@ requirement into completed, partial, and not-yet-implemented work.
   switch, session, and shutdown boundaries.
 - [`DATA_ARCHITECTURE.md`](DATA_ARCHITECTURE.md) — units, runs, persistence,
   exports, and compatibility rules.
-- [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md) — planned local and
-  central database design, synchronization, run eligibility, and reporting.
+- [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md) — approved SQL
+  Server-primary schema for future runs, including unit/switch
+  assignments, accepted attempts, replacements, spares, and analysis
+  eligibility.
 - [`DATABASE_ROADMAP.md`](DATABASE_ROADMAP.md) — staged database milestones,
-  tests, rollout steps, and exit criteria.
+  SQL Server Express development setup, tests, network rollout, and exit
+  criteria. Historical bulk import is intentionally out of scope.
 - [`TESTING_AND_RELEASE.md`](TESTING_AND_RELEASE.md) — test commands, build,
   packaging, and release checks.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — change workflow and review questions.

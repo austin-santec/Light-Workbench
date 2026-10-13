@@ -203,6 +203,12 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "template_path",
         "source_runs",
         "operator_choice",
+        "database_server",
+        "database_name",
+        "database_driver",
+        "database_error_category",
+        "database_schema_version",
+        "database_expected_schema_version",
     }
 )
 

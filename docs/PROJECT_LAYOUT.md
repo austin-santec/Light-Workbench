@@ -15,7 +15,7 @@ ui/                              Qt dialogs, status panels, and presentation wor
 tools/                           Optional dependency and environment diagnostics
 domain/                          Vendor-neutral models and business rules
 hardware/                        Hardware contracts, identity, adapters, factories, and sessions
-infrastructure/                  File repositories, CSV/unit persistence, support-log writing/bundles, loaders, COC/diagnostic export, queries, and reports
+infrastructure/                  File/SQL persistence, migrations, support logs, loaders, exports, queries, and reports
 tests/                            Hardware-free automated tests
 ```
 
@@ -70,7 +70,13 @@ be used as source locations. The release scripts keep deployment output in
 - Vendor-neutral contracts and composed hardware lifecycle: `hardware/`.
 - Hardware identity/status presentation: `hardware/device_identity.py` and
   `ui/hardware_status.py`.
-- CSV/JSON/XLSX/filesystem and future storage adapters: `infrastructure/`.
+- CSV/JSON/XLSX/filesystem adapters and SQL Server infrastructure:
+  `infrastructure/`. Forward-only migration logic is in
+  `infrastructure/database/migrations.py`; immutable SQL scripts are in
+  `infrastructure/database/sql_migrations/`; guarded integration reset and
+  backup/restore operations are in `infrastructure/database/maintenance.py`.
+  Database SQL must remain private to this layer. Application repositories and
+  the runtime connection factory are later milestones.
 - Administrator criteria INI persistence: `infrastructure/limit_profile_repository.py`.
 - Session-only administrator authorization and dialogs:
   `application/admin_session.py` and `ui/admin_config.py`.

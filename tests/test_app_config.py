@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app_config import AppPaths, default_support_log_root
+from app_config import AppPaths, default_database_config_path, default_support_log_root
 
 
 class AppConfigTests(unittest.TestCase):
@@ -41,6 +41,12 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(path.name, "logs")
         self.assertEqual(path.parent.name, "LightWorkbench")
         self.assertNotIn("ILM-Reads", str(path))
+
+    def test_default_database_settings_use_per_user_config_folder(self):
+        path = default_database_config_path()
+        self.assertEqual(path.name, "database.ini")
+        self.assertEqual(path.parent.name, "config")
+        self.assertEqual(path.parent.parent.name, "LightWorkbench")
 
 
 if __name__ == "__main__":

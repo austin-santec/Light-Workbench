@@ -235,12 +235,14 @@ episode, including its start, invalid-sample count, and cleared/ended outcome.
 - Preserve template graphics and unrelated cell content during COC export.
 - Keep clipboard exports read-only with respect to run and unit persistence.
 
-## Future multi-run analysis
+## Planned SQL Server persistence
 
-If analysis grows to hundreds or thousands of runs, use a repository abstraction
-and consider a central database for indexing and aggregation. CSV should remain
-available as an export, but application-wide queries should not require scanning
-every CSV file manually.
+The database-focused development branch will use SQL Server as the
+authoritative store for future run data after its staged implementation and
+validation are complete. Existing CSV/JSON runs are mainly development and test
+data; no historical bulk-import milestone is planned. CSV and JSON may remain
+explicit export or view formats, but application-wide queries should not
+require scanning run folders after the database cutover.
 
 The current reporting groundwork follows that boundary. `domain/reporting.py`
 defines typed, read-only summaries from accepted measurements, while
@@ -249,10 +251,13 @@ repository adapters. It is intentionally not connected to the UI yet; future
 operator reports can consume these summaries without knowing whether the
 underlying storage remains file-based or moves to a central database.
 
-The current proposal intentionally does not add SQLite. A future database
-repository should write directly to the approved central database while keeping
-CSV/JSON as the local record and recovery path. Database availability must not
-block hardware testing or local persistence.
+The approved design intentionally does not add SQLite, a shared database file,
+or a local synchronization outbox. SQL Server writes belong behind repository
+interfaces. Once the database branch cuts over, production Start Run requires a
+successful database/schema preflight and an accepted Write IL operation is not
+complete until its atomic two-wavelength transaction commits. Red Light Test
+and Power Measurement Diagnostics may remain available without the run
+database because they do not create production run records.
 
 `domain/reporting.py` provides this aggregation through
 `aggregate_run_summaries`. Timing averages exclude runs without recorded
@@ -265,11 +270,11 @@ boundaries. It can aggregate one unit or all indexed `Unit-*` folders under a
 run root, which gives a future analysis screen one stable entry point without
 requiring it to know the CSV layout.
 
-The planned database extension is documented separately in
-`docs/DATABASE_ARCHITECTURE.md`. Its implementation milestones are in
-`docs/DATABASE_ROADMAP.md`. The database design preserves this file-backed
-model: CSV and JSON remain available, accepted/written measurements are the
-analytical inputs, and replacement recommendations remain derived data.
+The approved schema is documented in `docs/DATABASE_ARCHITECTURE.md`; staged
+implementation is in `docs/DATABASE_ROADMAP.md`. It stores future units,
+switches, assignments, runs, accepted attempts, replacement records, and spare
+events. Support logs and raw power remain local, while replacement
+recommendations remain derived data.
 
 ## Controlled quality criteria
 

@@ -132,10 +132,12 @@ paths now share partial-startup cleanup behavior.
 
 ## Phase 5 — Storage and reporting
 
-- Status: complete for file-backed storage and reporting; SQLite remains intentionally deferred.
+- Status: complete for the current file-backed storage/reporting foundation;
+  the separate SQL Server-primary branch is planned but not implemented.
 
 - Add schema versions and migration functions.
-- Evaluate SQLite for multi-run analysis while preserving CSV export.
+- Implement the approved SQL Server repository design from
+  `docs/DATABASE_ARCHITECTURE.md` on the database-focused branch.
 - Add query/report services for operator, timing, limit, and repeatability
   analysis.
 
@@ -162,9 +164,10 @@ Current Phase 5 reporting increment: `domain/reporting.py` and
 `infrastructure/run_query.py` provide typed summaries and read-only indexed-run
 queries without adding UI behavior.
 
-SQLite indexing is deferred. Current Phase 5 reporting remains file-backed and
-performs aggregation in memory, preserving CSV/JSON compatibility without
-adding a database dependency.
+SQLite is no longer the planned database direction. Current Phase 5 reporting
+remains file-backed and performs aggregation in memory. The database-focused
+branch will use SQL Server for future authoritative run data after the staged
+roadmap is complete; it does not include historical bulk import.
 
 The current aggregation increment adds overall and per-tester timing and
 warning-limit summaries over selected saved runs. It remains a domain service

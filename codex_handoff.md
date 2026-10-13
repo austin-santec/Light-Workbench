@@ -1,7 +1,7 @@
 # Light Workbench — AI Handoff
 
 This document is a working orientation guide for another AI or developer
-continuing this project. It was last reviewed on 2026-10-02. The files on disk
+continuing this project. It was last reviewed on 2026-10-13. The files on disk
 and the Git worktree are the source of truth.
 
 ## Mission
@@ -54,6 +54,25 @@ MM supports normal analysis and replacement analysis. OSX-100
 SM and MM use matching COC workflows; OSX-150 MM remains blocked from COC
 export. Historical compatibility classifications are preserved when loading
 older records.
+
+The database-focused branch has an approved SQL Server-primary design and its
+Milestone 1 SQL Server foundation is complete. Development targets
+`localhost\SQLExpress`, database `LWBTestDB`, with Windows Authentication. The
+forward-only migration runner and initial eight-table/two-view schema are in
+`infrastructure/database/`; guarded reset and backup/restore tools operate only
+on `LWBTestDB_Integration`. Backup verification restores to a temporary
+database, runs `DBCC CHECKDB`, validates the schema, and cleans up. The
+clean-start schema is
+future-data-only: it does not include historical run import, SQLite, or a local
+synchronization outbox. Its core tables are `UNITS`, `SWITCHES`,
+`UNIT_SWITCH_ASSIGNMENTS`, `IL_RUNS`, `IL_MEASUREMENTS`,
+`CHANNEL_REPLACEMENTS`, `DESIGNATED_SPARES`, and `SCHEMA_MIGRATIONS`, with
+read-only current-measurement and current-channel-map views. Application SQL
+repositories and runtime cutover have not yet been implemented. SQL Server becomes
+authoritative only after the staged roadmap is complete; current file-backed
+behavior remains the implemented baseline. Support logs, diagnostic exports,
+and generated COC files remain local. See `docs/DATABASE_ARCHITECTURE.md` and
+`docs/DATABASE_ROADMAP.md` before database work.
 
 | File | Responsibility |
 | --- | --- |

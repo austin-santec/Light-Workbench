@@ -18,6 +18,41 @@ Use for Qt worker lifecycle, controller state transitions, run continuation,
 file persistence, COC export, and dialog behavior. Use fakes rather than real
 hardware.
 
+SQL Server migration and repository tests must use a dedicated disposable
+integration database such as `LWBTestDB_Integration`, never the development or
+production database. Cover migrations, constraints, transaction rollback, UUID
+idempotency, atomic two-wavelength writes, attempt numbering, current-value
+views, and database-unavailable behavior. Historical bulk-import tests are not
+required by the approved clean-start design.
+
+Run the current migration integration tests explicitly on Windows:
+
+```powershell
+$env:LWB_TEST_SQL_CONNECTION_STRING = "DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost\SQLEXPRESS;DATABASE=LWBTestDB_Integration;Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes;"
+python -m tools.migrate_database --server "localhost\SQLEXPRESS" --database "LWBTestDB_Integration" --trust-server-certificate
+python -m unittest tests.test_database_migrations tests.test_database_maintenance
+Remove-Item Env:LWB_TEST_SQL_CONNECTION_STRING
+```
+
+Without that environment variable, SQL integration cases are skipped while
+the hardware-free migration-runner tests still run. Never substitute
+`LWBTestDB` or a production database in the integration-test command.
+
+To prove that the integration environment can be recreated and restored, use
+the guarded maintenance commands. Both commands reject any database name other
+than `LWBTestDB_Integration` and require the name to be repeated explicitly:
+
+```powershell
+python -m tools.reset_integration_database --server "localhost\SQLEXPRESS" --database "LWBTestDB_Integration" --confirm-reset "LWBTestDB_Integration" --trust-server-certificate
+python -m tools.verify_database_backup --server "localhost\SQLEXPRESS" --database "LWBTestDB_Integration" --confirm-database "LWBTestDB_Integration" --trust-server-certificate
+```
+
+The verification command creates a temporary SQL Server backup, restores it as
+`LWBTestDB_RestoreVerification`, runs `DBCC CHECKDB`, verifies the migration
+and object counts, then removes both the restored database and temporary backup.
+Use `--keep-backup` only when an administrator intentionally wants to retain
+that integration backup.
+
 COC coverage must include whole-pair multi-run overrides, run/criteria/physical
 port compatibility, strict 2.5000 dB publication blocking, optimization
 confirmation, 45/48 template selection, row trimming, merged ranges, print
