@@ -186,6 +186,11 @@ is not needed to reconstruct retests.
 `infrastructure/unit_repository.py` provides the corresponding boundary for
 unit JSON records, unit-level replacement/spare data, and numbered run-folder
 resolution. Unit identity remains separate from run-specific switch identity.
+When `Load Run` follows an already loaded numbered run, the repository first
+reuses that run's validated unit directory. This preserves nested or renamed
+sample-unit folders while requiring the persisted main-board serial to match;
+part number is used only when both sides have no serial, and switch serial is
+never used as the unit identity.
 
 `infrastructure/coc_exporter.py` provides the COC/report boundary for part
 lookup, serial normalization, and XLSX generation. Template preservation and

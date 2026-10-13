@@ -95,6 +95,16 @@ readings are not accepted attempts. Legacy runs without this collection are
 loaded by synthesizing one `legacy_import` attempt per existing effective row;
 the legacy file is not rewritten until a later save changes the run.
 
+Numbered-run navigation keeps the loaded unit directory as its preferred
+repository context, even when that directory is nested under a descriptive
+folder or has been renamed. Before using it, the application validates the
+persisted unit identity against the setup fields: matching main-board serials
+are authoritative, part number is a fallback only when both serials are
+missing, and switch serial is intentionally ignored because switches can be
+replaced. If the context is absent or does not validate, navigation falls back
+to the canonical `Documents/ILM-Reads/Unit-*` location and reports the exact
+folder searched when a requested run is unavailable.
+
 ## Run completion and result assessment
 
 The desktop UI displays two derived statuses beside the `Compare with:` control

@@ -27,6 +27,7 @@ from ilm_app import (
     MainWindow,
     STANDARD_PART_NUMBERS,
     format_channel_summary,
+    main as app_main,
 )
 from run_data import MeasurementRecord, RunData
 
@@ -111,6 +112,28 @@ class MainWindowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.application = QApplication.instance() or QApplication([])
+
+    def test_application_starts_main_window_maximized(self):
+        application = MagicMock()
+        application.exec_.return_value = 0
+        support_logger = MagicMock()
+        window = MagicMock()
+        with patch(
+            "ilm_app.SupportLoggingService.create_default",
+            return_value=support_logger,
+        ), patch("ilm_app.set_support_logging_service"), patch(
+            "ilm_app.install_exception_hooks"
+        ), patch("ilm_app.QApplication", return_value=application), patch(
+            "ilm_app.bundled_asset_path", return_value=None
+        ), patch("ilm_app.MainWindow", return_value=window), patch(
+            "ilm_app.sys.argv", ["ilm_app.py"]
+        ):
+            result = app_main()
+
+        self.assertEqual(result, 0)
+        window.showMaximized.assert_called_once_with()
+        window.show.assert_not_called()
+        support_logger.shutdown.assert_called_once_with()
 
     def test_loads_saved_limit_and_run_number_from_companion_json(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -199,6 +222,149 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertEqual(file_dialog.call_args.args[2], str(DEFAULT_RUN_ROOT))
         window.close()
+
+    def test_load_run_uses_loaded_nested_unit_directory_for_numbered_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loaded_unit = Path(directory) / "Sample Runs" / "Unit-150Status-Partial"
+            run_directory = loaded_unit / "Run-2-SW2"
+            run_directory.mkdir(parents=True)
+            run_csv = run_directory / "Run-2-SW2.csv"
+            run_csv.write_text("channel,1310 IL,1550 IL\n1,0.6500,0.5000\n", encoding="utf-8")
+            (loaded_unit / "unit.json").write_text(
+                json.dumps(
+                    {
+                        "unit_metadata": {
+                            "Main board serial": "17688",
+                            "Part number": "OSX-150-1A-002",
+                        },
+                        "runs": [
+                            {
+                                "run_number": 2,
+                                "directory": run_directory.name,
+                                "csv_file": run_csv.name,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            window = MainWindow()
+            try:
+                window.unit_directory = loaded_unit
+                window.hardware_main_board_serial.setText("17688")
+                window.hardware_part_number.setCurrentText("OSX-150-1A-002")
+                window.hardware_switch_serial.setText("SW2")
+                window.hardware_run_number.setValue(2)
+
+                with patch.object(window, "load_path") as load_path:
+                    window.load_selected_unit_run()
+
+                load_path.assert_called_once_with(run_csv)
+            finally:
+                window.close()
+
+    def test_load_run_rejects_mismatched_loaded_unit_and_uses_canonical_folder(self):
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "ilm_app.DEFAULT_RUN_ROOT", Path(directory) / "canonical"
+        ):
+            loaded_unit = Path(directory) / "Sample Runs" / "Unit-old"
+            loaded_unit.mkdir(parents=True)
+            (loaded_unit / "unit.json").write_text(
+                json.dumps(
+                    {
+                        "unit_metadata": {
+                            "Main board serial": "17688",
+                            "Part number": "OSX-150-1A-002",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            canonical_unit = Path(directory) / "canonical" / "Unit-99999"
+            canonical_run = canonical_unit / "Run-1-SW1"
+            canonical_run.mkdir(parents=True)
+            canonical_csv = canonical_run / "Run-1-SW1.csv"
+            canonical_csv.write_text("channel,1310 IL,1550 IL\n1,0.6500,0.5000\n", encoding="utf-8")
+            (canonical_unit / "unit.json").write_text(
+                json.dumps(
+                    {
+                        "unit_metadata": {
+                            "Main board serial": "99999",
+                            "Part number": "OSX-150-1A-002",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            window = MainWindow()
+            try:
+                window.unit_directory = loaded_unit
+                window.hardware_main_board_serial.setText("99999")
+                window.hardware_part_number.setCurrentText("OSX-150-1A-002")
+                window.hardware_switch_serial.setText("SW1")
+                window.hardware_run_number.setValue(1)
+
+                with patch.object(window, "load_path") as load_path:
+                    window.load_selected_unit_run()
+
+                load_path.assert_called_once_with(canonical_csv)
+            finally:
+                window.close()
+
+    def test_load_run_not_found_reports_search_folder_and_available_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loaded_unit = Path(directory) / "Sample Runs" / "Unit-Partial"
+            run_directory = loaded_unit / "Run-1-SW1"
+            run_directory.mkdir(parents=True)
+            (run_directory / "Run-1-SW1.csv").write_text(
+                "channel,1310 IL,1550 IL\n1,0.6500,0.5000\n",
+                encoding="utf-8",
+            )
+            (loaded_unit / "unit.json").write_text(
+                json.dumps(
+                    {"unit_metadata": {"Main board serial": "17688"}}
+                ),
+                encoding="utf-8",
+            )
+
+            window = MainWindow()
+            try:
+                window.unit_directory = loaded_unit
+                window.hardware_main_board_serial.setText("17688")
+                window.hardware_switch_serial.setText("SW1")
+                window.hardware_run_number.setValue(2)
+
+                with patch("ilm_app.QMessageBox.information") as information:
+                    window.load_selected_unit_run()
+
+                message = information.call_args.args[2]
+                self.assertIn(str(loaded_unit), message)
+                self.assertIn("Available runs: 1", message)
+            finally:
+                window.close()
+
+    def test_load_run_ignores_malformed_loaded_unit_record(self):
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "ilm_app.DEFAULT_RUN_ROOT", Path(directory) / "canonical"
+        ):
+            loaded_unit = Path(directory) / "Sample Runs" / "Unit-broken"
+            loaded_unit.mkdir(parents=True)
+            (loaded_unit / "unit.json").write_text("not json", encoding="utf-8")
+
+            window = MainWindow()
+            try:
+                window.unit_directory = loaded_unit
+                resolved = window._run_lookup_unit_directory(
+                    {"Main board serial": "17688", "Part number": "OSX-150"}
+                )
+                self.assertEqual(
+                    resolved,
+                    Path(directory) / "canonical" / "Unit-17688",
+                )
+            finally:
+                window.close()
 
     def test_main_window_close_is_rejected_when_hardware_shutdown_times_out(self):
         window = MainWindow()

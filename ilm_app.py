@@ -3742,16 +3742,35 @@ class MainWindow(QMainWindow):
             self.unit_directory = candidate
             self.unit_record = {}
 
+    def _run_lookup_unit_directory(self, metadata):
+        """Choose the active loaded unit before falling back to the default root.
+
+        A loaded unit may be nested under a descriptive folder or moved with
+        sample data.  Its persisted identity is used to keep numbered-run
+        navigation in that directory while preventing a stale unit context
+        from being used after the setup identity changes.
+        """
+        if self.unit_directory is not None:
+            candidate = Path(self.unit_directory)
+            try:
+                if (candidate / "unit.json").is_file():
+                    record = self.unit_repository.load_record(candidate)
+                    if self.unit_repository.unit_identity_matches(record, metadata):
+                        return candidate
+            except (AttributeError, OSError, TypeError, ValueError, KeyError):
+                pass
+        return self.unit_repository.unit_directory_for_metadata(
+            DEFAULT_RUN_ROOT,
+            metadata,
+        )
+
     def load_selected_unit_run(self):
         """Load a numbered run for the unit identified in setup fields."""
         if self.hardware_run_active:
             self.statusBar().showMessage("Stop the active hardware run first.")
             return
         metadata = self._current_hardware_identity()
-        unit_directory = self.unit_repository.unit_directory_for_metadata(
-            DEFAULT_RUN_ROOT,
-            metadata,
-        )
+        unit_directory = self._run_lookup_unit_directory(metadata)
         run_number = self.hardware_run_number.value()
         csv_path = self.run_repository.find_run_csv_for_number(
             unit_directory,
@@ -3764,8 +3783,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Run not found",
-                "No Run %d was found for this unit.\n\nAvailable runs: %s"
-                % (run_number, available_text or "none"),
+                "No Run %d was found for this unit.\n\n"
+                "Searched unit folder:\n%s\n\nAvailable runs: %s"
+                % (
+                    run_number,
+                    unit_directory,
+                    available_text or "none",
+                ),
             )
             return
         self.load_path(csv_path)
@@ -7811,7 +7835,7 @@ def main():
         sys.argv[1] if len(sys.argv) > 1 else None,
         support_logger=support_logger,
     )
-    window.show()
+    window.showMaximized()
     try:
         return app.exec_()
     finally:

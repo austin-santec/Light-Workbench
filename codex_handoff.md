@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.29.0**. The single
+The current source release is **Light Workbench 1.29.2**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -446,6 +446,14 @@ and the index of available runs. Switch serial, operating band, and tested-by
 initials are run-specific. Legacy timestamped runs and
 older unsuffixed `Run-N` folders remain supported and can still be opened
 directly.
+
+`Load Run` prefers the validated directory of the currently loaded numbered
+run. This keeps navigation working for nested or renamed sample-unit folders.
+Main-board serial is the authoritative unit identity; part number is only a
+fallback when both persisted and current serials are absent, and switch serial
+is deliberately ignored because a switch can be replaced. If the loaded
+context cannot be validated, the canonical unit folder is used and a missing
+run message reports the exact searched folder and available runs.
 
 Both run files and unit records are written through temporary files and
 `os.replace()` so an accepted row is not lost to a partial write. Real switch

@@ -71,7 +71,9 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.29.0; an existing executable keeps its prior version until rebuilt.
+1.29.2; an existing executable keeps its prior version until rebuilt. The main
+window opens maximized by default and can be restored with the normal Windows
+title-bar control.
 
 
 3. VERIFY VISA
@@ -145,6 +147,14 @@ serial are restored into Hardware test setup. If they are corrected, the
 program asks whether to update the saved metadata and whether to rename the run
 folder, CSV/JSON files, and existing COC workbook. The original run timestamp
 is preserved and existing files are never overwritten.
+
+When using Load Run to switch between numbered runs, the program reuses the
+currently loaded unit folder when its saved main-board identity matches the
+setup fields. This also supports nested or descriptive sample-unit folders.
+Part number is used only when both records lack a main-board serial, and switch
+serial is not used as the unit identity. If no validated loaded folder exists,
+the canonical unit folder is searched and a not-found message identifies that
+folder and its available runs.
 
 The front-panel channel count is derived automatically from the three-digit
 channel field in the part number. It is displayed read-only; COC preparation

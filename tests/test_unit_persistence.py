@@ -11,6 +11,7 @@ from unit_persistence import (
     run_directory_for_number,
     save_unit_record,
     unit_directory_for_metadata,
+    unit_identity_matches,
 )
 from infrastructure.unit_persistence import (
     build_unit_directory_name as infrastructure_build_unit_directory_name,
@@ -38,6 +39,48 @@ class UnitPersistenceTests(unittest.TestCase):
         self.assertEqual(
             build_unit_directory_name({"Switch serial": "SW/123"}),
             "Unit-Unknown",
+        )
+
+    def test_unit_identity_uses_main_board_serial_and_ignores_switch_serial(self):
+        record = {
+            "unit_metadata": {
+                "Main board serial": " 17688 ",
+                "Part number": "OSX-150-1A-036",
+            }
+        }
+        self.assertTrue(
+            unit_identity_matches(
+                record,
+                {
+                    "Main board serial": "17688",
+                    "Part number": "OSX-150-1A-048",
+                    "Switch serial": "new-switch",
+                },
+            )
+        )
+        self.assertFalse(
+            unit_identity_matches(
+                record,
+                {
+                    "Main board serial": "different",
+                    "Part number": "OSX-150-1A-036",
+                    "Switch serial": "same-switch",
+                },
+            )
+        )
+
+    def test_unit_identity_uses_part_number_only_when_both_serials_absent(self):
+        self.assertTrue(
+            unit_identity_matches(
+                {"unit_metadata": {"Part number": "OSX-150-1A-036"}},
+                {"Part number": " osx-150-1a-036 "},
+            )
+        )
+        self.assertFalse(
+            unit_identity_matches(
+                {"unit_metadata": {"Main board serial": "17688", "Part number": "OSX-150"}},
+                {"Part number": "OSX-150"},
+            )
         )
 
     def test_unit_record_stores_shared_configuration_and_run_index(self):

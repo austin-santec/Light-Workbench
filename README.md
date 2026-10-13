@@ -279,8 +279,11 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.29.0**; an existing executable keeps its prior
+current source version is **1.29.2**; an existing executable keeps its prior
 version until rebuilt.
+
+The desktop application opens maximized by default while retaining the normal
+Windows title bar, taskbar access, and restore controls.
 
 For architecture, coding standards, testing, and contribution guidance, see
 the [`docs/README.md`](docs/README.md) documentation index.
@@ -429,6 +432,12 @@ designated spare ports belong to the unit. The switch serial belongs to the
 individual run because a failed switch can be replaced without changing the
 unit. Use `Load Run`
 beside the run number to open an existing numbered run for the entered unit.
+After a run has been loaded from a numbered-run folder, `Load Run` continues
+searching that folder, including nested or descriptive sample-unit folders,
+after validating the persisted main-board identity. A switch serial does not
+identify the unit because the switch can be replaced. If the loaded context
+cannot be validated, the application falls back to the canonical unit folder
+and includes the searched folder and available runs in a not-found message.
 Replacement recommendations are recalculated from the selected run and are not
 stored as permanent results.
 
