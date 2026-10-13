@@ -362,6 +362,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\run_data.py',
    'PYMODULE'),
+  ('domain.run_status',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\run_status.py',
+   'PYMODULE'),
   ('domain.support_events',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\support_events.py',

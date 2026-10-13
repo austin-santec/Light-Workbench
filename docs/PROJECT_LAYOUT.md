@@ -54,6 +54,8 @@ be used as source locations. The release scripts keep deployment output in
 - Accepted reading/retest identity, immutable attempt chains, and current
   measurement projection: `domain/measurement_attempts.py` and
   `domain/run_data.py`.
+- Two-part run completion/result assessment and stable status labels:
+  `domain/run_status.py`.
 - Operator-selected SM/MM OPM/source profiles and legacy classification support:
   `domain/wavelengths.py`. UI and hardware adapters consume the resolved
   configuration rather than duplicating wavelength maps. Hardware identity is

@@ -95,12 +95,39 @@ readings are not accepted attempts. Legacy runs without this collection are
 loaded by synthesizing one `legacy_import` attempt per existing effective row;
 the legacy file is not rewritten until a later save changes the run.
 
+## Run completion and result assessment
+
+The desktop UI displays two derived statuses beside the `Compare with:` control
+above the readings table. `completion_status` describes whether the run
+collected the channels in its own saved plan; it does not mean that the data
+passes production limits. The supported completion values are
+`not_started`, `in_progress`, `complete`, `incomplete`, `interrupted`, and
+`unknown`. A two-channel retest can therefore be `complete` at 2/2 even when
+it is not a complete standalone production dataset.
+
+The separate result status describes the accepted readings: `pass`,
+`pass_optimization_available`, `pass_review_recommended`,
+`fail_recoverable`, `fail_unrecoverable`, `composite_pass_available`,
+`supplemental_run`, `not_evaluated`, or `review_required`. A composite or
+supplemental status is shown only when the existing validated COC preparation
+rules find a compatible persisted run and a passing combination. This
+assessment never creates a COC, changes a measurement, or changes switch
+mapping data. It is recalculated when readings, replacements, criteria, or
+compatible runs change.
+
+New run JSON files add a `run_status` object containing the completion state,
+reason, planned/completed counts, and terminal UTC timestamp. The same
+additive values are available in run metadata for a future database
+`completion_status` field. Older files remain loadable; when their original
+channel plan cannot be reconstructed, completion is reported as `unknown`
+rather than inferred from the current table filter.
+
 ## Validated COC view
 
 A COC can use one persisted base run and one explicitly selected persisted
 replacement/retest run. This creates a temporary report view, not another run.
-The supplemental run replaces a complete 1310/1550 pair for a logical channel;
-individual wavelengths are never mixed. Changed physical ports must agree with
+The supplemental run replaces a complete configured wavelength pair for a
+logical channel; individual wavelengths are never mixed. Changed physical ports must agree with
 the unit's completed replacement records. Source measurements, references,
 replacement records, and hardware state remain unchanged.
 
@@ -108,23 +135,23 @@ The three-digit channel field in the selected base run's supported OSX-100 or
 OSX-150 part number defines the confirmed front-panel count and required
 logical channels `1..N`. The operator does not enter this value manually.
 Every required channel must be present and valid, and each loss rounded to the
-established four-decimal display precision must be strictly below 2.5000 dB.
-Exactly 2.5000 dB is therefore not publishable. Readings above the front-panel
-count may support replacement analysis but are excluded from the workbook.
+established four-decimal display precision must be below the selected model's
+fail limit. OSX-100 uses 0.8000 dB; OSX-150 uses 2.5000 dB. Readings above the
+front-panel count may support replacement analysis but are excluded from the
+workbook.
 
 The base run metadata records the COC output path, front-panel count, selected
 source runs, and each supplemental logical-channel/physical-port override.
 This provenance does not change the base run's accepted measurement list.
-OSX-150 reports use separate approved templates for capacities 1-45 and 46-48;
-the exporter removes unused rows and updates merged ranges and print area on
-the copied workbook only. Output files use the local-time name format
-`COC OSX-150 <Main Board serial>_YYMMDD-HHMMSS.xlsx`, with a numeric collision
-suffix when multiple exports occur in the same second.
+Each approved model/mode uses separate templates for capacities 1-45 and
+46-48; the exporter removes unused rows and updates merged ranges and print
+area on the copied workbook only. Output files use the local-time name format
+`COC <OSX-100 or OSX-150> <Main Board serial>_YYMMDD-HHMMSS.xlsx`, with a
+numeric collision suffix when multiple exports occur in the same second.
 
-COC preparation is intentionally restricted to approved SM 1310/1550 runs.
-MM data remain reviewable, analyzable, and exportable as run data, but cannot
-be merged into the current SM-only COC workflow. Historical compatibility
-records remain readable during the migration.
+OSX-100 SM and MM runs can be merged into their matching COC workflows.
+OSX-150 MM remains reviewable and analyzable as run data, but is blocked from
+COC export because no approved OSX-150 MM template/profile exists.
 
 ## Reference authorization and audit model
 

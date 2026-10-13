@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from copy import deepcopy
 from datetime import date, datetime
+from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -15,10 +16,59 @@ from config.app_config import (
     COC_TEMPLATE_45_FILENAME,
     COC_TEMPLATE_48_FILENAME,
     COC_TEMPLATE_FILENAME,
+    COC_TEMPLATE_PROFILE_FILENAMES,
     DEFAULT_PART_LOOKUP_ROOT,
 )
+from domain.limit_profiles import normalize_switch_model, normalize_wavelength_mode
 
 _INVALID_FILENAME_CHARACTERS = re.compile(r'[<>:"/\\|?*]')
+
+
+@dataclass(frozen=True)
+class CocTemplateProfile:
+    """Validated identity of one COC workbook template."""
+
+    model: str
+    wavelength_mode: str
+    wavelengths_nm: tuple[int, int]
+    capacity: int
+
+
+_TEMPLATE_HEADER_PROFILES = {
+    # Blank headers are accepted for compatibility with caller-supplied
+    # legacy templates. Bundled templates always carry an identifying header.
+    ("", "", "", ""): ("OSX-150", "SM"),
+    ("< 0.8 db", "1310 nm", "1550 nm", "> 60 db"): ("OSX-100", "SM"),
+    ("< 0.8 db", "850 nm", "1300 nm", "> 40 db"): ("OSX-100", "MM"),
+    ("< 2.5 db", "1310 nm", "1550 nm", "> 50 db"): ("OSX-150", "SM"),
+}
+
+
+def _normalized_cell_text(value) -> str:
+    """Normalize stable workbook labels for profile inspection."""
+    return " ".join(str(value or "").split()).casefold()
+
+
+def template_profile_for(model, wavelength_mode, channel_count):
+    """Return the approved bundled profile for a requested report."""
+    normalized_model = normalize_switch_model(model)
+    normalized_mode = normalize_wavelength_mode(wavelength_mode)
+    count = int(channel_count)
+    if not 1 <= count <= 48:
+        raise ValueError("Front-panel channel count must be between 1 and 48.")
+    capacity = 45 if count <= 45 else 48
+    if (normalized_model, normalized_mode, capacity) not in COC_TEMPLATE_PROFILE_FILENAMES:
+        raise ValueError(
+            "No bundled COC template is approved for %s %s (%d channels)."
+            % (normalized_model or "unknown model", normalized_mode, count)
+        )
+    wavelengths = (850, 1300) if normalized_mode == "MM" else (1310, 1550)
+    return CocTemplateProfile(
+        normalized_model,
+        normalized_mode,
+        wavelengths,
+        capacity,
+    )
 
 
 def normalise_serial(value: str) -> str:
@@ -70,18 +120,19 @@ def _safe_filename_component(value):
     return component or "Unknown"
 
 
-def _next_output_path(directory, serial, export_timestamp=None):
+def _next_output_path(directory, serial, export_timestamp=None, switch_model="OSX-150"):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     timestamp = (export_timestamp or datetime.now()).strftime("%y%m%d-%H%M%S")
     serial_component = _safe_filename_component(serial)
-    base_name = "COC OSX-150 %s_%s.xlsx" % (serial_component, timestamp)
+    model = normalize_switch_model(switch_model) or "OSX-150"
+    base_name = "COC %s %s_%s.xlsx" % (model, serial_component, timestamp)
     output_path = directory / base_name
     suffix = 2
     while output_path.exists():
         output_path = directory / (
-            "COC OSX-150 %s_%s (%d).xlsx"
-            % (serial_component, timestamp, suffix)
+            "COC %s %s_%s (%d).xlsx"
+            % (model, serial_component, timestamp, suffix)
         )
         suffix += 1
     return output_path
@@ -97,11 +148,16 @@ def measurement_rows(template_capacity=48):
 
 
 def template_filename_for_channel_count(channel_count):
-    """Return the approved OSX-150 template name for a front-panel count."""
-    count = int(channel_count)
-    if not 1 <= count <= 48:
-        raise ValueError("Front-panel channel count must be between 1 and 48.")
-    return COC_TEMPLATE_45_FILENAME if count <= 45 else COC_TEMPLATE_48_FILENAME
+    """Return the legacy OSX-150 SM template name for a channel count."""
+    return template_filename_for_profile("OSX-150", "SM", channel_count)
+
+
+def template_filename_for_profile(model, wavelength_mode, channel_count):
+    """Return the approved filename for a model, mode, and channel count."""
+    profile = template_profile_for(model, wavelength_mode, channel_count)
+    return COC_TEMPLATE_PROFILE_FILENAMES[
+        (profile.model, profile.wavelength_mode, profile.capacity)
+    ]
 
 
 def inspect_coc_template_capacity(template_path):
@@ -118,6 +174,27 @@ def inspect_coc_template_capacity(template_path):
         raise FileNotFoundError("The COC template was not found:\n%s" % path)
     workbook = load_workbook(path, read_only=False, data_only=False)
     try:
+        profile = inspect_coc_template_profile(template_path, workbook=workbook)
+        return profile.capacity
+    finally:
+        workbook.close()
+
+
+def inspect_coc_template_profile(template_path, *, workbook=None):
+    """Validate and identify a COC template by model, mode, and capacity."""
+    close_workbook = workbook is None
+    if workbook is None:
+        try:
+            from openpyxl import load_workbook
+        except ImportError as error:
+            raise RuntimeError(
+                "The XLSX COC exporter requires the openpyxl package."
+            ) from error
+        path = Path(template_path)
+        if not path.is_file():
+            raise FileNotFoundError("The COC template was not found:\n%s" % path)
+        workbook = load_workbook(path, read_only=False, data_only=False)
+    try:
         if "OSX Template" not in workbook.sheetnames:
             raise ValueError("The COC template does not contain an 'OSX Template' sheet.")
         sheet = workbook["OSX Template"]
@@ -129,14 +206,30 @@ def inspect_coc_template_capacity(template_path):
                 )
         second_section = [sheet["B%d" % row].value for row in range(67, 70)]
         if second_section == [46, 47, 48]:
-            return 48
-        if all(value in (None, "") for value in second_section):
-            return 45
-        raise ValueError(
-            "The COC template must support either channels 1-45 or channels 1-48."
+            capacity = 48
+        elif all(value in (None, "") for value in second_section):
+            capacity = 45
+        else:
+            raise ValueError(
+                "The COC template must support either channels 1-45 or channels 1-48."
+            )
+        signature = (
+            _normalized_cell_text(sheet["D9"].value),
+            _normalized_cell_text(sheet["D10"].value),
+            _normalized_cell_text(sheet["E10"].value),
+            _normalized_cell_text(sheet["F9"].value),
         )
+        identity = _TEMPLATE_HEADER_PROFILES.get(signature)
+        if identity is None:
+            raise ValueError(
+                "The COC template has an unsupported model, mode, or limit header."
+            )
+        model, wavelength_mode = identity
+        wavelengths = (850, 1300) if wavelength_mode == "MM" else (1310, 1550)
+        return CocTemplateProfile(model, wavelength_mode, wavelengths, capacity)
     finally:
-        workbook.close()
+        if close_workbook:
+            workbook.close()
 
 
 def _trim_report_rows(sheet, channel_count, template_capacity):
@@ -360,6 +453,8 @@ def export_coc(
     tested_by="",
     front_panel_channel_count=48,
     export_timestamp=None,
+    switch_model="OSX-150",
+    wavelength_mode="SM",
 ):
     """Create a COC XLSX copy while preserving non-output template cells."""
     try:
@@ -381,18 +476,35 @@ def export_coc(
     channel_count = int(front_panel_channel_count)
     if not 1 <= channel_count <= 48:
         raise ValueError("Front-panel channel count must be between 1 and 48.")
-    template_capacity = inspect_coc_template_capacity(template)
-    required_capacity = 45 if channel_count <= 45 else 48
-    if template_capacity < required_capacity:
+    expected_profile = template_profile_for(
+        switch_model, wavelength_mode, channel_count
+    )
+    actual_profile = inspect_coc_template_profile(template)
+    if actual_profile.capacity != expected_profile.capacity:
         raise ValueError(
-            "The selected COC template supports only %d channels; %d are required."
-            % (template_capacity, channel_count)
+            "The selected COC template supports only %d channels; "
+            "%d channels are required."
+            % (actual_profile.capacity, expected_profile.capacity)
+        )
+    if actual_profile != expected_profile:
+        raise ValueError(
+            "The selected COC template is %s %s capacity %d, but %s %s capacity %d "
+            "is required."
+            % (
+                actual_profile.model,
+                actual_profile.wavelength_mode,
+                actual_profile.capacity,
+                expected_profile.model,
+                expected_profile.wavelength_mode,
+                expected_profile.capacity,
+            )
         )
 
     output_path = _next_output_path(
         output_directory,
         serial,
         export_timestamp=export_timestamp,
+        switch_model=expected_profile.model,
     )
     temporary_file = tempfile.NamedTemporaryFile(
         prefix=".coc-",
@@ -422,14 +534,20 @@ def export_coc(
             for record in measurements
             if 1 <= record.channel <= channel_count
         }
-        for channel, row in enumerate(measurement_rows(template_capacity), start=1):
+        for channel, row in enumerate(
+            measurement_rows(expected_profile.capacity), start=1
+        ):
             if channel > channel_count:
                 break
             record = records_by_channel.get(channel)
-            sheet["D%d" % row] = record.loss_1310 if record else None
-            sheet["E%d" % row] = record.loss_1550 if record else None
+            sheet["D%d" % row] = (
+                record.loss_for(expected_profile.wavelengths_nm[0]) if record else None
+            )
+            sheet["E%d" % row] = (
+                record.loss_for(expected_profile.wavelengths_nm[1]) if record else None
+            )
 
-        _trim_report_rows(sheet, channel_count, template_capacity)
+        _trim_report_rows(sheet, channel_count, expected_profile.capacity)
 
         workbook.save(temporary_path)
         workbook.close()
@@ -449,11 +567,16 @@ __all__ = [
     "COC_TEMPLATE_45_FILENAME",
     "COC_TEMPLATE_48_FILENAME",
     "COC_TEMPLATE_FILENAME",
+    "COC_TEMPLATE_PROFILE_FILENAMES",
+    "CocTemplateProfile",
     "DEFAULT_PART_LOOKUP_ROOT",
     "export_coc",
     "find_part_number",
     "inspect_coc_template_capacity",
+    "inspect_coc_template_profile",
     "measurement_rows",
     "normalise_serial",
     "template_filename_for_channel_count",
+    "template_filename_for_profile",
+    "template_profile_for",
 ]

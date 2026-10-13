@@ -19,6 +19,22 @@ a = Analysis(
             "Templates",
         ),
         (
+            str(project_root / "Templates" / "OSX-100 Single Mode COC Template 2 (45max).xlsx"),
+            "Templates",
+        ),
+        (
+            str(project_root / "Templates" / "OSX-100 Single Mode COC Template 1 (48max).xlsx"),
+            "Templates",
+        ),
+        (
+            str(project_root / "Templates" / "OSX-100 Multi Mode COC Template 2 (45max).xlsx"),
+            "Templates",
+        ),
+        (
+            str(project_root / "Templates" / "OSX-100 Multi Mode COC Template 1 (48max).xlsx"),
+            "Templates",
+        ),
+        (
             str(project_root / "assets" / "C&C lulu.png"),
             "assets",
         ),

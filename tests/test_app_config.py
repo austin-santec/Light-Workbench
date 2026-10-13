@@ -23,6 +23,16 @@ class AppConfigTests(unittest.TestCase):
                 paths.coc_template_path_for_capacity(48),
                 root / "Templates" / "OSX-150 Single Mode COC Template 1 (48max).xlsx",
             )
+            self.assertEqual(
+                paths.coc_template_path_for_profile("OSX-100", "SM", 45),
+                root / "Templates" / "OSX-100 Single Mode COC Template 2 (45max).xlsx",
+            )
+            self.assertEqual(
+                paths.coc_template_path_for_profile("OSX-100", "MM", 48),
+                root / "Templates" / "OSX-100 Multi Mode COC Template 1 (48max).xlsx",
+            )
+            with self.assertRaises(ValueError):
+                paths.coc_template_path_for_profile("OSX-150", "MM", 45)
             self.assertEqual(paths.assets_root, root / "assets")
             self.assertEqual(paths.instructions_path, root / "ILM_READING_GUIDE.html")
 

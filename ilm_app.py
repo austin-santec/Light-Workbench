@@ -121,6 +121,25 @@ from domain.measurement_attempts import (
 )
 from domain.raw_export import format_raw_measurements
 from domain.part_numbers import parse_osx_part_number
+from domain.coc_preparation import CocSourceRun
+from domain.run_status import (
+    COMPLETION_COMPLETE,
+    COMPLETION_INCOMPLETE,
+    COMPLETION_IN_PROGRESS,
+    COMPLETION_INTERRUPTED,
+    COMPLETION_UNKNOWN,
+    RESULT_COMPOSITE,
+    RESULT_FAIL_RECOVERABLE,
+    RESULT_FAIL_UNRECOVERABLE,
+    RESULT_PASS,
+    RESULT_PASS_OPTIMIZATION,
+    RESULT_PASS_REVIEW,
+    RESULT_REVIEW,
+    RESULT_SUPPLEMENTAL,
+    assess_run_status,
+    planned_channels_from_metadata,
+    utc_now,
+)
 from domain.timing import SwitchTestTimer
 from hardware.factory import HardwareFactory
 from infrastructure.coc_exporter import (
@@ -786,6 +805,11 @@ class MainWindow(QMainWindow):
         self.current_run_workflow = None
         self._post_run_recommendation_prompt_workflow_id = None
         self._post_run_recommendation_prompted = False
+        self._last_run_status_key = None
+        self._active_planned_channels = None
+        self._run_terminal_status = None
+        self._run_completion_reason = ""
+        self._run_completed_at_utc = ""
         self.reference_workflow = None
         self._support_log_size_warning_shown = False
         self.run_data: RunData | None = None
@@ -1950,6 +1974,17 @@ class MainWindow(QMainWindow):
         )
         self.comparison_run_combo.setEnabled(False)
         table_filter_layout.addWidget(self.comparison_run_combo)
+        self.completion_status_label = QLabel("Run: Not started")
+        self.result_status_label = QLabel("Result: Not evaluated")
+        for status_label in (
+            self.completion_status_label,
+            self.result_status_label,
+        ):
+            status_label.setObjectName("run_status")
+            status_label.setToolTip("No run is loaded.")
+            status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        table_filter_layout.addWidget(self.completion_status_label)
+        table_filter_layout.addWidget(self.result_status_label)
         table_filter_layout.addStretch()
         table_panel_layout.addLayout(table_filter_layout)
         self.table = QTableWidget(0, 4)
@@ -3329,7 +3364,14 @@ class MainWindow(QMainWindow):
         )
 
     def choose_coc_template(self):
-        current = self.coc_template_path(45)
+        model = "OSX-150"
+        mode = "SM"
+        if self.run_data is not None:
+            model = normalize_switch_model(
+                str((self.run_data.criteria_snapshot or {}).get("model") or model)
+            )
+            mode = self.run_data.wavelength_mode
+        current = self.coc_template_path(45, model, mode)
         selected, _ = QFileDialog.getOpenFileName(
             self,
             "Select XLSX COC template",
@@ -3338,16 +3380,19 @@ class MainWindow(QMainWindow):
         )
         if selected:
             try:
-                capacity = self.coc_exporter.inspect_template_capacity(selected)
+                profile = self.coc_exporter.inspect_template_profile(selected)
             except (OSError, RuntimeError, ValueError) as error:
                 QMessageBox.warning(self, "Invalid COC template", str(error))
                 return
             self.settings.setValue(
-                "coc_template_%d_path" % capacity,
+                self._coc_template_setting_key(
+                    profile.model, profile.wavelength_mode, profile.capacity
+                ),
                 selected,
             )
             self.statusBar().showMessage(
-                "%d-channel COC template selected: %s" % (capacity, selected)
+                "%s %s %d-channel COC template selected: %s"
+                % (profile.model, profile.wavelength_mode, profile.capacity, selected)
             )
 
     def lookup_part_number(self):
@@ -3400,13 +3445,35 @@ class MainWindow(QMainWindow):
         if update_run_data and self.run_data is not None:
             self.run_data.metadata["Part number"] = part_number
 
-    def coc_template_path(self, front_panel_channel_count=45):
-        """Resolve the validated template for the requested report capacity."""
+    @staticmethod
+    def _coc_template_setting_key(model, wavelength_mode, capacity):
+        """Return the settings key for one complete COC template profile."""
+        normalized_model = normalize_switch_model(model) or "UNKNOWN"
+        normalized_mode = str(wavelength_mode or "SM").strip().upper()
+        return "coc_template_%s_%s_%d_path" % (
+            normalized_model.lower().replace("-", "_"),
+            normalized_mode,
+            int(capacity),
+        )
+
+    def coc_template_path(
+        self, front_panel_channel_count=45, switch_model="OSX-150", wavelength_mode="SM"
+    ):
+        """Resolve the validated template for a model, mode, and capacity."""
+        model = normalize_switch_model(switch_model)
+        mode = str(wavelength_mode or "SM").strip().upper()
         capacity = 45 if int(front_panel_channel_count) <= 45 else 48
-        configured = self.settings.value("coc_template_%d_path" % capacity, "")
+        configured = self.settings.value(
+            self._coc_template_setting_key(model, mode, capacity), ""
+        )
         if configured and Path(configured).is_file():
             try:
-                if self.coc_exporter.inspect_template_capacity(configured) == capacity:
+                profile = self.coc_exporter.inspect_template_profile(configured)
+                if (
+                    profile.model == model
+                    and profile.wavelength_mode == mode
+                    and profile.capacity == capacity
+                ):
                     return Path(configured)
             except (OSError, RuntimeError, ValueError):
                 pass
@@ -3414,16 +3481,19 @@ class MainWindow(QMainWindow):
         # Migrate the former single-template preference only when its actual
         # workbook capacity matches the report being prepared.
         legacy_configured = self.settings.value("coc_template_path", "")
-        if legacy_configured and Path(legacy_configured).is_file():
+        if model == "OSX-150" and mode == "SM" and legacy_configured and Path(legacy_configured).is_file():
             try:
-                legacy_capacity = self.coc_exporter.inspect_template_capacity(
-                    legacy_configured
-                )
+                legacy_profile = self.coc_exporter.inspect_template_profile(legacy_configured)
             except (OSError, RuntimeError, ValueError):
-                legacy_capacity = None
-            if legacy_capacity == capacity:
+                legacy_profile = None
+            if (
+                legacy_profile is not None
+                and legacy_profile.model == model
+                and legacy_profile.wavelength_mode == mode
+                and legacy_profile.capacity == capacity
+            ):
                 self.settings.setValue(
-                    "coc_template_%d_path" % capacity,
+                    self._coc_template_setting_key(model, mode, capacity),
                     legacy_configured,
                 )
                 return Path(legacy_configured)
@@ -3438,10 +3508,8 @@ class MainWindow(QMainWindow):
             )
         else:
             roots.append(Path(__file__).resolve().parent)
-        filename = (
-            COC_TEMPLATE_45_FILENAME
-            if capacity == 45
-            else COC_TEMPLATE_48_FILENAME
+        filename = self.coc_exporter.template_filename_for_profile(
+            model, mode, capacity
         )
         for root in roots:
             candidate = root / "Templates" / filename
@@ -3711,6 +3779,10 @@ class MainWindow(QMainWindow):
 
         self.run_data = run_data
         self.run_recorder = None
+        self._active_planned_channels = None
+        self._run_completion_reason = ""
+        self._run_terminal_status = None
+        self._run_completed_at_utc = ""
         # A loaded run has no live switch-capacity observation. Do not reuse
         # the physical count from a previously completed hardware session.
         self.hardware_session.full_pass = False
@@ -3787,6 +3859,18 @@ class MainWindow(QMainWindow):
             try:
                 payload = self.run_repository.load_json(json_path)
                 loaded_run_id = str(payload.get("run_id") or "")
+                saved_run_status = payload.get("run_status", {})
+                if isinstance(saved_run_status, dict):
+                    run_data.run_status = dict(saved_run_status)
+                    self._run_terminal_status = str(
+                        saved_run_status.get("completion_status") or ""
+                    ) or None
+                    self._run_completion_reason = str(
+                        saved_run_status.get("completion_reason") or ""
+                    )
+                    self._run_completed_at_utc = str(
+                        saved_run_status.get("completed_at_utc") or ""
+                    )
                 try:
                     run_data.measurement_attempts = normalise_attempts(
                         payload.get(
@@ -4438,6 +4522,23 @@ class MainWindow(QMainWindow):
 
         channels = preparation.channels
 
+        if retest:
+            self._active_planned_channels = self._status_planned_channels()
+        elif run_mode == "continue" and self.run_data is not None:
+            self._active_planned_channels = self._status_planned_channels()
+        else:
+            self._active_planned_channels = (
+                tuple(int(channel) for channel in channels)
+                if channels is not None
+                else None
+            )
+        self._run_terminal_status = (
+            self._run_terminal_status
+            if retest
+            else COMPLETION_IN_PROGRESS
+        )
+        self._run_completion_reason = "The run is active."
+
         owner_token = object()
         self.current_run_workflow = self._new_workflow("hardware_run")
         self._post_run_recommendation_prompt_workflow_id = None
@@ -4516,6 +4617,23 @@ class MainWindow(QMainWindow):
                     "Measurement classification": (
                         self.measurement_configuration.classification.value
                     ),
+                    "Channel mode": (
+                        preparation.plan.mode.value
+                        if preparation.plan is not None
+                        else "Retest"
+                    ),
+                    "Planned channels": (
+                        ",".join(str(channel) for channel in self._active_planned_channels)
+                        if self._active_planned_channels is not None
+                        else ""
+                    ),
+                    "Planned channel count": (
+                        str(len(self._active_planned_channels))
+                        if self._active_planned_channels is not None
+                        else ""
+                    ),
+                    "completion_status": COMPLETION_IN_PROGRESS,
+                    "completion_reason": "The run is active.",
                 },
                 criteria_snapshot=profile.as_dict() if profile is not None else None,
             )
@@ -4631,6 +4749,7 @@ class MainWindow(QMainWindow):
         self.retest_button.setEnabled(False)
         self.statusBar().showMessage("Starting hardware run...")
         self.begin_switch_test_session()
+        self.refresh_run_status(include_composite=False)
         self._update_hardware_readiness_controls()
 
     def _run_start_preflight(self):
@@ -4867,6 +4986,16 @@ class MainWindow(QMainWindow):
 
     def hardware_channel_configuration_ready(self, channel_count):
         self.hardware_session.set_configured_channel_count(channel_count)
+        if self.hardware_full_pass and not self.hardware_retest:
+            self._active_planned_channels = tuple(range(1, int(channel_count) + 1))
+            if self.run_data is not None:
+                self.run_data.metadata["Channel mode"] = "Full configured pass"
+                self.run_data.metadata["Planned channels"] = ",".join(
+                    str(channel) for channel in self._active_planned_channels
+                )
+                self.run_data.metadata["Planned channel count"] = str(channel_count)
+                self._store_run_status(self._calculate_run_status(include_composite=False))
+        self.refresh_run_status(include_composite=False)
 
     def hardware_continuation_selection_required(
         self,
@@ -5213,14 +5342,18 @@ class MainWindow(QMainWindow):
             for existing in self.run_data.measurement_attempts
         ]
         updated_attempts.append(attempt)
+        self.run_data.measurements = updated_measurements
+        self.run_data.measurement_attempts = updated_attempts
+        self.run_data.attempts = [attempt.as_dict() for attempt in updated_attempts]
+        self._store_run_status(
+            self._calculate_run_status(include_composite=False)
+        )
         if self.run_recorder is not None:
+            self.run_recorder.metadata = dict(self.run_data.metadata)
             self.run_recorder.save(
                 updated_measurements,
                 measurement_attempts=updated_attempts,
             )
-        self.run_data.measurements = updated_measurements
-        self.run_data.measurement_attempts = updated_attempts
-        self.run_data.attempts = [attempt.as_dict() for attempt in updated_attempts]
         return attempt
 
     def show_keybind_dialog(self):
@@ -5698,6 +5831,9 @@ class MainWindow(QMainWindow):
         }
 
     def hardware_completed(self):
+        self._run_terminal_status = COMPLETION_COMPLETE
+        self._run_completion_reason = "Every planned channel has an accepted reading."
+        self._run_completed_at_utc = utc_now()
         self._record_support(
             SupportEventCategory.WORKFLOW,
             "run.completed",
@@ -5717,10 +5853,14 @@ class MainWindow(QMainWindow):
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(True)
         self.active_run_reference_snapshot = None
+        self.refresh_run_status(include_composite=False)
         self.statusBar().showMessage("Hardware run complete. CSV and JSON are saved.")
         self._schedule_post_run_replacement_offer()
 
     def hardware_stopped(self):
+        self._run_terminal_status = COMPLETION_INCOMPLETE
+        self._run_completion_reason = "The run was manually stopped before completion."
+        self._run_completed_at_utc = utc_now()
         self._record_support(
             SupportEventCategory.WORKFLOW,
             "run.stopped",
@@ -5740,9 +5880,13 @@ class MainWindow(QMainWindow):
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(bool(self.run_data and self.run_data.measurements))
         self.active_run_reference_snapshot = None
+        self.refresh_run_status(include_composite=False)
         self.statusBar().showMessage("Hardware run stopped. Completed readings remain visible.")
 
     def hardware_failed(self, message):
+        self._run_terminal_status = COMPLETION_INTERRUPTED
+        self._run_completion_reason = str(message or "Hardware run failed.")
+        self._run_completed_at_utc = utc_now()
         self._record_support(
             SupportEventCategory.WORKFLOW,
             "run.failed",
@@ -5763,6 +5907,7 @@ class MainWindow(QMainWindow):
         self.change_hardware_channel_button.setEnabled(False)
         self.stop_hardware_button.setEnabled(False)
         self.active_run_reference_snapshot = None
+        self.refresh_run_status(include_composite=False)
         QMessageBox.critical(self, "Hardware run stopped", message)
 
     def stop_hardware(self):
@@ -5870,7 +6015,207 @@ class MainWindow(QMainWindow):
             self.support_logger.flush(0.5)
         event.accept()
 
+    def _status_planned_channels(self):
+        """Return the saved or active plan, independent of table filtering."""
+        if self._active_planned_channels:
+            return tuple(self._active_planned_channels)
+        if self.run_data is None:
+            return None
+        metadata = dict(self.run_data.metadata)
+        saved_status = self.run_data.run_status or {}
+        if "Planned channel count" not in metadata:
+            count = saved_status.get("planned_channel_count")
+            if count not in (None, ""):
+                metadata["Planned channel count"] = count
+        return planned_channels_from_metadata(metadata)
+
+    def _status_front_panel_count(self):
+        if self.run_data is None:
+            return None
+        part_number = str(
+            self.run_data.metadata.get("Part number")
+            or self.hardware_part_number.currentText()
+            or ""
+        ).strip()
+        try:
+            return parse_osx_part_number(part_number).front_panel_channel_count
+        except (TypeError, ValueError):
+            return None
+
+    def _status_current_source(self):
+        """Adapt the active run to the existing COC source boundary."""
+        if self.run_data is None:
+            return None
+        try:
+            run_number = int(self.run_data.metadata.get("Run number", 1))
+        except (TypeError, ValueError):
+            run_number = 1
+        return CocSourceRun(
+            run_number=run_number,
+            source_path=Path(self.run_data.source_path),
+            measurements=tuple(self.run_data.measurements),
+            metadata=dict(self.run_data.metadata),
+            criteria=dict(self.run_data.criteria_snapshot or {}) or None,
+        )
+
+    def _status_composite_candidate(self):
+        """Find a validated existing-run combination without changing data."""
+        if self.run_data is None or not self.run_data.measurements:
+            return None, ()
+        front_panel_count = self._status_front_panel_count()
+        if front_panel_count is None:
+            return None, ()
+        current = self._status_current_source()
+        if current is None:
+            return None, ()
+        try:
+            options = self._coc_run_options()
+        except (OSError, ValueError, TypeError, KeyError):
+            return None, ()
+        for option in options:
+            other = option.source
+            if other.source_path.resolve() == current.source_path.resolve():
+                continue
+            for base, supplemental in ((current, other), (other, current)):
+                try:
+                    result = self.coc_workflow.prepare(
+                        base,
+                        front_panel_count,
+                        supplemental_run=supplemental,
+                        completed_replacements=self.completed_replacements,
+                        designated_spares=self.designated_spares,
+                    )
+                except (OSError, ValueError, TypeError, KeyError):
+                    continue
+                if result.eligible:
+                    return result, (int(other.run_number),)
+        return None, ()
+
+    def _calculate_run_status(self, *, include_composite=True):
+        if self.run_data is None:
+            return assess_run_status((), legacy=False)
+        profile = self._profile_for_current_run()
+        composite_result = None
+        compatible_runs = ()
+        if include_composite and not self.hardware_run_active:
+            composite_result, compatible_runs = self._status_composite_candidate()
+        persisted_status = self.run_data.run_status or {}
+        terminal_status = self._run_terminal_status or persisted_status.get(
+            "completion_status"
+        )
+        legacy = not bool(
+            self._status_planned_channels()
+            or persisted_status.get("completion_status")
+        )
+        return assess_run_status(
+            self.run_data.measurements,
+            planned_channels=self._status_planned_channels(),
+            active=(self.hardware_run_active and terminal_status == COMPLETION_IN_PROGRESS),
+            terminal_status=terminal_status,
+            profile=profile,
+            front_panel_channel_count=self._status_front_panel_count(),
+            replacement_analysis=self.replacement_analysis,
+            composite_result=composite_result,
+            compatible_run_numbers=compatible_runs,
+            completion_reason=self._run_completion_reason
+            or str(persisted_status.get("completion_reason") or ""),
+            completed_at_utc=self._run_completed_at_utc
+            or str(persisted_status.get("completed_at_utc") or ""),
+            legacy=legacy,
+        )
+
+    def _store_run_status(self, assessment):
+        """Keep the model and additive persistence metadata synchronized."""
+        if self.run_data is None:
+            return
+        self.run_data.run_status = assessment.as_dict()
+        self.run_data.metadata.update(
+            {
+                "completion_status": assessment.completion_status,
+                "completion_reason": assessment.completion_reason,
+                "completed_channel_count": str(assessment.completed_channel_count),
+            }
+        )
+        if assessment.planned_channel_count is not None:
+            self.run_data.metadata["planned_channel_count"] = str(
+                assessment.planned_channel_count
+            )
+            self.run_data.metadata["Planned channel count"] = str(
+                assessment.planned_channel_count
+            )
+        if assessment.completed_at_utc:
+            self.run_data.metadata["completed_at_utc"] = assessment.completed_at_utc
+
+    def refresh_run_status(self, *, include_composite=True):
+        """Refresh the two compact status labels above the readings table."""
+        assessment = self._calculate_run_status(
+            include_composite=include_composite,
+        )
+        self._store_run_status(assessment)
+        if not hasattr(self, "completion_status_label"):
+            return assessment
+        completion_text = "Run: %s" % assessment.completion_display
+        result_text = "Result: %s" % assessment.result_label
+        self.completion_status_label.setText(completion_text)
+        self.result_status_label.setText(result_text)
+        tooltip = assessment.tooltip()
+        self.completion_status_label.setToolTip(tooltip)
+        self.result_status_label.setToolTip(tooltip)
+
+        completion_colors = {
+            COMPLETION_COMPLETE: ("#72d19a", "#28704a"),
+            COMPLETION_IN_PROGRESS: ("#8ecbff", "#14649a"),
+            COMPLETION_INCOMPLETE: ("#ffd166", "#946200"),
+            COMPLETION_INTERRUPTED: ("#ff8f86", "#a33b2f"),
+        }
+        result_colors = {
+            RESULT_PASS: ("#72d19a", "#28704a"),
+            RESULT_PASS_OPTIMIZATION: ("#ffd166", "#946200"),
+            RESULT_PASS_REVIEW: ("#ffd166", "#946200"),
+            RESULT_COMPOSITE: ("#ffd166", "#946200"),
+            RESULT_SUPPLEMENTAL: ("#8ecbff", "#14649a"),
+            RESULT_FAIL_RECOVERABLE: ("#ff8f86", "#a33b2f"),
+            RESULT_FAIL_UNRECOVERABLE: ("#ff8f86", "#a33b2f"),
+            RESULT_REVIEW: ("#ff8f86", "#a33b2f"),
+        }
+        default_color = ("#d7dbe2", "#555b66")
+        for label, colors in (
+            (
+                self.completion_status_label,
+                completion_colors.get(assessment.completion_status, default_color),
+            ),
+            (
+                self.result_status_label,
+                result_colors.get(assessment.result_status, default_color),
+            ),
+        ):
+            label.setStyleSheet("color: %s;" % (colors[0] if self.dark_mode_enabled else colors[1]))
+
+        key = (
+            assessment.completion_status,
+            assessment.result_status,
+            assessment.completed_channel_count,
+            assessment.planned_channel_count,
+            assessment.compatible_run_numbers,
+        )
+        if key != self._last_run_status_key and self.run_data is not None:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "run.status_assessed",
+                completion_status=assessment.completion_status,
+                result_status=assessment.result_status,
+                planned_channel_count=assessment.planned_channel_count,
+                completed_channel_count=assessment.completed_channel_count,
+                compatible_run_numbers=",".join(
+                    str(value) for value in assessment.compatible_run_numbers
+                ),
+                status="success",
+            )
+            self._last_run_status_key = key
+        return assessment
+
     def refresh_analysis(self):
+        self.refresh_run_status()
         if self.run_data is None:
             return
         profile = self._profile_for_current_run()
@@ -5883,6 +6228,7 @@ class MainWindow(QMainWindow):
             self.refresh_table()
             self.refresh_replacement_summary()
             self.refresh_coc_controls()
+            self.refresh_run_status()
             return
         self._set_active_limit_profile(profile)
         summary = self.run_data.analysis_with_profile(profile)
@@ -5895,6 +6241,7 @@ class MainWindow(QMainWindow):
         self.refresh_table()
         self.refresh_replacement_summary()
         self.refresh_coc_controls()
+        self.refresh_run_status()
 
     def refresh_replacement_summary(self):
         """Refresh the replacement-analysis status shown beside the table."""
@@ -6066,6 +6413,7 @@ class MainWindow(QMainWindow):
             status="success",
         )
         self.refresh_replacement_summary()
+        self.refresh_run_status()
         self.statusBar().showMessage(
             "Completed replacements and designated spares saved to the unit record."
         )
@@ -6310,6 +6658,7 @@ class MainWindow(QMainWindow):
         self.replacement_analysis = result
         self.run_data.replacement_analysis = result
         self.refresh_replacement_summary()
+        self.refresh_run_status()
         self.statusBar().showMessage(
             "Replacement analysis calculated for the current run."
         )
@@ -6338,9 +6687,26 @@ class MainWindow(QMainWindow):
             if self.run_data is not None
             else self.measurement_configuration.wavelength_profile.code
         )
+        run_criteria = (
+            self.run_data.criteria_snapshot if self.run_data is not None else None
+        )
+        active_model = normalize_switch_model(
+            str(
+                (run_criteria or {}).get("model")
+                or self._connected_switch_model()
+                or "OSX-150"
+            )
+        )
+        try:
+            self.coc_exporter.template_filename_for_profile(
+                active_model, active_mode, 45
+            )
+            coc_profile_supported = True
+        except (ValueError, TypeError):
+            coc_profile_supported = False
         coc_eligible = (
             persisted_readings
-            and active_mode == "SM"
+            and coc_profile_supported
             and self._uses_approved_limit_profile()
         )
         self.write_coc_button.setEnabled(coc_eligible)
@@ -6363,6 +6729,7 @@ class MainWindow(QMainWindow):
         """Save metadata changes without changing the current measurement rows."""
         if self.run_data is None:
             return
+        self.refresh_run_status(include_composite=False)
         if self.run_recorder is None:
             self.run_recorder = self.run_repository.recorder_from_existing(
                 self.run_data.source_path,
@@ -6429,33 +6796,57 @@ class MainWindow(QMainWindow):
         message.exec_()
         return message.clickedButton() is write_button
 
-    def _select_coc_template(self, front_panel_channel_count):
-        template = self.coc_template_path(front_panel_channel_count)
+    def _select_coc_template(
+        self, front_panel_channel_count, switch_model="OSX-150", wavelength_mode="SM"
+    ):
+        model = normalize_switch_model(switch_model)
+        mode = str(wavelength_mode or "SM").strip().upper()
+        template = self.coc_template_path(
+            front_panel_channel_count, model, mode
+        )
         required_capacity = 45 if front_panel_channel_count <= 45 else 48
         if template.is_file():
             try:
-                capacity = self.coc_exporter.inspect_template_capacity(template)
+                profile = self.coc_exporter.inspect_template_profile(template)
             except (OSError, RuntimeError, ValueError):
-                capacity = None
-            if capacity == required_capacity:
+                profile = None
+            if (
+                profile is not None
+                and profile.model == model
+                and profile.wavelength_mode == mode
+                and profile.capacity == required_capacity
+            ):
                 return template
 
         selected, _ = QFileDialog.getOpenFileName(
             self,
-            "Select %d-channel XLSX COC template" % required_capacity,
+            "Select %s %s %d-channel XLSX COC template"
+            % (model, mode, required_capacity),
             str(template.parent),
             "Excel workbooks (*.xlsx)",
         )
         if not selected:
             return None
-        capacity = self.coc_exporter.inspect_template_capacity(selected)
-        if capacity != required_capacity:
+        profile = self.coc_exporter.inspect_template_profile(selected)
+        if (
+            profile.model != model
+            or profile.wavelength_mode != mode
+            or profile.capacity != required_capacity
+        ):
             raise ValueError(
-                "The selected template supports %d channels; a %d-channel template is required."
-                % (capacity, required_capacity)
+                "The selected template is %s %s with capacity %d; "
+                "%s %s with capacity %d is required."
+                % (
+                    profile.model,
+                    profile.wavelength_mode,
+                    profile.capacity,
+                    model,
+                    mode,
+                    required_capacity,
+                )
             )
         self.settings.setValue(
-            "coc_template_%d_path" % required_capacity,
+            self._coc_template_setting_key(model, mode, required_capacity),
             selected,
         )
         return Path(selected)
@@ -6606,21 +6997,6 @@ class MainWindow(QMainWindow):
                 reason="Load or start a run before preparing a COC.",
             )
             QMessageBox.information(self, "No run loaded", "Load or start a run first.")
-            return
-        if self.run_data.wavelength_mode != "SM":
-            self._record_coc_terminal(
-                attempt_id,
-                "blocked",
-                "precondition",
-                reason_code="unsupported_wavelength_mode",
-                reason="COC generation is available only for approved SM runs.",
-            )
-            QMessageBox.information(
-                self,
-                "COC unavailable for MM",
-                "MM runs cannot be used for the current COC workflow because "
-                "approved MM templates and report rules are not configured.",
-            )
             return
         try:
             options = self._coc_run_options()
@@ -6790,6 +7166,18 @@ class MainWindow(QMainWindow):
             )
             return
 
+        coc_model = normalize_switch_model(
+            str((base_run.criteria or {}).get("model") or "")
+        )
+        coc_mode = str(
+            base_run.metadata.get("Wavelength mode")
+            or (
+                base_run.measurements[0].wavelength_mode
+                if base_run.measurements
+                else "SM"
+            )
+        ).strip().upper()
+
         if result.optimization_recommendations:
             self._record_coc_event(
                 "export.coc_optimization_confirmation_shown",
@@ -6831,7 +7219,9 @@ class MainWindow(QMainWindow):
         output_path = None
         try:
             template = self._select_coc_template(
-                result.front_panel_channel_count
+                result.front_panel_channel_count,
+                coc_model,
+                coc_mode,
             )
             if template is None:
                 self._record_coc_event(
@@ -6859,6 +7249,8 @@ class MainWindow(QMainWindow):
                 front_panel_channel_count=result.front_panel_channel_count,
                 template_capacity=result.template_capacity,
                 supplemental_run_number=result.supplemental_run_number,
+                switch_model=coc_model,
+                wavelength_mode=coc_mode,
                 status="started",
             )
             output_path = self.coc_exporter.export(
@@ -6870,6 +7262,8 @@ class MainWindow(QMainWindow):
                 tested_by=tested_by,
                 front_panel_channel_count=result.front_panel_channel_count,
                 coc_attempt_id=attempt_id,
+                switch_model=coc_model,
+                wavelength_mode=coc_mode,
             )
             override_text = "; ".join(
                 "Channel %d = Run %d / Physical Port %d"
@@ -6893,6 +7287,12 @@ class MainWindow(QMainWindow):
                     "COC output path": str(output_path),
                     "COC exported at": datetime.now().isoformat(timespec="seconds"),
                     "COC template": str(template),
+                    "COC switch model": coc_model,
+                    "COC wavelength mode": coc_mode,
+                    "COC wavelength pair": "%d/%d nm"
+                    % tuple(base_run.measurements[0].opm_wavelengths_nm)
+                    if base_run.measurements
+                    else "",
                     "COC front panel channels": str(result.front_panel_channel_count),
                     "COC base run": "Run %d" % result.base_run_number,
                     "COC supplemental run": (

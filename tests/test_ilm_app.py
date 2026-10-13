@@ -15,6 +15,8 @@ from PyQt5.QtTest import QTest
 from application.coc_workflow import CocRunOption
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
 from domain.coc_preparation import CocSourceRun, prepare_coc
+from domain.limit_profiles import default_limit_profiles
+from domain.run_status import COMPLETION_COMPLETE, RESULT_PASS
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
 from domain.measurement_attempts import new_measurement_attempt
 from ilm_app import (
@@ -158,6 +160,33 @@ class MainWindowTests(unittest.TestCase):
         self.assertIsInstance(window.view_history_button.parentWidget(), QGroupBox)
         self.assertEqual(window.view_history_button.parentWidget().title(), "Run information")
         self.assertTrue(window.view_history_button.isEnabled())
+        window.close()
+
+    def test_run_status_is_displayed_next_to_comparison_and_ignores_filter(self):
+        window = MainWindow()
+        profile = default_limit_profiles().for_model_mode("OSX-150", "SM")
+        window.run_data = RunData(
+            Path("saved.csv"),
+            [
+                MeasurementRecord(1, 1.0, 1.1, 1),
+                MeasurementRecord(2, 1.1, 1.2, 2),
+            ],
+            {
+                "Part number": "OSX-150-1A-002-09-FA-00B-1H",
+                "Run number": "1",
+                "Planned channel count": "2",
+            },
+            criteria_snapshot=profile.as_dict(),
+        )
+        window._run_terminal_status = COMPLETION_COMPLETE
+        window.refresh_analysis()
+
+        self.assertIn("Run: Complete", window.completion_status_label.text())
+        self.assertIn("2/2", window.completion_status_label.text())
+        self.assertEqual(window.result_status_label.text(), "Result: Pass")
+        window.reading_filter.setCurrentIndex(2)
+        window.refresh_table()
+        self.assertEqual(window.result_status_label.text(), "Result: Pass")
         window.close()
 
     def test_open_csv_starts_in_default_run_folder(self):
@@ -1634,7 +1663,7 @@ class MainWindowTests(unittest.TestCase):
             self.assertTrue(window.write_coc_action.isEnabled())
             window.close()
 
-    def test_coc_controls_remain_disabled_for_mm_runs(self):
+    def test_coc_controls_enable_for_osx100_mm_runs(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "Run-1.csv"
             path.write_text("channel,850 IL,1300 IL\n1,0.6000,0.5000\n", encoding="utf-8")
@@ -1651,6 +1680,50 @@ class MainWindowTests(unittest.TestCase):
                     )
                 ],
                 {"Wavelength mode": "MM"},
+                criteria_snapshot={
+                    "model": "OSX-100",
+                    "profile_name": "OSX-100 MM standard",
+                    "revision": "1",
+                    "too_good_below_db": 0.2,
+                    "warning_enabled": False,
+                    "warning_above_db": None,
+                    "fail_above_db": 0.8,
+                    "wavelength_mode": "MM",
+                },
+            )
+            path.write_text("channel,850 IL,1300 IL\n1,0.6000,0.5000\n", encoding="utf-8")
+            window.refresh_coc_controls()
+            self.assertTrue(window.write_coc_button.isEnabled())
+            self.assertTrue(window.write_coc_action.isEnabled())
+            window.close()
+
+    def test_coc_controls_remain_disabled_for_osx150_mm_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Run-1.csv"
+            path.write_text("channel,850 IL,1300 IL\n1,0.6000,0.5000\n", encoding="utf-8")
+            window = MainWindow()
+            window.run_data = RunData(
+                path,
+                [
+                    MeasurementRecord.from_wavelengths(
+                        1,
+                        {850: 0.6, 1300: 0.5},
+                        wavelength_mode="MM",
+                        measurement_classification="native",
+                        source_wavelengths_nm=(850, 1300),
+                    )
+                ],
+                {"Wavelength mode": "MM"},
+                criteria_snapshot={
+                    "model": "OSX-150",
+                    "profile_name": "OSX-150 MM standard",
+                    "revision": "1",
+                    "too_good_below_db": 0.5,
+                    "warning_enabled": True,
+                    "warning_above_db": 2.25,
+                    "fail_above_db": 2.5,
+                    "wavelength_mode": "MM",
+                },
             )
             window.refresh_coc_controls()
             self.assertFalse(window.write_coc_button.isEnabled())

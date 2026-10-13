@@ -26,6 +26,7 @@ class RunData:
     switch_test_sessions: list[dict] = field(default_factory=list)
     completed_replacements: list[dict] = field(default_factory=list)
     criteria_snapshot: dict | None = None
+    run_status: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self):
         """Keep the former dictionary field compatible while history is typed."""

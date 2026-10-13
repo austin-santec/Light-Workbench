@@ -117,6 +117,8 @@ def prepare_coc(
         issue.code in {
             "unsupported_wavelength_mode",
             "unsupported_supplemental_wavelength_mode",
+            "unsupported_coc_model",
+            "unsupported_coc_measurement_profile",
         }
         for issue in validation_issues
     ):
@@ -244,15 +246,28 @@ def prepare_coc(
         )
         prepared.append(prepared_channel)
         invalid.extend(_invalid_reading_issues(prepared_channel))
-        failures.extend(_formal_failures(prepared_channel))
+        failures.extend(
+            _formal_failures(
+                prepared_channel,
+                _effective_fail_limit(base_run),
+            )
+        )
 
+    warning_limit = _effective_warning_limit(base_run)
+    fail_limit = _effective_fail_limit(base_run)
     optimization_channels = tuple(
         channel.record.channel
         for channel in prepared
-        if _is_optimization_reading(channel.record)
+        if _is_optimization_reading(channel.record, warning_limit, fail_limit)
     )
     recommendations = ()
-    if not missing and not invalid and not failures and not validation_issues:
+    if (
+        warning_limit is not None
+        and not missing
+        and not invalid
+        and not failures
+        and not validation_issues
+    ):
         recommendations = _optimization_recommendations(
             prepared,
             base_run,
@@ -289,17 +304,52 @@ def _normalized_metadata(run: CocSourceRun, key: str) -> str:
     return str(run.metadata.get(key) or "").strip()
 
 
+def _run_model(source_run: CocSourceRun) -> str:
+    return normalize_switch_model(str((source_run.criteria or {}).get("model") or ""))
+
+
+def _run_mode(source_run: CocSourceRun) -> str:
+    return str(source_run.metadata.get("Wavelength mode") or "SM").strip().upper()
+
+
+def _expected_wavelengths(wavelength_mode: str) -> tuple[int, int]:
+    return (850, 1300) if str(wavelength_mode).upper() == "MM" else (1310, 1550)
+
+
+def _effective_fail_limit(source_run: CocSourceRun) -> float:
+    criteria = dict(source_run.criteria or {})
+    value = criteria.get("fail_above_db")
+    if value not in (None, ""):
+        return float(value)
+    return 0.8 if _run_model(source_run) == "OSX-100" else COC_FORMAL_LIMIT_DB
+
+
+def _effective_warning_limit(source_run: CocSourceRun) -> float | None:
+    criteria = dict(source_run.criteria or {})
+    if not bool(criteria.get("warning_enabled", False)):
+        return None
+    value = criteria.get("warning_above_db")
+    return None if value in (None, "") else float(value)
+
+
 def _compatibility_issues(
     base_run: CocSourceRun,
     supplemental_run: CocSourceRun | None,
 ) -> tuple[CocValidationIssue, ...]:
     issues = []
     base_signatures = _measurement_signatures(base_run)
-    if str(base_run.metadata.get("Wavelength mode") or "SM").upper() != "SM":
+    base_mode = _run_mode(base_run)
+    base_model = _run_model(base_run)
+    if (base_model, base_mode) not in {
+        ("OSX-100", "SM"),
+        ("OSX-100", "MM"),
+        ("OSX-150", "SM"),
+    }:
         issues.append(
             CocValidationIssue(
                 "unsupported_wavelength_mode",
-                "COC generation supports approved SM (1310/1550 nm) runs only.",
+                "COC generation supports OSX-100 SM/MM and OSX-150 SM runs only; "
+                "OSX-150 MM is not supported.",
             )
         )
     if len(base_signatures) > 1:
@@ -310,35 +360,42 @@ def _compatibility_issues(
             )
         )
     elif base_signatures and next(iter(base_signatures)) != (
-        "SM",
-        (1310, 1550),
+        base_mode,
+        _expected_wavelengths(base_mode),
         "native",
     ):
         issues.append(
             CocValidationIssue(
                 "unsupported_coc_measurement_profile",
-                "COC generation requires native SM readings made with "
-                "1310/1550 nm sources.",
+                "COC generation requires native %s readings made with %s/%s nm sources."
+                % (
+                    base_mode,
+                    _expected_wavelengths(base_mode)[0],
+                    _expected_wavelengths(base_mode)[1],
+                ),
             )
         )
-    base_model = normalize_switch_model(
-        str((base_run.criteria or {}).get("model") or "")
-    )
-    if base_model != "OSX-150":
+    if base_model not in ("OSX-100", "OSX-150"):
         issues.append(
             CocValidationIssue(
                 "unsupported_coc_model",
-                "The approved bundled COC templates support OSX-150 runs only; "
+                "The approved bundled COC templates support OSX-100 and OSX-150 runs; "
                 "the base run reports %s." % (base_model or "an unknown model"),
             )
         )
     if supplemental_run is None:
         return tuple(issues)
-    if str(supplemental_run.metadata.get("Wavelength mode") or "SM").upper() != "SM":
+    supplemental_mode = _run_mode(supplemental_run)
+    supplemental_model = _run_model(supplemental_run)
+    if (supplemental_model, supplemental_mode) not in {
+        ("OSX-100", "SM"),
+        ("OSX-100", "MM"),
+        ("OSX-150", "SM"),
+    }:
         issues.append(
             CocValidationIssue(
                 "unsupported_supplemental_wavelength_mode",
-                "The supplemental run must also be an approved SM run.",
+                "The supplemental run must use an approved OSX-100 SM/MM or OSX-150 SM profile.",
             )
         )
     supplemental_signatures = _measurement_signatures(supplemental_run)
@@ -347,6 +404,17 @@ def _compatibility_issues(
             CocValidationIssue(
                 "mixed_supplemental_measurement_profiles",
                 "The supplemental run contains mixed wavelength or source profiles.",
+            )
+        )
+    elif supplemental_signatures and next(iter(supplemental_signatures)) != (
+        supplemental_mode,
+        _expected_wavelengths(supplemental_mode),
+        "native",
+    ):
+        issues.append(
+            CocValidationIssue(
+                "unsupported_coc_measurement_profile",
+                "The supplemental run contains a non-native or mismatched wavelength profile.",
             )
         )
     elif (
@@ -359,6 +427,13 @@ def _compatibility_issues(
                 "incompatible_measurement_profiles",
                 "The selected runs use different wavelength, source, or "
                 "measurement-classification profiles.",
+            )
+        )
+    if supplemental_model != base_model or supplemental_mode != base_mode:
+        issues.append(
+            CocValidationIssue(
+                "incompatible_measurement_profiles",
+                "The selected runs must use the same switch model and wavelength mode.",
             )
         )
     for key, label, required in (
@@ -461,10 +536,8 @@ def _invalid_reading_issues(
     channel: CocPreparedChannel,
 ) -> tuple[CocValidationIssue, ...]:
     issues = []
-    for wavelength, value in (
-        (1310, channel.record.loss_1310),
-        (1550, channel.record.loss_1550),
-    ):
+    for wavelength in channel.record.opm_wavelengths_nm:
+        value = channel.record.loss_for(wavelength)
         if not math.isfinite(float(value)):
             issues.append(
                 CocValidationIssue(
@@ -489,13 +562,14 @@ def _invalid_reading_issues(
     return tuple(issues)
 
 
-def _formal_failures(channel: CocPreparedChannel) -> tuple[CocFailure, ...]:
+def _formal_failures(
+    channel: CocPreparedChannel,
+    fail_limit: float = COC_FORMAL_LIMIT_DB,
+) -> tuple[CocFailure, ...]:
     failures = []
-    for wavelength, value in (
-        (1310, channel.record.loss_1310),
-        (1550, channel.record.loss_1550),
-    ):
-        if math.isfinite(float(value)) and _rounded_loss(value) >= COC_FORMAL_LIMIT_DB:
+    for wavelength in channel.record.opm_wavelengths_nm:
+        value = channel.record.loss_for(wavelength)
+        if math.isfinite(float(value)) and _rounded_loss(value) >= fail_limit:
             failures.append(
                 CocFailure(
                     channel.record.channel,
@@ -508,10 +582,16 @@ def _formal_failures(channel: CocPreparedChannel) -> tuple[CocFailure, ...]:
     return tuple(failures)
 
 
-def _is_optimization_reading(record: MeasurementRecord) -> bool:
-    values = (_rounded_loss(record.loss_1310), _rounded_loss(record.loss_1550))
+def _is_optimization_reading(
+    record: MeasurementRecord,
+    warning_limit: float | None = COC_OPTIMIZATION_LIMIT_DB,
+    fail_limit: float = COC_FORMAL_LIMIT_DB,
+) -> bool:
+    if warning_limit is None:
+        return False
+    values = tuple(_rounded_loss(value) for value in record.ordered_losses)
     return any(
-        COC_OPTIMIZATION_LIMIT_DB < value < COC_FORMAL_LIMIT_DB
+        warning_limit < value < fail_limit
         for value in values
     )
 
@@ -535,15 +615,15 @@ def _optimization_recommendations(
             port = int(port)
             if port in assigned_ports:
                 continue
-            if not (
-                math.isfinite(float(record.loss_1310))
-                and math.isfinite(float(record.loss_1550))
+            if not all(
+                math.isfinite(float(value)) for value in record.ordered_losses
             ):
                 continue
+            losses = record.ordered_losses
             readings_by_port[port] = ReplacementReading(
                 port,
-                float(record.loss_1310),
-                float(record.loss_1550),
+                float(losses[0]),
+                float(losses[1]),
             )
 
     # Designated-spare membership is useful only when that port has a measured
@@ -561,12 +641,12 @@ def _optimization_recommendations(
         key=lambda reading: (reading.port not in spare_ports, reading.port),
     )
     production = [
-        MeasurementRecord(
+        MeasurementRecord.from_wavelengths(
             channel.record.channel,
-            channel.record.loss_1310,
-            channel.record.loss_1550,
-            channel.physical_port,
-            channel.record.reference_snapshot,
+            dict(zip(channel.record.opm_wavelengths_nm, channel.record.ordered_losses)),
+            physical_port=channel.physical_port,
+            reference_snapshot=channel.record.reference_snapshot,
+            wavelength_mode=channel.record.wavelength_mode,
         )
         for channel in prepared
     ]

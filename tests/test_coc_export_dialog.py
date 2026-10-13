@@ -92,7 +92,7 @@ class CocExportDialogTests(unittest.TestCase):
             incompatible_source.source_path,
             incompatible_source.measurements,
             incompatible_source.metadata,
-            {**CRITERIA, "model": "OSX-100"},
+                {**CRITERIA, "model": "OSX-200"},
         )
         dialog = CocExportDialog(
             [CocRunOption(compatible), CocRunOption(incompatible)],
