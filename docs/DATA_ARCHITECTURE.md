@@ -38,8 +38,10 @@ from the current readings rather than stored as authoritative history.
 New code should work with typed domain models first and serialize them second.
 The storage format should not determine how business logic represents data.
 
-The current CSV and JSON formats remain supported for compatibility. If a
-future schema changes, include a `schema_version` and provide a migration path.
+The current CSV and JSON formats remain supported for legacy compatibility.
+Opening them does not upload their contents or make them writable database
+runs. If a future file schema changes, include a
+`schema_version` and provide a migration path.
 Run JSON currently uses schema version 6; unit JSON uses schema version 3.
 Migration helpers reject newer versions instead of silently dropping fields.
 
@@ -56,8 +58,10 @@ continue to load as native SM 1310/1550 runs.
 
 ## Format responsibilities
 
-- JSON or a future repository/database: canonical structured application data.
-- CSV: human-readable measurement export and compatibility with existing tools.
+- SQL Server: canonical structured application data for new production runs on
+  the database branch.
+- JSON/CSV: legacy viewing, explicit exports, and compatibility with existing
+  tools; they are not an automatic authoritative write path on this branch.
 - Clipboard raw-data copy: transient tab-separated text from accepted readings;
   it is not persisted and excludes metadata and pending readings.
 - Diagnostic history export: an explicit operator-selected CSV or JSON export
@@ -237,10 +241,10 @@ episode, including its start, invalid-sample count, and cleared/ended outcome.
 
 ## Planned SQL Server persistence
 
-The database-focused development branch will use SQL Server as the
-authoritative store for future run data after its staged implementation and
-validation are complete. Existing CSV/JSON runs are mainly development and test
-data; no historical bulk-import milestone is planned. CSV and JSON may remain
+The database-focused development branch uses SQL Server as the authoritative
+store for future run data after the Milestone 9 cutover. Existing CSV/JSON runs
+are mainly development and test data; no historical bulk-import milestone is
+planned. CSV and JSON may remain
 explicit export or view formats, but application-wide queries should not
 require scanning run folders after the database cutover.
 

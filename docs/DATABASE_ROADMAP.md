@@ -40,8 +40,9 @@ rules.
 
 ## Milestone 1 - SQL Server foundation
 
-Status: complete. Migration `0001_initial_schema.sql`, checksum/history
-validation, the eight tables, two views, least-privilege database roles,
+Status: complete. Forward-only migrations through
+`0002_nonnegative_measurement_losses.sql`, checksum/history validation, the
+eight tables, two views, least-privilege database roles,
 guarded reset tooling, and isolated SQL integration tests are implemented. The
 local `LWBTestDB_Integration` database has been reset, migrated, backed up,
 restored to a temporary database, checked with `DBCC CHECKDB`, and cleaned up
@@ -83,9 +84,9 @@ using 32-bit Python, `pyodbc`, Windows Authentication, and ODBC Driver 18.
 Status: complete. Non-secret per-user SQL Server settings, a bounded
 Windows-authenticated connection factory, short transaction contexts,
 read-only migration compatibility preflight, classified operator diagnostics,
-and credential-free support events are implemented. Database use remains
-disabled by default and is not yet connected to run persistence; that begins
-with repository work in Milestone 3.
+and credential-free support events are implemented. Database use is enabled by
+default on the database branch and production persistence is connected by
+Milestone 9.
 
 ### Implement
 
@@ -130,6 +131,14 @@ migrations automatically.
 
 ## Milestone 3 - Repository contracts
 
+Status: complete. Database-neutral typed records and protocols now define the
+unit, switch, assignment, run, measurement, replacement, and spare boundaries.
+Matching in-memory and parameterized SQL Server implementations pass the same
+contract, including retry-safe UUID behavior, current-versus-history reading
+queries, lifecycle transitions, and transaction rollback/cleanup. These
+repositories remain disconnected from the production UI and file workflow
+until the following integration milestones.
+
 ### Implement
 
 - Define repository protocols for units, switches, assignments, runs,
@@ -172,6 +181,13 @@ SpareRepository.append_event(...)
 
 ## Milestone 4 - Unit, switch, and assignment workflow
 
+Status: complete at the application/repository boundary. The workflow now
+resolves or creates units and switches, reuses matching active assignments,
+requires an explicit replacement operation when a unit's switch changes,
+rejects switches already active in another unit, validates complete baseline
+channel maps, and atomically closes/opens assignment history. It is not yet
+called by Start Run; that integration follows the run-lifecycle milestones.
+
 ### Implement
 
 1. Resolve or create a unit by main-board serial.
@@ -196,6 +212,16 @@ SpareRepository.append_event(...)
 - Every future run can reference one unambiguous installed unit/switch pair.
 
 ## Milestone 5 - Run lifecycle persistence
+
+Status: complete at the application/repository boundary. New database-backed
+runs now require a successful readiness result, receive a caller-generated
+retry UUID, and obtain a per-unit run number while the SQL repository holds a
+unit-scoped transaction lock. Runs preserve their setup, hardware, and limit
+snapshots and support explicit complete, stopped, and failed endings.
+Purpose and analysis eligibility are separate, non-production purposes default
+to exclusion, and stale runs remain in progress until an explicit resume,
+close-stopped, or close-failed decision. Production Start Run is intentionally
+not wired to this workflow until the database cutover milestone.
 
 ### Implement
 
@@ -229,6 +255,17 @@ SpareRepository.append_event(...)
 
 ## Milestone 6 - Atomic measurement persistence
 
+Status: complete at the application/repository boundary. Write IL data is
+prepared as an immutable pending two-wavelength value with a stable UUID before
+the first database attempt. The repository locks the run, verifies that it is
+still in progress and that the wavelength pair matches its SM/MM mode,
+allocates the next run/channel attempt number, and inserts the complete sample
+in one transaction. Finite non-negative losses are normalized to four decimal
+places, and a reference snapshot is mandatory. Commit notification occurs only
+after repository success, so a failed write remains retryable with the same
+UUID and cannot alter the accepted projection. Production Write IL remains on
+the file workflow until the database-primary cutover milestone.
+
 ### Implement
 
 - Generate `measurement_uuid` before insertion.
@@ -256,6 +293,17 @@ SpareRepository.append_event(...)
 
 ## Milestone 7 - Retest and current-value queries
 
+Status: complete at the database application/repository boundary. Accepted
+retests remain append-only, while a stable repository snapshot returns the
+`vw_CurrentILMeasurements` projection and every accepted attempt from one
+transaction. A shared database run snapshot now supplies the readings table,
+run status, comparison, Copy Raw Data, analysis, COC preparation, and
+replacement analysis so those consumers cannot select different attempts.
+Current rows retain logical-channel order, history retains database commit
+order, table filtering remains presentation-only, and temporary readings are
+absent. The production UI continues using local runs until the database-primary
+cutover in Milestone 9.
+
 ### Implement
 
 - Use append-only rows for accepted retests.
@@ -279,6 +327,19 @@ SpareRepository.append_event(...)
   history is queryable.
 
 ## Milestone 8 - Replacement and spare persistence
+
+Status: complete at the database application/repository boundary. Replacement
+records and spare designation changes are append-only and owned by the exact
+unit/switch assignment. The workflow records operator, reason, timestamp,
+previous/effective port, optional related run, and notes without issuing switch
+commands or using switch route queries. Repository validation prevents stale
+replacement chains, duplicate effective routes, out-of-capacity ports,
+cross-assignment related runs, and changes to removed assignments.
+`vw_CurrentChannelMap` supplies the effective logical-to-physical map, while a
+stable routing snapshot exposes complete replacement/spare history and the
+current designated-spare set. Replacement recommendations remain derived and
+are not persisted. Production UI integration remains deferred to the
+database-primary cutover in Milestone 9.
 
 ### Implement
 
@@ -306,6 +367,20 @@ SpareRepository.append_event(...)
   history for each assignment.
 
 ## Milestone 9 - Database-primary cutover
+
+Status: complete. Production application startup now composes the SQL Server
+workflow. Start Run performs database/schema preflight, resolves unit/switch
+assignment identity, and creates an authoritative `in_progress` run with a
+database-allocated unit run number. Write IL commits one complete,
+retry-identified two-wavelength attempt before the UI advances. Completion,
+manual stop, and hardware failure close the database lifecycle explicitly.
+Explicit continuation/retest reopens the retained run before appending a new
+attempt, then closes it again without deleting earlier accepted attempts.
+Numbered run loading, comparison, reading history, analysis, Copy Raw Data,
+COC preparation, and replacement/spare records use database projections.
+Legacy CSV files remain viewable without upload, automatic local run files are
+not created, and support/diagnostic/COC outputs retain their intended local
+file behavior.
 
 ### Development transition
 

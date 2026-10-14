@@ -2,19 +2,20 @@
 
 ## Status and purpose
 
-Status: approved design with the Milestone 1 schema implemented as forward-only
-migration `0001_initial_schema.sql`. Application repositories and runtime
-cutover are not yet implemented.
+Status: implemented through the database-primary runtime cutover (Milestone 9)
+using forward-only migration `0002_nonnegative_measurement_losses.sql`.
+Database-neutral repositories and the unit, assignment, run-lifecycle,
+atomic-measurement, current/history query, and assignment-scoped routing
+boundaries are connected to the production hardware workflow.
 
 This document defines the SQL Server schema and persistence boundaries for the
 future database-backed version of Light Workbench. The database will start
 clean and will store future runs only. Existing CSV and JSON runs are mostly
 development/test data and are not scheduled for bulk import.
 
-The current file-backed release remains the compatibility baseline until the
-database milestones in `docs/DATABASE_ROADMAP.md` are complete. On the
-database branch, SQL Server will eventually become authoritative for new run
-data. Always-on engineering support logs remain local.
+On this database branch, SQL Server is authoritative for new run data. Existing
+CSV/JSON files remain viewable as legacy data and are not uploaded.
+Always-on engineering support logs remain local.
 
 ## Approved deployment direction
 
@@ -45,6 +46,13 @@ databases, timeouts, insufficient permissions, and incompatible migration
 history as distinct categories. The preflight never applies migrations.
 Technical details recorded in local support logs exclude credentials and full
 connection strings.
+
+Application workflows depend on protocols in
+`application/database_repositories.py`. Typed request and result records live
+in `domain/database_records.py`. The in-memory contract implementation and the
+SQL Server implementation live under `infrastructure/database/`; SQL text and
+driver-specific rows do not cross that boundary. Both implementations follow
+the same idempotency and current/history semantics before UI integration.
 
 The migration tool uses `pyodbc`, Windows Authentication, and an explicitly
 provided server/database target. Local integration testing uses
@@ -114,6 +122,14 @@ identity is captured as a historical JSON snapshot on each run.
 The assignment table is required because a unit may receive a replacement
 switch while the unit remains the same. Runs continue to identify the exact
 unit/switch installation that produced their data.
+
+Assignment resolution is explicit. Reconnecting the same unit and switch
+reuses their active assignment. A different switch cannot silently replace an
+active one: the application requires a removal reason and operator, then closes
+the old assignment and opens the replacement in one transaction. A switch
+already active in another unit is rejected. Baseline maps must contain every
+front-panel logical channel exactly once and may route those channels to any
+unique physical port within the switch's physical capacity.
 
 ## SQL Server conventions
 
@@ -249,6 +265,13 @@ One record per Light Workbench test run.
 changes. Retrying a create operation with the same UUID must resolve the
 existing run rather than create a duplicate.
 
+Operator-facing `run_number` is allocated per unit by the run repository. The
+SQL implementation locks the unit row while it calculates the next number
+across every historical assignment for that unit and inserts the run in the
+same transaction. This keeps numbering continuous when a unit receives a
+replacement switch and prevents cooperating clients from claiming the same
+next number.
+
 Controlled values:
 
 | Field | Allowed values |
@@ -260,6 +283,9 @@ Controlled values:
 
 Recommended defaults are `in_progress`, `production`, and `pending`.
 `analysis_exclusion_reason` is required when analysis status is `excluded`.
+Engineering, training, and calibration runs default to `excluded`; only a
+completed production run explicitly marked `included` is eligible for normal
+production analysis.
 
 Example hardware snapshot:
 
@@ -326,10 +352,27 @@ Rules:
 - `measurement_uuid` is unique.
 - `(run_id, logical_channel, attempt_number)` is unique.
 - Channels, ports when present, wavelengths, and attempt numbers are positive.
+- Insertion-loss values must be present, finite, non-negative, and normalized
+  to four decimal places before insertion.
 - `reference_snapshot_json` contains valid JSON.
+- The reference snapshot must be a non-empty object for an accepted write.
 - Both wavelength results are inserted in one transaction.
+- SM runs accept the 1310/1550 pair and MM runs accept the 850/1300 pair.
+- Measurements may only be appended while their run remains `in_progress`.
 - Temporary, live, invalid, and unwritten readings are never inserted.
 - Raw measured power remains local engineering evidence, not analytical data.
+
+The application creates an immutable pending measurement and its UUID before
+the first insert attempt. The SQL repository obtains an update lock on the run
+row, calculates the next attempt number for that run and logical channel, and
+inserts both wavelength values in the same transaction. Cooperating concurrent
+writers therefore cannot claim the same attempt number. A repeated UUID
+returns the original row.
+
+The UI may update its accepted-reading projection only after the repository
+returns the committed row. If the transaction fails, the pending object and
+UUID remain available for retry; the channel does not advance and no support
+log or temporary reading becomes substitute storage.
 
 ### `CHANNEL_REPLACEMENTS`
 
@@ -352,8 +395,19 @@ All channels and ports are positive, and previous/replacement ports cannot be
 equal. A replacement belongs to an assignment rather than permanently to a
 unit so records from a removed switch cannot alter a later switch's map.
 
+New replacement records are accepted only for an active assignment. The
+reported previous port must match that logical channel's current effective
+port, the replacement must fit the assigned switch's physical capacity, and it
+cannot already route another logical channel in the same assignment. An
+optional related run must belong to the same assignment. Replacing an already
+replaced channel appends another row; earlier rows are never updated or
+deleted.
+
 Light Workbench documents replacements only. It does not command the switch,
 use `CLOSe?` to infer a replaced route, or verify the external mapping change.
+Replacement recommendations remain temporary derived results and are never
+written to `CHANNEL_REPLACEMENTS` unless an operator separately documents a
+completed manual replacement.
 
 ### `DESIGNATED_SPARES`
 
@@ -371,6 +425,11 @@ Append-only spare designation history.
 
 The active spare set is derived from the newest event for each assignment and
 physical port.
+
+Designation and undesignation events are accepted only for an active
+assignment and a port within the assigned switch's physical capacity. Repeating
+the already-current action is rejected rather than adding a meaningless audit
+row. Spare history remains readable after an assignment is removed.
 
 ### `SCHEMA_MIGRATIONS`
 
@@ -396,12 +455,32 @@ The main readings table, limits, run status, COC preparation, Copy Raw Data,
 and replacement recommendations use this view. Reading History and retest
 reports query all `IL_MEASUREMENTS` rows.
 
+The database repository exposes these as one stable run snapshot: current rows
+come from the view in logical-channel order, and history rows come from the
+append-only table in database commit order. Both queries execute in one
+transaction while the run row is held stable, preventing a concurrent retest
+from appearing in only one half of the snapshot.
+
+The application converts that snapshot into one shared read model. Table
+filters may choose which current rows are visible, but comparison, Copy Raw
+Data, status, analysis, COC preparation, and replacement analysis always use
+the complete unfiltered current projection. Reading History alone uses every
+accepted attempt. Database-origin COC inputs carry a stable run identifier
+rather than inventing a local source-file path.
+
 ### `vw_CurrentChannelMap`
 
 Combines `UNIT_SWITCH_ASSIGNMENTS.initial_channel_map_json` with the latest
 `CHANNEL_REPLACEMENTS` row for each logical channel. It returns the assignment,
 unit, switch, logical channel, effective physical port, replacement state, and
 latest replacement timestamp.
+
+The routing repository reads this view in logical-channel order and exposes
+the append-only replacement and spare histories in database commit order. A
+single stable routing snapshot returns the effective map, both histories, and
+the active designated-spare set. This snapshot is scoped by `assignment_id`,
+so replacing a physical switch starts from the new assignment's baseline map
+without discarding or applying the old switch's history.
 
 ## Required indexes
 
@@ -454,6 +533,21 @@ On the next connection, Light Workbench should identify stale in-progress runs
 and offer an explicit resume or close decision. It must not silently mark them
 complete.
 
+The supported stale-run decisions are:
+
+- Resume, which leaves the same run UUID and `in_progress` record intact.
+- Close as stopped, for an operator-ended incomplete run.
+- Close as failed, for a technical end state.
+
+All close decisions record `run_ended_at_utc`. Measurement quality is never
+inferred from the selected completion state.
+
+An operator-selected continuation or retest explicitly reopens the retained
+run as `in_progress` and clears its prior end timestamp before another accepted
+attempt can be appended. Finishing the resumed workflow writes a new terminal
+status and end timestamp. Accepted attempts remain append-only throughout this
+lifecycle transition.
+
 ## Files that remain local
 
 - Daily support-log JSONL and compressed archives.
@@ -462,8 +556,13 @@ complete.
 - Explicit operator-requested CSV/JSON exports.
 - Application configuration, including the database endpoint.
 
-Existing run files may remain viewable during development, but opening one
-does not upload it or make it part of the authoritative database.
+Existing run files remain viewable, but opening one does not upload it or make
+it part of the authoritative database. A legacy file-backed run cannot be
+continued or retested as if it were a database run.
+
+For database-backed COC export, the operator explicitly chooses the output
+folder because there is no authoritative local run directory. COC files remain
+derived exports and are not written back as run storage.
 
 ## Security and operations
 

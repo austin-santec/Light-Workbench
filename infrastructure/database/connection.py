@@ -154,8 +154,17 @@ class DatabaseConnectionFactory:
     def transaction(self) -> Iterator[Any]:
         """Yield one parameterized-command cursor and commit atomically."""
         with self.connection() as connection:
+            try:
+                connection.timeout = self.settings.command_timeout_seconds
+            except (AttributeError, TypeError):
+                pass
             cursor = connection.cursor()
-            cursor.timeout = self.settings.command_timeout_seconds
+            # pyodbc exposes query timeout on Connection; lightweight test
+            # doubles and some DB-API drivers expose it on Cursor instead.
+            try:
+                cursor.timeout = self.settings.command_timeout_seconds
+            except (AttributeError, TypeError):
+                pass
             try:
                 yield cursor
                 connection.commit()

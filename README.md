@@ -9,7 +9,8 @@ testing and measurement. Its current workflow measures insertion loss in
 
 The operator moves the output cable when prompted. The program changes the
 switch channel, takes both wavelength readings, displays the calculated losses,
-and saves accepted readings to a CSV file that opens directly in Excel.
+and saves accepted production readings to SQL Server on the database branch.
+Existing CSV/JSON runs remain available through the legacy viewing workflow.
 
 ## What the application can do
 
@@ -279,7 +280,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.29.3**; an existing executable keeps its prior
+current source version is **1.30.0**; an existing executable keeps its prior
 version until rebuilt.
 
 The desktop application opens maximized by default while retaining the normal

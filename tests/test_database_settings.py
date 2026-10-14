@@ -12,7 +12,7 @@ class DatabaseSettingsTests(unittest.TestCase):
             settings = DatabaseSettingsRepository(
                 Path(directory) / "database.ini"
             ).load()
-        self.assertFalse(settings.enabled)
+        self.assertTrue(settings.enabled)
         self.assertEqual(settings.server, r"localhost\SQLEXPRESS")
         self.assertEqual(settings.database, "LWBTestDB")
 

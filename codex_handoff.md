@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.29.3**. The single
+The current source release is **Light Workbench 1.30.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -55,8 +55,8 @@ SM and MM use matching COC workflows; OSX-150 MM remains blocked from COC
 export. Historical compatibility classifications are preserved when loading
 older records.
 
-The database-focused branch has an approved SQL Server-primary design and its
-Milestone 1 SQL Server foundation is complete. Development targets
+The database-focused branch has completed its SQL Server-primary cutover
+through Milestone 9. Development targets
 `localhost\SQLExpress`, database `LWBTestDB`, with Windows Authentication. The
 forward-only migration runner and initial eight-table/two-view schema are in
 `infrastructure/database/`; guarded reset and backup/restore tools operate only
@@ -67,16 +67,16 @@ future-data-only: it does not include historical run import, SQLite, or a local
 synchronization outbox. Its core tables are `UNITS`, `SWITCHES`,
 `UNIT_SWITCH_ASSIGNMENTS`, `IL_RUNS`, `IL_MEASUREMENTS`,
 `CHANNEL_REPLACEMENTS`, `DESIGNATED_SPARES`, and `SCHEMA_MIGRATIONS`, with
-read-only current-measurement and current-channel-map views. Application SQL
-repositories and runtime cutover have not yet been implemented. SQL Server becomes
-authoritative only after the staged roadmap is complete; current file-backed
-behavior remains the implemented baseline. Support logs, diagnostic exports,
-and generated COC files remain local. See `docs/DATABASE_ARCHITECTURE.md` and
-`docs/DATABASE_ROADMAP.md` before database work.
+read-only current-measurement and current-channel-map views. New production
+runs and accepted measurements use SQL Server as their authority. Existing
+CSV/JSON runs remain viewable but are not uploaded or writable database runs.
+Support logs, diagnostic exports, and generated COC files remain local. See
+`docs/DATABASE_ARCHITECTURE.md` and `docs/DATABASE_ROADMAP.md` before database
+work.
 
 | File | Responsibility |
 | --- | --- |
-| ilm_app.py | Current PyQt5 desktop viewer and real-hardware UI. Loads CSV runs, analyzes limits, starts hardware runs, displays readings, and commits accepted results. The header includes the bundled Lulu - CandC logo; the UI uses a light-grey shell and `#e60013` primary accent. |
+| ilm_app.py | Current PyQt5 desktop viewer and real-hardware UI. Loads database or legacy CSV runs, analyzes limits, starts hardware runs, displays readings, and commits accepted production results through the database workflow. The header includes the bundled Lulu - CandC logo; the UI uses a light-grey shell and `#e60013` primary accent. |
 | application/measurement_worker.py | Qt worker/orchestrator. Connects instruments, routes channels, waits for operator cable placement, supports repeated reads, emits readings/progress, and always closes instruments. |
 | measurement_worker.py | Compatibility facade for the application measurement worker. |
 | application/live_controller.py | Shared meter worker lifecycle used by Live IL and the main-window reference calculation. |

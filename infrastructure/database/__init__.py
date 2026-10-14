@@ -12,6 +12,8 @@ from infrastructure.database.preflight import (
     check_database_preflight,
 )
 from infrastructure.database.settings_repository import DatabaseSettingsRepository
+from infrastructure.database.memory_repositories import InMemoryRepositories
+from infrastructure.database.sql_repositories import SqlRepositories
 from infrastructure.database.maintenance import (
     INTEGRATION_DATABASE_NAME,
     RESTORE_VERIFICATION_DATABASE_NAME,
@@ -44,6 +46,7 @@ __all__ = [
     "DatabasePreflightResult",
     "DatabaseSettingsRepository",
     "INTEGRATION_DATABASE_NAME",
+    "InMemoryRepositories",
     "Migration",
     "MigrationChecksumError",
     "MigrationError",
@@ -51,6 +54,7 @@ __all__ = [
     "MigrationResult",
     "MigrationRunner",
     "RESTORE_VERIFICATION_DATABASE_NAME",
+    "SqlRepositories",
     "UnsupportedSchemaVersionError",
     "build_windows_connection_string",
     "check_database_preflight",

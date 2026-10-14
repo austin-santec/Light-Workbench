@@ -23,10 +23,11 @@ class CocSourceRun:
     """One persisted run that may contribute accepted readings to a COC."""
 
     run_number: int
-    source_path: Path
+    source_path: Path | None
     measurements: tuple[MeasurementRecord, ...]
     metadata: Mapping[str, str] = field(default_factory=dict)
     criteria: Mapping[str, object] | None = None
+    source_identifier: str = ""
 
 
 @dataclass(frozen=True)
@@ -35,10 +36,11 @@ class CocPreparedChannel:
 
     record: MeasurementRecord
     source_run_number: int
-    source_path: Path
+    source_path: Path | None
     physical_port: int
     physical_port_inferred: bool = False
     supplemental_override: bool = False
+    source_identifier: str = ""
 
 
 @dataclass(frozen=True)
@@ -243,6 +245,7 @@ def prepare_coc(
             physical_port=physical_port,
             physical_port_inferred=inferred,
             supplemental_override=is_override,
+            source_identifier=source.source_identifier,
         )
         prepared.append(prepared_channel)
         invalid.extend(_invalid_reading_issues(prepared_channel))

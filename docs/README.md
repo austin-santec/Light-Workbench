@@ -8,6 +8,10 @@ covers the current application workflow, deployment requirements, and operator
 features. This file focuses on architecture, coding practices, testing, and
 how to choose the other documents in this folder.
 
+The database development branch is SQL Server-primary for new production runs.
+Existing CSV/JSON runs can still be opened for review, but they are not
+uploaded or silently treated as writable database runs.
+
 The root [`Requirements.md`](../Requirements.md) maps the draft OSX insertion-loss
 requirements workbook to the current implementation, known gaps, decisions,
 and proposed delivery milestones.

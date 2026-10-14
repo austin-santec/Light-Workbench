@@ -18,7 +18,7 @@ class DatabaseSettings:
     Windows identity of the signed-in operator.
     """
 
-    enabled: bool = False
+    enabled: bool = True
     server: str = DEFAULT_DATABASE_SERVER
     database: str = DEFAULT_DATABASE_NAME
     driver: str = DEFAULT_ODBC_DRIVER

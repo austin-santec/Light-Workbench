@@ -80,6 +80,8 @@ from application.part_number_lookup import (
     classify_part_lookup_error,
 )
 from application.coc_workflow import CocRunOption, CocWorkflow
+from application.database_primary_workflow import DatabaseRunContext
+from application.run_lifecycle_workflow import DatabaseRunUnavailableError
 from application.reference_session import ReferenceSession
 from domain.measurement import (
     calculate_insertion_loss,
@@ -122,6 +124,8 @@ from domain.measurement_attempts import (
 )
 from domain.raw_export import format_raw_measurements
 from domain.part_numbers import parse_osx_part_number
+from domain.database_records import SwitchSpec, UnitSpec
+from domain.unit_switch_assignments import AssignmentChangeRequiredError
 from domain.coc_preparation import CocSourceRun
 from domain.run_status import (
     COMPLETION_COMPLETE,
@@ -800,6 +804,7 @@ class MainWindow(QMainWindow):
         initial_path: str | None = None,
         support_logger=None,
         part_lookup_controller=None,
+        database_workflow=None,
     ):
         super().__init__()
         self.support_logger = support_logger or get_support_logging_service()
@@ -816,6 +821,9 @@ class MainWindow(QMainWindow):
         self.reference_workflow = None
         self._support_log_size_warning_shown = False
         self.run_data: RunData | None = None
+        self.database_workflow = database_workflow
+        self.database_run_context: DatabaseRunContext | None = None
+        self.database_pending_measurement = None
         self.admin_session = AdminSession()
         self.reference_session = ReferenceSession()
         self.active_run_reference_snapshot = None
@@ -3586,12 +3594,35 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 current_run_number = None
 
+        if self.database_run_context is not None and self.database_workflow is not None:
+            try:
+                contexts = self.database_workflow.list_for_unit(
+                    self.database_run_context.unit.unit_id
+                )
+            except Exception as error:
+                contexts = ()
+                self._record_support(
+                    SupportEventCategory.CONNECTION,
+                    "database.comparison_query_failed",
+                    level=SupportLogLevel.ERROR,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    status="error",
+                )
+            for context in contexts:
+                if current_run_number == context.run.run_number:
+                    continue
+                self.comparison_run_combo.addItem(
+                    "Run %d" % context.run.run_number,
+                    "database:%d" % context.run.run_id,
+                )
+
         run_entries = [
             item
             for item in self.unit_record.get("runs", [])
             if isinstance(item, dict)
         ]
-        if self.unit_directory is not None:
+        if self.unit_directory is not None and self.database_run_context is None:
             def run_sort_key(item):
                 try:
                     return int(item.get("run_number", 0))
@@ -3643,7 +3674,22 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            comparison_data = self.run_repository.load_csv(Path(selected_path))
+            if str(selected_path).startswith("database:"):
+                if self.database_workflow is None:
+                    raise ValueError("Database workflow is unavailable")
+                context = self.database_workflow.load_run(
+                    int(str(selected_path).split(":", 1)[1])
+                )
+                metadata = self._database_metadata(context)
+                comparison_data = RunData(
+                    Path("database-run-%d" % context.run.run_id),
+                    list(context.snapshot.measurements),
+                    metadata,
+                    criteria_snapshot=dict(context.run.limit_snapshot),
+                    measurement_attempts=list(context.snapshot.measurement_attempts),
+                )
+            else:
+                comparison_data = self.run_repository.load_csv(Path(selected_path))
         except (OSError, ValueError) as error:
             self.comparison_run_combo.blockSignals(True)
             self.comparison_run_combo.setCurrentIndex(0)
@@ -3709,6 +3755,8 @@ class MainWindow(QMainWindow):
 
     def persist_unit_record(self):
         """Persist device-level replacements, spares, and the active run index."""
+        if self.database_run_context is not None:
+            return
         if self.unit_directory is None:
             return
         metadata = (
@@ -3789,6 +3837,25 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Stop the active hardware run first.")
             return
         metadata = self._current_hardware_identity()
+        if self.database_workflow is not None:
+            try:
+                context = self.database_workflow.load_for_unit(
+                    metadata.get("Main board serial", ""),
+                    self.hardware_run_number.value(),
+                )
+            except DatabaseRunUnavailableError as error:
+                QMessageBox.critical(
+                    self,
+                    "Database unavailable",
+                    str(error),
+                )
+                return
+            except (ValueError, OSError, RuntimeError) as error:
+                QMessageBox.information(self, "Run not found", str(error))
+                return
+            self._apply_database_run_context(context)
+            self.statusBar().showMessage("Database run loaded.")
+            return
         unit_directory = self._run_lookup_unit_directory(metadata)
         run_number = self.hardware_run_number.value()
         csv_path = self.run_repository.find_run_csv_for_number(
@@ -3820,6 +3887,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Could not open run", str(error))
             return
 
+        self.database_run_context = None
+        self.database_pending_measurement = None
         self.run_data = run_data
         self.run_recorder = None
         self._loaded_run_profile_unavailable = False
@@ -4322,6 +4391,183 @@ class MainWindow(QMainWindow):
             "Tested by": self.hardware_tested_by.text().strip(),
         }
 
+    @property
+    def database_run_active(self):
+        return self.database_run_context is not None
+
+    def _database_measurement_hardware_snapshot(self, preparation):
+        meter = self.hardware_connection_manager.snapshot(
+            HardwareCapability.MEASUREMENT
+        ).device_info
+        switch = self.hardware_connection_manager.snapshot(
+            HardwareCapability.OPTICAL_SWITCH
+        ).device_info
+        planned = (
+            list(self._active_planned_channels)
+            if self._active_planned_channels is not None
+            else []
+        )
+        return {
+            "ilm": {
+                "model": meter.model,
+                "serial": meter.serial_number,
+                "firmware": meter.firmware_version,
+            },
+            "switch": {
+                "model": switch.model,
+                "serial": switch.serial_number,
+                "firmware": switch.firmware_version,
+                "physical_channel_count": switch.configured_channel_count,
+            },
+            "channel_mode": (
+                preparation.plan.mode.value
+                if preparation.plan is not None
+                else "Retest"
+            ),
+            "planned_channels": planned,
+            "measurement_classification": (
+                self.measurement_configuration.classification.value
+            ),
+            "opm_wavelengths_nm": list(
+                self.measurement_configuration.opm_wavelengths_nm
+            ),
+            "source_wavelengths_nm": list(
+                self.measurement_configuration.source_wavelengths_nm
+            ),
+            "source_ids": list(self.measurement_configuration.source_ids),
+            "source_profile": (
+                self.measurement_configuration.source_profile.profile_id
+            ),
+            "source_profile_origin": (
+                self.measurement_configuration.source_profile.origin
+            ),
+            "mode_selection_method": self._wavelength_mode_selection_method,
+        }
+
+    def _database_metadata(self, context):
+        hardware = context.run.measurement_hardware
+        metadata = dict(context.snapshot.metadata)
+        metadata.update(
+            {
+                "Mode": "Real hardware",
+                "Main board serial": context.unit.main_board_serial,
+                "Switch serial": context.switch.switch_serial,
+                "Part number": context.run.part_number_snapshot
+                or context.unit.part_number
+                or "",
+                "Switch model": context.switch.switch_model,
+                "Run number": str(context.run.run_number),
+                "OPM wavelengths nm": ",".join(
+                    str(value)
+                    for value in hardware.get(
+                        "opm_wavelengths_nm",
+                        (1310, 1550) if context.run.wavelength_mode == "SM" else (850, 1300),
+                    )
+                ),
+                "Source wavelengths nm": ",".join(
+                    str(value)
+                    for value in hardware.get("source_wavelengths_nm", ())
+                ),
+                "Source IDs": ",".join(
+                    str(value) for value in hardware.get("source_ids", ())
+                ),
+                "Source profile": str(hardware.get("source_profile") or ""),
+                "Source profile origin": str(
+                    hardware.get("source_profile_origin") or ""
+                ),
+                "Mode selection method": str(
+                    hardware.get("mode_selection_method") or "manual_operator_selection"
+                ),
+                "Measurement classification": str(
+                    hardware.get("measurement_classification") or "native"
+                ),
+                "Channel mode": str(hardware.get("channel_mode") or ""),
+                "Planned channels": ",".join(
+                    str(value) for value in hardware.get("planned_channels", ())
+                ),
+            }
+        )
+        metadata["Planned channel count"] = str(
+            len(hardware.get("planned_channels", ()))
+        )
+        return metadata
+
+    def _database_coc_source(self, context):
+        return CocSourceRun(
+            run_number=context.run.run_number,
+            source_path=None,
+            source_identifier="database-run:%d" % context.run.run_id,
+            measurements=tuple(context.snapshot.measurements),
+            metadata=self._database_metadata(context),
+            criteria=dict(context.run.limit_snapshot),
+        )
+
+    def _apply_database_run_context(self, context, *, update_setup=True):
+        """Publish one committed database snapshot to existing UI consumers."""
+        self.database_run_context = context
+        self.database_pending_measurement = None
+        metadata = self._database_metadata(context)
+        self.run_data = RunData(
+            Path("database-run-%d" % context.run.run_id),
+            list(context.snapshot.measurements),
+            metadata,
+            criteria_snapshot=dict(context.run.limit_snapshot),
+            measurement_attempts=list(context.snapshot.measurement_attempts),
+        )
+        self.run_recorder = None
+        self.unit_directory = None
+        self.unit_record = {}
+        self.replacement_history = []
+        self.completed_replacements = [
+            {
+                "current_port": item.initial_physical_port,
+                "replacement_port": item.effective_physical_port,
+            }
+            for item in context.routing.channel_map
+            if item.is_replaced
+        ]
+        self.designated_spares = list(context.routing.active_spares)
+        self.run_data.completed_replacements = list(self.completed_replacements)
+        planned = context.run.measurement_hardware.get("planned_channels", ())
+        self._active_planned_channels = tuple(int(value) for value in planned) or None
+        status = context.run.completion_status
+        self._run_terminal_status = {
+            "complete": COMPLETION_COMPLETE,
+            "stopped": COMPLETION_INCOMPLETE,
+            "failed": COMPLETION_INTERRUPTED,
+        }.get(status, COMPLETION_IN_PROGRESS)
+        self._run_completed_at_utc = (
+            context.run.run_ended_at_utc.isoformat()
+            if context.run.run_ended_at_utc is not None
+            else ""
+        )
+        if update_setup:
+            self.hardware_main_board_serial.setText(context.unit.main_board_serial)
+            self.hardware_switch_serial.setText(context.switch.switch_serial)
+            self.hardware_part_number.setCurrentText(metadata["Part number"])
+            self.hardware_operating_band.setCurrentText(context.run.operating_band)
+            self.hardware_tested_by.setText(context.run.tested_by)
+            self.hardware_run_number.setValue(context.run.run_number)
+            self._set_wavelength_mode(context.run.wavelength_mode, invalidate=False)
+        self.file_label.setText(
+            "Database: %s / Run %d"
+            % (context.unit.main_board_serial, context.run.run_number)
+        )
+        self.metadata_labels["Source file"].setText("SQL Server")
+        for key in (
+            "Part number",
+            "Main board serial",
+            "Switch serial",
+            "Operating band",
+            "Tested by",
+            "Run number",
+        ):
+            self.metadata_labels[key].setText(metadata.get(key) or "Not recorded")
+        self.replacement_analysis = None
+        self.clear_current_reading()
+        self.refresh_comparison_runs()
+        self.refresh_analysis()
+
     def _restore_hardware_identity(self, metadata):
         """Restore loaded identity values after declining an update."""
         self.hardware_part_number.setCurrentText(metadata.get("Part number", ""))
@@ -4483,11 +4729,36 @@ class MainWindow(QMainWindow):
 
         selected_identity = self._current_hardware_identity()
         selected_run_number = self.hardware_run_number.value()
-        selected_unit_directory = self.unit_repository.unit_directory_for_metadata(
-            DEFAULT_RUN_ROOT,
-            selected_identity,
-        )
-        if not retest and run_mode == "new":
+        selected_unit_directory = None
+        if self.database_workflow is None:
+            selected_unit_directory = self.unit_repository.unit_directory_for_metadata(
+                DEFAULT_RUN_ROOT,
+                selected_identity,
+            )
+        if self.database_workflow is not None and run_mode == "continue":
+            if self.database_run_context is None:
+                QMessageBox.warning(
+                    self,
+                    "Legacy run is read-only",
+                    "File-backed runs can be viewed and exported, but new accepted "
+                    "readings must be stored in SQL Server. Start a new database run.",
+                )
+                return
+            if self.database_run_context.run.completion_status == "complete":
+                QMessageBox.warning(
+                    self,
+                    "Run is closed",
+                    "A completed run cannot be continued as an unfinished pass. "
+                    "Use Retest selected for corrections, or start a new run for "
+                    "optimization readings.",
+                )
+                return
+        if self.database_workflow is not None and retest and self.database_run_context is None:
+            QMessageBox.warning(
+                self, "Database run required", "Load the database run before retesting."
+            )
+            return
+        if self.database_workflow is None and not retest and run_mode == "new":
             if selected_run_number in self.unit_repository.available_run_numbers(
                 selected_unit_directory
             ):
@@ -4630,6 +4901,142 @@ class MainWindow(QMainWindow):
             self.current_run_workflow,
             connect_if_needed=False,
         )
+
+        if self.database_workflow is not None and not retest and run_mode == "new":
+            try:
+                part_details = parse_osx_part_number(
+                    selected_identity.get("Part number", "")
+                )
+                switch_info = self.hardware_connection_manager.snapshot(
+                    HardwareCapability.OPTICAL_SWITCH
+                ).device_info
+                physical_count = (
+                    switch_info.configured_channel_count
+                    or self.hardware_configured_channel_count
+                )
+                if not physical_count:
+                    raise ValueError(
+                        "The connected switch did not report its physical channel count."
+                    )
+                if preparation.plan is not None and preparation.plan.full_pass:
+                    self._active_planned_channels = tuple(
+                        range(1, int(physical_count) + 1)
+                    )
+                database_run_args = {
+                    "unit_spec": UnitSpec(
+                        main_board_serial=selected_identity.get(
+                            "Main board serial", ""
+                        ),
+                        part_number=part_details.value,
+                        front_panel_channel_count=(
+                            part_details.front_panel_channel_count
+                        ),
+                        unit_model=part_details.model,
+                    ),
+                    "switch_spec": SwitchSpec(
+                        switch_serial=selected_identity.get("Switch serial", ""),
+                        switch_model=self._connected_switch_model(),
+                        physical_channel_count=int(physical_count),
+                        firmware_version=switch_info.firmware_version or None,
+                    ),
+                    "installed_by": self.hardware_tested_by.text().strip(),
+                    "initial_channel_map": {
+                        channel: channel
+                        for channel in range(
+                            1, part_details.front_panel_channel_count + 1
+                        )
+                    },
+                    "tested_by": self.hardware_tested_by.text().strip(),
+                    "wavelength_mode": (
+                        self.measurement_configuration.wavelength_profile.code
+                    ),
+                    "operating_band": (
+                        self.hardware_operating_band.currentText().strip()
+                        or "O band"
+                    ),
+                    "application_version": APP_VERSION,
+                    "measurement_hardware": (
+                        self._database_measurement_hardware_snapshot(preparation)
+                    ),
+                    "limit_snapshot": profile.as_dict(),
+                    "part_number_snapshot": part_details.value,
+                    "front_panel_channel_count": (
+                        part_details.front_panel_channel_count
+                    ),
+                }
+                try:
+                    context = self.database_workflow.start_new_run(
+                        **database_run_args
+                    )
+                except AssignmentChangeRequiredError:
+                    reason, accepted = QInputDialog.getText(
+                        self,
+                        "Record switch replacement",
+                        "This unit already has a different switch assigned. "
+                        "Enter the reason the previous switch was removed:",
+                    )
+                    if not accepted or not reason.strip():
+                        return
+                    context = self.database_workflow.start_new_run(
+                        **database_run_args,
+                        switch_replacement_reason=reason.strip(),
+                    )
+                selected_run_number = context.run.run_number
+                self._apply_database_run_context(context, update_setup=False)
+                self.hardware_run_number.setValue(selected_run_number)
+            except DatabaseRunUnavailableError as error:
+                self._record_support(
+                    SupportEventCategory.CONNECTION,
+                    "database.run_start_blocked",
+                    level=SupportLogLevel.ERROR,
+                    error_message=str(error),
+                    status="blocked",
+                )
+                QMessageBox.critical(self, "Database unavailable", str(error))
+                return
+            except Exception as error:
+                self._record_support(
+                    SupportEventCategory.WORKFLOW,
+                    "database.run_start_failed",
+                    level=SupportLogLevel.ERROR,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    status="error",
+                )
+                QMessageBox.critical(
+                    self,
+                    "Could not create database run",
+                    "The hardware run was not started because its database record "
+                    "could not be created:\n%s" % error,
+                )
+                return
+        elif (
+            self.database_workflow is not None
+            and self.database_run_context is not None
+            and (continuing_existing or retest)
+            and self.database_run_context.run.completion_status != "in_progress"
+        ):
+            try:
+                context = self.database_workflow.resume_run(
+                    self.database_run_context.run.run_id
+                )
+                self._apply_database_run_context(context, update_setup=False)
+            except Exception as error:
+                self._record_support(
+                    SupportEventCategory.CONNECTION,
+                    "database.run_resume_failed",
+                    level=SupportLogLevel.ERROR,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    status="error",
+                )
+                QMessageBox.critical(
+                    self,
+                    "Could not resume database run",
+                    "The run remains closed and no hardware operation was started:\n%s"
+                    % error,
+                )
+                return
         self._record_support(
             SupportEventCategory.WORKFLOW,
             "run.started",
@@ -4651,7 +5058,14 @@ class MainWindow(QMainWindow):
         self.active_run_reference_snapshot = dict(
             self.reference_session.snapshot.as_dict()
         )
-        if not retest and run_mode == "new":
+        if self.database_workflow is not None:
+            self.run_recorder = None
+            self.switch_test_timer = SwitchTestTimer(
+                self.run_data.metadata,
+                self.run_data.switch_test_sessions,
+            )
+            self.replacement_analysis = None
+        elif not retest and run_mode == "new":
             self._loaded_run_profile_unavailable = False
             self._loaded_run_profile_reason = ""
             self.run_data = RunData(
@@ -4798,6 +5212,27 @@ class MainWindow(QMainWindow):
         try:
             self.hardware_controller.start(request)
         except (RuntimeError, OSError) as error:
+            if (
+                self.database_workflow is not None
+                and self.database_run_context is not None
+                and self.database_run_context.run.completion_status == "in_progress"
+                and not continuing_existing
+                and not retest
+            ):
+                try:
+                    self.database_run_context = self.database_workflow.finish_run(
+                        self.database_run_context.run.run_id,
+                        "failed",
+                    )
+                except Exception as database_error:
+                    self._record_support(
+                        SupportEventCategory.CONNECTION,
+                        "database.run_finish_failed",
+                        level=SupportLogLevel.ERROR,
+                        error_type=type(database_error).__name__,
+                        error_message=str(database_error),
+                        status="error",
+                    )
             self._record_support(
                 SupportEventCategory.WORKFLOW,
                 "run.start_failed",
@@ -5299,7 +5734,8 @@ class MainWindow(QMainWindow):
                 self,
                 "Could not save reading",
                 "The reading was not committed to the run:\n%s\n\n"
-                "Correct the storage problem and take the reading again." % error,
+                "The completed reading is still pending. Correct the database "
+                "problem, then press Write IL again to retry it." % error,
             )
             self.write_hardware_button.setEnabled(True)
             return False
@@ -5348,7 +5784,43 @@ class MainWindow(QMainWindow):
             source_wavelengths_nm=configuration.source_wavelengths_nm,
             source_ids=configuration.source_ids,
         )
-        attempt = self._accept_measurement_record(record)
+        if self.database_workflow is not None:
+            if self.database_run_context is None:
+                raise RuntimeError(
+                    "No database run is active; the reading was not accepted."
+                )
+            if self.database_pending_measurement is None:
+                self.database_pending_measurement = (
+                    self.database_workflow.measurements.prepare_measurement(
+                        run_id=self.database_run_context.run.run_id,
+                        logical_channel=channel,
+                        physical_port=physical_port,
+                        wavelength_1_nm=wavelengths[0],
+                        wavelength_1_il_db=first_loss,
+                        wavelength_2_nm=wavelengths[1],
+                        wavelength_2_il_db=second_loss,
+                        reference_snapshot=(
+                            dict(self.active_run_reference_snapshot)
+                            if self.active_run_reference_snapshot
+                            else {}
+                        ),
+                        written_by=self.run_data.metadata.get("Tested by", ""),
+                    )
+                )
+            _, context = self.database_workflow.commit_measurement(
+                self.database_pending_measurement
+            )
+            measurement_uuid = str(
+                self.database_pending_measurement.measurement_uuid
+            )
+            self._apply_database_run_context(context, update_setup=False)
+            attempt = next(
+                item
+                for item in self.run_data.measurement_attempts
+                if item.attempt_id == measurement_uuid
+            )
+        else:
+            attempt = self._accept_measurement_record(record)
         self._record_support(
             SupportEventCategory.MEASUREMENT,
             "measurement.written",
@@ -5518,6 +5990,7 @@ class MainWindow(QMainWindow):
     def hardware_reading_ready(self, channel, _physical_port, loss_1310, loss_1550):
         wavelengths = self.measurement_configuration.opm_wavelengths_nm
         try:
+            self.database_pending_measurement = None
             self.hardware_session.set_pending_reading(
                 channel,
                 _physical_port,
@@ -5903,6 +6376,7 @@ class MainWindow(QMainWindow):
         }
 
     def hardware_completed(self):
+        self._finish_database_run("complete")
         self._run_terminal_status = COMPLETION_COMPLETE
         self._run_completion_reason = "Every planned channel has an accepted reading."
         self._run_completed_at_utc = utc_now()
@@ -5926,10 +6400,15 @@ class MainWindow(QMainWindow):
         self.retest_button.setEnabled(True)
         self.active_run_reference_snapshot = None
         self.refresh_run_status(include_composite=False)
-        self.statusBar().showMessage("Hardware run complete. CSV and JSON are saved.")
+        self.statusBar().showMessage(
+            "Hardware run complete. Readings are saved in SQL Server."
+            if self.database_workflow is not None
+            else "Hardware run complete. CSV and JSON are saved."
+        )
         self._schedule_post_run_replacement_offer()
 
     def hardware_stopped(self):
+        self._finish_database_run("stopped")
         self._run_terminal_status = COMPLETION_INCOMPLETE
         self._run_completion_reason = "The run was manually stopped before completion."
         self._run_completed_at_utc = utc_now()
@@ -5956,6 +6435,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Hardware run stopped. Completed readings remain visible.")
 
     def hardware_failed(self, message):
+        self._finish_database_run("failed")
         self._run_terminal_status = COMPLETION_INTERRUPTED
         self._run_completion_reason = str(message or "Hardware run failed.")
         self._run_completed_at_utc = utc_now()
@@ -5981,6 +6461,38 @@ class MainWindow(QMainWindow):
         self.active_run_reference_snapshot = None
         self.refresh_run_status(include_composite=False)
         QMessageBox.critical(self, "Hardware run stopped", message)
+
+    def _finish_database_run(self, completion_status):
+        if self.database_workflow is None or self.database_run_context is None:
+            return True
+        if self.database_run_context.run.completion_status != "in_progress":
+            return True
+        try:
+            context = self.database_workflow.finish_run(
+                self.database_run_context.run.run_id,
+                completion_status,
+            )
+            self._apply_database_run_context(context, update_setup=False)
+            return True
+        except Exception as error:
+            self._record_support(
+                SupportEventCategory.CONNECTION,
+                "database.run_finish_failed",
+                level=SupportLogLevel.ERROR,
+                completion_status=completion_status,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
+            QMessageBox.critical(
+                self,
+                "Database status update failed",
+                "The readings already accepted by SQL Server remain saved, but "
+                "the run could not be marked %s:\n%s\n\nContact engineering "
+                "support before starting another run."
+                % (completion_status, error),
+            )
+            return False
 
     def stop_hardware(self):
         if self.hardware_controller.is_active:
@@ -6118,6 +6630,8 @@ class MainWindow(QMainWindow):
         """Adapt the active run to the existing COC source boundary."""
         if self.run_data is None:
             return None
+        if self.database_run_context is not None:
+            return self._database_coc_source(self.database_run_context)
         try:
             run_number = int(self.run_data.metadata.get("Run number", 1))
         except (TypeError, ValueError):
@@ -6142,11 +6656,19 @@ class MainWindow(QMainWindow):
             return None, ()
         try:
             options = self._coc_run_options()
-        except (OSError, ValueError, TypeError, KeyError):
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError):
             return None, ()
         for option in options:
             other = option.source
-            if other.source_path.resolve() == current.source_path.resolve():
+            same_source = (
+                bool(other.source_identifier and current.source_identifier)
+                and other.source_identifier == current.source_identifier
+            ) or (
+                other.source_path is not None
+                and current.source_path is not None
+                and other.source_path.resolve() == current.source_path.resolve()
+            )
+            if same_source:
                 continue
             for base, supplemental in ((current, other), (other, current)):
                 try:
@@ -6323,7 +6845,9 @@ class MainWindow(QMainWindow):
             has_measurements and limits_available
         )
         self.record_replacements_button.setEnabled(
-            has_measurements or self.unit_directory is not None
+            has_measurements
+            or self.unit_directory is not None
+            or self.database_run_context is not None
         )
         self.copy_replacement_notes_button.setEnabled(
             bool(self.completed_replacements)
@@ -6427,9 +6951,9 @@ class MainWindow(QMainWindow):
                 "Enter a main board serial or part number before recording replacements.",
             )
             return
-        if self.unit_directory is None:
+        if self.unit_directory is None and self.database_run_context is None:
             self.ensure_unit_state_for_current_fields()
-        if self.unit_directory is None:
+        if self.unit_directory is None and self.database_run_context is None:
             QMessageBox.information(
                 self,
                 "Unit information required",
@@ -6444,7 +6968,11 @@ class MainWindow(QMainWindow):
             self.completed_replacements,
             recommendations,
             self.designated_spares,
-            history=self.replacement_history,
+            history=(
+                None
+                if self.database_run_context is not None
+                else self.replacement_history
+            ),
             operator=self.hardware_tested_by.text().strip(),
             context={
                 "source_run_number": (
@@ -6460,12 +6988,28 @@ class MainWindow(QMainWindow):
         if dialog.exec_() != QDialog.Accepted:
             return
 
-        self.replacement_history = list(dialog.history)
-        self.completed_replacements = effective_replacements(self.replacement_history)
-        self.designated_spares = list(dialog.designated_spares)
-        if self.run_data is not None:
-            self.run_data.completed_replacements = list(self.completed_replacements)
-        self.persist_unit_record()
+        if self.database_run_context is not None:
+            try:
+                self._persist_database_routing_changes(dialog)
+            except Exception as error:
+                QMessageBox.critical(
+                    self,
+                    "Could not save replacement records",
+                    "No local fallback was used. Review the requested mapping and "
+                    "database connection, then try again:\n%s" % error,
+                )
+                return
+        else:
+            self.replacement_history = list(dialog.history)
+            self.completed_replacements = effective_replacements(
+                self.replacement_history
+            )
+            self.designated_spares = list(dialog.designated_spares)
+            if self.run_data is not None:
+                self.run_data.completed_replacements = list(
+                    self.completed_replacements
+                )
+            self.persist_unit_record()
         self._record_support(
             SupportEventCategory.OPERATOR,
             "replacement.records_saved",
@@ -6487,8 +7031,66 @@ class MainWindow(QMainWindow):
         self.refresh_replacement_summary()
         self.refresh_run_status()
         self.statusBar().showMessage(
-            "Completed replacements and designated spares saved to the unit record."
+            "Completed replacements and designated spares saved to SQL Server."
+            if self.database_run_context is not None
+            else "Completed replacements and designated spares saved to the unit record."
         )
+
+    def _persist_database_routing_changes(self, dialog):
+        """Append the dialog's effective routing changes to the active assignment."""
+        context = self.database_run_context
+        if context is None or self.database_workflow is None:
+            raise ValueError("No database-backed unit is loaded")
+        workflow = self.database_workflow.replacements
+        current_by_initial = {
+            item.initial_physical_port: item for item in context.routing.channel_map
+        }
+        desired = {
+            int(item["current_port"]): item
+            for item in effective_replacements(dialog.history)
+        }
+        operator = self.hardware_tested_by.text().strip()
+        for initial_port, mapping in current_by_initial.items():
+            desired_record = desired.get(initial_port)
+            desired_port = (
+                int(desired_record["replacement_port"])
+                if desired_record is not None
+                else int(mapping.initial_physical_port)
+            )
+            if desired_port == mapping.effective_physical_port:
+                continue
+            workflow.record_replacement(
+                assignment_id=context.assignment.assignment_id,
+                logical_channel=mapping.logical_channel,
+                previous_physical_port=mapping.effective_physical_port,
+                replacement_physical_port=desired_port,
+                reason=(
+                    str((desired_record or {}).get("reason") or "Operator update")
+                ),
+                replaced_by=(
+                    str((desired_record or {}).get("operator") or operator)
+                ),
+                related_run_id=context.run.run_id,
+                notes="Recorded from Manage Port Replacements",
+            )
+        existing_spares = set(context.routing.active_spares)
+        desired_spares = {int(value) for value in dialog.designated_spares}
+        for port in sorted(desired_spares - existing_spares):
+            workflow.designate_spare(
+                context.assignment.assignment_id,
+                port,
+                operator,
+                notes="Recorded from Manage Port Replacements",
+            )
+        for port in sorted(existing_spares - desired_spares):
+            workflow.undesignate_spare(
+                context.assignment.assignment_id,
+                port,
+                operator,
+                notes="Recorded from Manage Port Replacements",
+            )
+        refreshed = self.database_workflow.refresh(context.run.run_id)
+        self._apply_database_run_context(refreshed, update_setup=False)
 
     def copy_replacement_notes(self):
         """Copy completed physical-port swaps for pasting into Unit Editor."""
@@ -6802,6 +7404,8 @@ class MainWindow(QMainWindow):
         if self.run_data is None:
             return
         self.refresh_run_status(include_composite=False)
+        if self.database_run_context is not None:
+            return
         if self.run_recorder is None:
             self.run_recorder = self.run_repository.recorder_from_existing(
                 self.run_data.source_path,
@@ -6831,6 +7435,15 @@ class MainWindow(QMainWindow):
 
     def _coc_run_options(self):
         """Return persisted runs for the active unit, including legacy context."""
+        if self.database_run_context is not None and self.database_workflow is not None:
+            contexts = self.database_workflow.list_for_unit(
+                self.database_run_context.unit.unit_id
+            )
+            return [
+                CocRunOption(self._database_coc_source(context))
+                for context in contexts
+                if context.snapshot.measurements
+            ]
         options = []
         if self.unit_directory is not None:
             options = self.coc_workflow.available_runs(self.unit_directory)
@@ -7137,7 +7750,11 @@ class MainWindow(QMainWindow):
                 options,
                 prepare,
                 front_panel_count_resolver=self._resolve_coc_front_panel_count,
-                current_run_path=self.run_data.source_path,
+                current_run_path=(
+                    None
+                    if self.database_run_context is not None
+                    else self.run_data.source_path
+                ),
                 validation_blocked_callback=record_blocked_validation,
                 parent=self,
             )
@@ -7289,6 +7906,11 @@ class MainWindow(QMainWindow):
 
         template = None
         output_path = None
+        destination = (
+            base_run.source_path.parent
+            if base_run.source_path is not None
+            else None
+        )
         try:
             template = self._select_coc_template(
                 result.front_panel_channel_count,
@@ -7311,12 +7933,29 @@ class MainWindow(QMainWindow):
                     **self._coc_result_log_fields(result),
                 )
                 return
+            if destination is None:
+                selected_destination = QFileDialog.getExistingDirectory(
+                    self,
+                    "Select COC output folder",
+                    str(DEFAULT_RUN_ROOT),
+                )
+                if not selected_destination:
+                    self._record_coc_terminal(
+                        attempt_id,
+                        "canceled",
+                        "destination_selection",
+                        reason_code="operator_canceled_destination_selection",
+                        operator_choice="cancel",
+                        **self._coc_result_log_fields(result),
+                    )
+                    return
+                destination = Path(selected_destination)
             self._record_coc_event(
                 "export.coc_started",
                 attempt_id,
                 run_number=result.base_run_number,
                 measurement_count=len(result.measurements),
-                destination=base_run.source_path.parent,
+                destination=destination,
                 template_path=template,
                 front_panel_channel_count=result.front_panel_channel_count,
                 template_capacity=result.template_capacity,
@@ -7327,7 +7966,7 @@ class MainWindow(QMainWindow):
             )
             output_path = self.coc_exporter.export(
                 template,
-                base_run.source_path.parent,
+                destination,
                 list(result.measurements),
                 part_number,
                 serial,
@@ -7376,8 +8015,13 @@ class MainWindow(QMainWindow):
                     "COC supplemental overrides": override_text,
                 }
             )
-            self._persist_coc_export_metadata(base_run, metadata)
-            if Path(self.run_data.source_path).resolve() == base_run.source_path.resolve():
+            if base_run.source_path is not None:
+                self._persist_coc_export_metadata(base_run, metadata)
+            if (
+                base_run.source_path is not None
+                and Path(self.run_data.source_path).resolve()
+                == base_run.source_path.resolve()
+            ):
                 self.run_data.metadata.update(metadata)
                 if self.run_recorder is not None:
                     self.run_recorder.metadata = dict(metadata)
@@ -7385,7 +8029,7 @@ class MainWindow(QMainWindow):
             error_fields = {
                 "error_type": type(error).__name__,
                 "error_message": str(error),
-                "destination": output_path or base_run.source_path.parent,
+                "destination": output_path or destination or "",
                 "template_path": template or "",
                 "status": "error",
                 **self._coc_result_log_fields(result),
@@ -7881,9 +8525,13 @@ def main():
         finally:
             support_logger.shutdown()
             set_support_logging_service(None)
+    from infrastructure.database.runtime import build_database_primary_workflow
+
+    database_workflow = build_database_primary_workflow(support_logger)
     window = MainWindow(
         sys.argv[1] if len(sys.argv) > 1 else None,
         support_logger=support_logger,
+        database_workflow=database_workflow,
     )
     window.showMaximized()
     try:

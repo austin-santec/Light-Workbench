@@ -170,6 +170,7 @@ class CocExportDialog(QDialog):
                 preferred_index = index
             elif (
                 self.current_run_path is not None
+                and option.source.source_path is not None
                 and option.source.source_path.resolve() == self.current_run_path
             ):
                 preferred_index = index

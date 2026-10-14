@@ -91,12 +91,13 @@ def _migration(script="CREATE TABLE dbo.SCHEMA_MIGRATIONS (id INT);", checksum="
 
 
 class MigrationDiscoveryTests(unittest.TestCase):
-    def test_bundled_initial_migration_is_discovered(self):
+    def test_bundled_migrations_are_discovered(self):
         migrations = discover_migrations()
 
-        self.assertEqual([item.migration_id for item in migrations], [1])
+        self.assertEqual([item.migration_id for item in migrations], [1, 2])
         self.assertEqual(migrations[0].name, "initial_schema")
-        self.assertEqual(len(migrations[0].checksum), 64)
+        self.assertEqual(migrations[1].name, "nonnegative_measurement_losses")
+        self.assertTrue(all(len(item.checksum) == 64 for item in migrations))
 
     def test_migration_ids_must_be_contiguous(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -329,7 +330,7 @@ class SqlServerMigrationIntegrationTests(unittest.TestCase):
         ).apply()
 
         self.assertEqual(result.applied_ids, ())
-        self.assertEqual(result.current_version, 1)
+        self.assertEqual(result.current_version, 2)
 
     def test_invalid_json_and_nonpositive_counts_are_rejected(self):
         cursor = self.connection.cursor()
@@ -544,6 +545,38 @@ class SqlServerMigrationIntegrationTests(unittest.TestCase):
         with self.assertRaises(self.pyodbc.IntegrityError):
             cursor.execute(
                 insert_sql, measurement_uuid, run_id, 2, "integration-test"
+            )
+        cursor.close()
+
+    def test_negative_measurement_losses_are_rejected(self):
+        import uuid
+
+        _unit_id, _switch_id, assignment_id = self._create_assignment(
+            "negative-measurement"
+        )
+        run_id = self._create_run(assignment_id, str(uuid.uuid4()))
+        cursor = self.connection.cursor()
+        with self.assertRaises(self.pyodbc.IntegrityError):
+            cursor.execute(
+                """
+                INSERT INTO dbo.IL_MEASUREMENTS (
+                    measurement_uuid,
+                    run_id,
+                    logical_channel,
+                    attempt_number,
+                    wavelength_1_nm,
+                    wavelength_1_il_db,
+                    wavelength_2_nm,
+                    wavelength_2_il_db,
+                    reference_snapshot_json,
+                    written_at_utc,
+                    written_by
+                ) VALUES (?, ?, 1, 1, 1310, -0.1000, 1550, 0.5000, '{}',
+                          SYSUTCDATETIME(), ?)
+                """,
+                str(uuid.uuid4()),
+                run_id,
+                "integration-test",
             )
         cursor.close()
 
