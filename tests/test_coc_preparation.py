@@ -58,18 +58,22 @@ class CocPreparationTests(unittest.TestCase):
         self.assertEqual(result.supplemental_run_number, None)
         self.assertEqual(result.effective_criteria, CRITERIA)
 
-    def test_nonproduction_source_is_rejected_but_legacy_missing_purpose_is_allowed(self):
+    def test_run_purpose_does_not_block_eligible_coc_data(self):
         engineering = source(
             1,
             [MeasurementRecord(1, 1.0, 1.1, 1)],
             run_purpose="engineering",
         )
         result = prepare_coc(engineering, 1)
-        self.assertFalse(result.eligible)
-        self.assertIn(
-            "non_production_run",
-            {issue.code for issue in result.validation_issues},
-        )
+        self.assertTrue(result.eligible)
+
+        for purpose in ("production", "training", "calibration"):
+            candidate = source(
+                10,
+                [MeasurementRecord(1, 1.0, 1.1, 1)],
+                run_purpose=purpose,
+            )
+            self.assertTrue(prepare_coc(candidate, 1).eligible)
 
         legacy = source(2, [MeasurementRecord(1, 1.0, 1.1, 1)])
         legacy = CocSourceRun(
@@ -81,6 +85,22 @@ class CocPreparationTests(unittest.TestCase):
             legacy.source_identifier,
         )
         self.assertTrue(prepare_coc(legacy, 1).eligible)
+
+    def test_mixed_purpose_base_and_supplemental_runs_are_allowed(self):
+        base = source(
+            1,
+            [MeasurementRecord(1, 1.0, 1.1, 1)],
+            run_purpose="engineering",
+        )
+        supplemental = source(
+            2,
+            [MeasurementRecord(1, 1.0, 1.1, 1)],
+            run_purpose="calibration",
+        )
+        result = prepare_coc(base, 1, supplemental_run=supplemental)
+        self.assertTrue(result.eligible)
+        self.assertEqual(result.base_run_number, 1)
+        self.assertEqual(result.supplemental_run_number, 2)
 
     def test_unit_18901_style_replacements_create_complete_passing_report(self):
         baseline = [

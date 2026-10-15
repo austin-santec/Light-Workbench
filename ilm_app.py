@@ -3152,7 +3152,9 @@ class MainWindow(QMainWindow):
                 getattr(readiness, "operator_message", "The database is unavailable."),
             )
             return
-        DatabaseReportsDialog(self.database_workflow.reporting, self).exec_()
+        dialog = DatabaseReportsDialog(self.database_workflow.reporting, self)
+        dialog.apply_theme(self.dark_mode_enabled)
+        dialog.exec_()
 
     def _switch_ip_query_finished(self, operation_id, address, error):
         """Present one manager-owned IP result on the GUI thread."""
@@ -8145,6 +8147,7 @@ class MainWindow(QMainWindow):
             if result.supplemental_run_number is not None:
                 source_runs.append("Run %d" % result.supplemental_run_number)
             metadata = dict(base_run.metadata)
+            supplemental_source = getattr(dialog, "supplemental_run", None)
             metadata.update(
                 {
                     "Part number": part_number,
@@ -8162,9 +8165,23 @@ class MainWindow(QMainWindow):
                     else "",
                     "COC front panel channels": str(result.front_panel_channel_count),
                     "COC base run": "Run %d" % result.base_run_number,
+                    "COC base run purpose": str(
+                        base_run.run_purpose
+                        or base_run.metadata.get("run_purpose")
+                        or "not recorded"
+                    ),
                     "COC supplemental run": (
                         "Run %d" % result.supplemental_run_number
                         if result.supplemental_run_number is not None
+                        else "None"
+                    ),
+                    "COC supplemental run purpose": (
+                        str(
+                            supplemental_source.run_purpose
+                            or supplemental_source.metadata.get("run_purpose")
+                            or "not recorded"
+                        )
+                        if supplemental_source is not None
                         else "None"
                     ),
                     "COC source runs": ", ".join(source_runs),

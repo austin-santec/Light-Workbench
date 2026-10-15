@@ -60,9 +60,9 @@ area, source-template immutability, and preservation of source run readings.
 
 Run-purpose coverage must verify the Production default, non-production
 exclusion from production analysis, terminal completion policy, purpose display
-for loaded runs, continuation/retest preservation, and rejection of explicit
-non-production COC sources. Legacy file-backed runs without a purpose remain
-loadable for historical review.
+for loaded runs, continuation/retest preservation, and purpose-neutral COC
+eligibility. Legacy file-backed runs without a purpose remain loadable for
+historical review.
 
 Persistent-connection tests must verify partial connection success, duplicate
 session prevention, exclusive lease conflicts, release without disconnect,

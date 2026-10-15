@@ -652,6 +652,7 @@ for support/review but are excluded from normal production analysis. Completion
 and analysis are separate: a completed production run is finalized as included,
 while stopped or failed production runs remain pending. Non-production runs stay
 excluded even after completion. Continuations and retests inherit the original
-purpose. Normal COC export requires every database source run to be Production;
-older file-backed runs with no purpose field remain compatible for historical
-viewing and export.
+purpose. COC export is purpose-neutral: production, engineering, training,
+calibration, and legacy sources without a purpose may be selected when they
+satisfy the same measurement, compatibility, routing, and limit requirements.
+Run purpose remains stored for provenance and reporting classification.

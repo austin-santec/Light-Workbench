@@ -81,9 +81,10 @@ analysis status are finalized together for database runs; completed production
 runs become included, while stopped/failed production runs remain pending and
 non-production runs remain excluded. Loaded purposes are displayed in Run
 information and beside the table status, and continuation/retest operations
-retain the original purpose. COC preparation rejects explicitly non-production
-database sources while preserving compatibility for legacy files with no
-purpose metadata.
+retain the original purpose. COC preparation is purpose-neutral: explicitly
+production, engineering, training, and calibration database sources are all
+eligible when they satisfy the technical COC requirements, while legacy files
+with no purpose metadata remain compatible.
 
 `Tools > Database Reports...` is the read-only reporting surface. It includes
 assignment and run history, selected-run channel/retest attempts, replacement

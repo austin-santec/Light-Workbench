@@ -340,27 +340,11 @@ def _compatibility_issues(
     base_run: CocSourceRun,
     supplemental_run: CocSourceRun | None,
 ) -> tuple[CocValidationIssue, ...]:
+    # Run purpose is retained as provenance and reporting metadata, but it is
+    # not a technical COC eligibility criterion.  Production-analysis scope
+    # remains enforced by the reporting layer; this validator only evaluates
+    # whether the selected measurements can form a valid COC.
     issues = []
-    for source_run in (base_run, supplemental_run):
-        if source_run is None:
-            continue
-        purpose = str(
-            source_run.run_purpose
-            or source_run.metadata.get("run_purpose")
-            or ""
-        ).strip().lower()
-        if not purpose:
-            # Older file-backed runs did not record a purpose and remain
-            # compatible for historical viewing/export.
-            continue
-        if purpose != "production":
-            issues.append(
-                CocValidationIssue(
-                    "non_production_run",
-                    "COC export requires Production runs; Run %d is marked %s."
-                    % (source_run.run_number, purpose),
-                )
-            )
     base_signatures = _measurement_signatures(base_run)
     base_mode = _run_mode(base_run)
     base_model = _run_model(base_run)

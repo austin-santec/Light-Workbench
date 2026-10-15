@@ -86,6 +86,103 @@ REPLACEMENT_HEADERS = (
 )
 
 
+REPORT_LIGHT_STYLESHEET = """
+QDialog#database_reports_dialog {
+    background: #eceff1;
+    color: #202124;
+}
+QDialog#database_reports_dialog QLabel,
+QDialog#database_reports_dialog QCheckBox {
+    color: #202124;
+}
+QDialog#database_reports_dialog QLineEdit,
+QDialog#database_reports_dialog QComboBox {
+    background: #ffffff;
+    color: #202124;
+    border: 1px solid #c7cdd1;
+}
+QTabWidget#database_report_tabs::pane {
+    background: #f7f8f9;
+    border: 1px solid #c7cdd1;
+}
+QTabBar#database_report_tab_bar::tab {
+    background: #e1e5e8;
+    color: #3f464d;
+    border: 1px solid #c7cdd1;
+    padding: 6px 12px;
+}
+QTabBar#database_report_tab_bar::tab:selected {
+    background: #ffffff;
+    color: #202124;
+}
+QTableWidget#database_report_table {
+    background: #ffffff;
+    alternate-background-color: #f3f5f6;
+    color: #202124;
+    border: 1px solid #c7cdd1;
+    gridline-color: #dbe1e4;
+    selection-background-color: #ffd9dd;
+    selection-color: #202124;
+}
+QTableWidget#database_report_table QHeaderView::section {
+    background: #e4eeee;
+    color: #202124;
+    border: 1px solid #c7cdd1;
+    padding: 6px;
+    font-weight: 600;
+}
+"""
+
+REPORT_DARK_STYLESHEET = """
+QDialog#database_reports_dialog {
+    background: #202124;
+    color: #e8eaed;
+}
+QDialog#database_reports_dialog QLabel,
+QDialog#database_reports_dialog QCheckBox {
+    color: #e8eaed;
+}
+QDialog#database_reports_dialog QLineEdit,
+QDialog#database_reports_dialog QComboBox {
+    background: #373a40;
+    color: #e8eaed;
+    border: 1px solid #5a6069;
+    selection-background-color: #e60013;
+    selection-color: #ffffff;
+}
+QTabWidget#database_report_tabs::pane {
+    background: #25272b;
+    border: 1px solid #4a4f57;
+}
+QTabBar#database_report_tab_bar::tab {
+    background: #2b2e33;
+    color: #b3bbc5;
+    border: 1px solid #4a4f57;
+    padding: 6px 12px;
+}
+QTabBar#database_report_tab_bar::tab:selected {
+    background: #3a3e45;
+    color: #ffffff;
+}
+QTableWidget#database_report_table {
+    background: #25272b;
+    alternate-background-color: #2b2e33;
+    color: #e8eaed;
+    border: 1px solid #4a4f57;
+    gridline-color: #454a52;
+    selection-background-color: #8b000b;
+    selection-color: #ffffff;
+}
+QTableWidget#database_report_table QHeaderView::section {
+    background: #3a3e45;
+    color: #f0f2f4;
+    border: 1px solid #4a4f57;
+    padding: 6px;
+    font-weight: 600;
+}
+"""
+
+
 def _timestamp(value) -> str:
     if value is None:
         return ""
@@ -181,6 +278,7 @@ class DatabaseReportsDialog(QDialog):
         self._service = reporting_service
         self._report = None
         self._channel_rows = ()
+        self.setObjectName("database_reports_dialog")
         self.setWindowTitle("Database Reports")
         self.resize(1380, 760)
 
@@ -266,6 +364,8 @@ class DatabaseReportsDialog(QDialog):
         layout.addWidget(self.summary_label)
 
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("database_report_tabs")
+        self.tabs.tabBar().setObjectName("database_report_tab_bar")
         self.run_table = self._table(RUN_HEADERS)
         self.assignment_table = self._table(ASSIGNMENT_HEADERS)
         self.channel_table = self._table(CHANNEL_HEADERS)
@@ -276,7 +376,14 @@ class DatabaseReportsDialog(QDialog):
         self.tabs.addTab(self.replacement_table, "Replacement Outcomes")
         layout.addWidget(self.tabs, 1)
         self.run_table.itemSelectionChanged.connect(self._load_selected_run_channels)
+        self.apply_theme(bool(getattr(parent, "dark_mode_enabled", False)))
         self.refresh_report()
+
+    def apply_theme(self, dark_mode: bool):
+        """Apply report-specific colors because this dialog is independently themed."""
+        self.setStyleSheet(
+            REPORT_DARK_STYLESHEET if dark_mode else REPORT_LIGHT_STYLESHEET
+        )
 
     @staticmethod
     def _combo(*items):
@@ -288,6 +395,7 @@ class DatabaseReportsDialog(QDialog):
     @staticmethod
     def _table(headers):
         table = QTableWidget(0, len(headers))
+        table.setObjectName("database_report_table")
         table.setHorizontalHeaderLabels(headers)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)

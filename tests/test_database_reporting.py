@@ -236,6 +236,20 @@ class DatabaseReportingTests(unittest.TestCase):
         self.assertIn("Retests: 1", dialog.summary_label.text())
         dialog.close()
 
+    def test_dialog_report_tabs_follow_light_and_dark_theme(self):
+        app = QApplication.instance() or QApplication([])
+        self.populate_included_run()
+
+        dialog = DatabaseReportsDialog(self.service)
+        self.assertEqual(dialog.tabs.count(), 4)
+        self.assertIn("#ffffff", dialog.styleSheet())
+        self.assertEqual(dialog.tabs.objectName(), "database_report_tabs")
+        self.assertEqual(dialog.tabs.tabBar().objectName(), "database_report_tab_bar")
+        dialog.apply_theme(True)
+        self.assertIn("#25272b", dialog.styleSheet())
+        self.assertIn("#3a3e45", dialog.styleSheet())
+        dialog.close()
+
 
 if __name__ == "__main__":
     unittest.main()
