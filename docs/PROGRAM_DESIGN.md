@@ -379,3 +379,15 @@ four decimal places. The application presents these results and gates controls;
 the worker repeats the write guard so a disabled button or keybind bypass cannot
 commit invalid data. Invalid readings remain temporary and are never sent to
 run persistence. Live Write Mode keeps sampling without repeated modal dialogs.
+
+### Run purpose and production analysis
+
+New runs explicitly record one of four purposes: `production`, `engineering`,
+`training`, or `calibration`. Production is the default. Purpose is part of the
+run record rather than a hardware identity field, so it does not create a new
+unit folder or alter channel measurements. Non-production runs are retained for
+support and review but are automatically excluded from normal production
+analysis. A completed production run becomes eligible for normal analysis;
+stopped or failed production runs remain pending. The selector is disabled for
+active and loaded historical runs, and continuation/retest operations retain the
+original purpose.

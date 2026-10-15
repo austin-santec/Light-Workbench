@@ -28,6 +28,7 @@ class CocSourceRun:
     metadata: Mapping[str, str] = field(default_factory=dict)
     criteria: Mapping[str, object] | None = None
     source_identifier: str = ""
+    run_purpose: str | None = None
 
 
 @dataclass(frozen=True)
@@ -340,6 +341,26 @@ def _compatibility_issues(
     supplemental_run: CocSourceRun | None,
 ) -> tuple[CocValidationIssue, ...]:
     issues = []
+    for source_run in (base_run, supplemental_run):
+        if source_run is None:
+            continue
+        purpose = str(
+            source_run.run_purpose
+            or source_run.metadata.get("run_purpose")
+            or ""
+        ).strip().lower()
+        if not purpose:
+            # Older file-backed runs did not record a purpose and remain
+            # compatible for historical viewing/export.
+            continue
+        if purpose != "production":
+            issues.append(
+                CocValidationIssue(
+                    "non_production_run",
+                    "COC export requires Production runs; Run %d is marked %s."
+                    % (source_run.run_number, purpose),
+                )
+            )
     base_signatures = _measurement_signatures(base_run)
     base_mode = _run_mode(base_run)
     base_model = _run_model(base_run)

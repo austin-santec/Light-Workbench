@@ -162,6 +162,27 @@ class RunLifecycleWorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Only production"):
                 self.workflow.set_analysis_status(run.run_id, "included")
 
+    def test_terminal_status_updates_analysis_policy_atomically(self):
+        production = self.start()
+        completed = self.workflow.finish_run(
+            production.run_id, "complete", NOW + timedelta(minutes=1)
+        )
+        self.assertEqual(completed.analysis_status, "included")
+        self.assertIsNone(completed.analysis_exclusion_reason)
+
+        engineering = self.start(
+            run_purpose="engineering",
+            client_run_uuid=uuid4(),
+        )
+        engineering = self.workflow.finish_run(
+            engineering.run_id, "complete", NOW + timedelta(minutes=1)
+        )
+        self.assertEqual(engineering.analysis_status, "excluded")
+        self.assertEqual(
+            engineering.analysis_exclusion_reason,
+            "Run purpose: engineering",
+        )
+
     def test_completed_included_production_run_is_analysis_eligible(self):
         run = self.start()
         run = self.workflow.finish_run(

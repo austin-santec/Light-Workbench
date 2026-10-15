@@ -461,6 +461,85 @@ class SqlRepositories:
             ).fetchall()
             return tuple(self._run(row) for row in rows)
 
+    def list_report_runs(self) -> tuple[RunRecord, ...]:
+        with self._factory.transaction() as cursor:
+            rows = cursor.execute(
+                self._RUN_SELECT + " ORDER BY run.run_started_at_utc, run.run_id"
+            ).fetchall()
+            return tuple(self._run(row) for row in rows)
+
+    def list_report_assignments(self) -> tuple[AssignmentRecord, ...]:
+        with self._factory.transaction() as cursor:
+            rows = cursor.execute(
+                self._ASSIGNMENT_SELECT
+                + " ORDER BY assignment.installed_at_utc, assignment.assignment_id"
+            ).fetchall()
+            return tuple(self._assignment(row) for row in rows)
+
+    def list_report_units(self) -> tuple[UnitRecord, ...]:
+        with self._factory.transaction() as cursor:
+            rows = cursor.execute(
+                """
+                SELECT unit_id, main_board_serial, part_number,
+                    front_panel_channel_count, unit_model, notes
+                FROM dbo.UNITS ORDER BY unit_id
+                """
+            ).fetchall()
+            return tuple(UnitRecord(*row) for row in rows)
+
+    def list_report_switches(self) -> tuple[SwitchRecord, ...]:
+        with self._factory.transaction() as cursor:
+            rows = cursor.execute(
+                """
+                SELECT switch_id, switch_serial, switch_model,
+                    physical_channel_count, firmware_version, notes
+                FROM dbo.SWITCHES ORDER BY switch_id
+                """
+            ).fetchall()
+            return tuple(SwitchRecord(*row) for row in rows)
+
+    def report_measurements_for_runs(
+        self, run_ids: tuple[int, ...]
+    ) -> tuple[MeasurementRecord, ...]:
+        rows = self._report_rows_for_ids(
+            self._MEASUREMENT_SELECT,
+            "measurement.run_id",
+            run_ids,
+            "measurement.measurement_id",
+        )
+        return tuple(self._measurement(row) for row in rows)
+
+    def report_replacements_for_assignments(
+        self, assignment_ids: tuple[int, ...]
+    ) -> tuple[ReplacementRecord, ...]:
+        rows = self._report_rows_for_ids(
+            self._REPLACEMENT_SELECT,
+            "replacement.assignment_id",
+            assignment_ids,
+            "replacement.replacement_id",
+        )
+        return tuple(self._replacement(row) for row in rows)
+
+    def _report_rows_for_ids(self, select_sql, id_column, identifiers, order_column):
+        values = tuple(dict.fromkeys(int(value) for value in identifiers))
+        if not values:
+            return ()
+        rows = []
+        with self._factory.transaction() as cursor:
+            # SQL Server accepts at most 2,100 parameters per statement.
+            for start in range(0, len(values), 1000):
+                chunk = values[start : start + 1000]
+                placeholders = ", ".join("?" for _value in chunk)
+                rows.extend(
+                    cursor.execute(
+                        select_sql
+                        + f" WHERE {id_column} IN ({placeholders})"
+                        + f" ORDER BY {order_column}",
+                        *chunk,
+                    ).fetchall()
+                )
+        return tuple(rows)
+
     def list_for_unit(self, unit_id: int) -> tuple[RunRecord, ...]:
         with self._factory.transaction() as cursor:
             rows = cursor.execute(
@@ -488,7 +567,13 @@ class SqlRepositories:
             return self._run(row) if row is not None else None
 
     def finish(
-        self, run_id: int, completion_status: str, run_ended_at_utc: datetime
+        self,
+        run_id: int,
+        completion_status: str,
+        run_ended_at_utc: datetime,
+        *,
+        analysis_status: str | None = None,
+        analysis_exclusion_reason: str | None = None,
     ) -> RunRecord:
         if completion_status not in {"complete", "stopped", "failed"}:
             raise ValueError("Invalid terminal completion status")
@@ -506,14 +591,28 @@ class SqlRepositories:
                 raise ValueError("Run already has a different terminal status")
             if ended < current.run_started_at_utc:
                 raise ValueError("Run end time cannot precede its start")
+            if analysis_status not in {None, "pending", "included", "excluded", "superseded"}:
+                raise ValueError("Invalid analysis status")
+            if analysis_status == "excluded" and not str(analysis_exclusion_reason or "").strip():
+                raise ValueError("Excluded runs require an analysis exclusion reason")
             changed = cursor.execute(
                 """
                 UPDATE dbo.IL_RUNS SET completion_status = ?, run_ended_at_utc = ?,
+                    analysis_status = COALESCE(?, analysis_status),
+                    analysis_exclusion_reason = CASE
+                        WHEN ? = 'excluded' THEN ?
+                        WHEN ? IS NULL THEN analysis_exclusion_reason
+                        ELSE NULL
+                    END,
                     updated_at_utc = SYSUTCDATETIME()
                 WHERE run_id = ? AND completion_status = 'in_progress'
                 """,
                 completion_status,
                 ended,
+                analysis_status,
+                analysis_status,
+                analysis_exclusion_reason,
+                analysis_status,
                 run_id,
             ).rowcount
             if changed != 1:

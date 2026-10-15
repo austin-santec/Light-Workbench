@@ -131,6 +131,10 @@ class CocWorkflow:
             measurements=measurements,
             metadata=dict(run_data.metadata),
             criteria=criteria,
+            run_purpose=(
+                str(run_data.metadata.get("run_purpose") or "").strip().lower()
+                or None
+            ),
         )
 
     def prepare(

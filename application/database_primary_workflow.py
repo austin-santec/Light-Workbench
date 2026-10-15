@@ -10,6 +10,7 @@ from application.database_run_read_model import (
     DatabaseRunQueryService,
     DatabaseRunSnapshot,
 )
+from application.database_reporting import DatabaseReportingService
 from application.measurement_persistence_workflow import MeasurementPersistenceWorkflow
 from application.replacement_persistence_workflow import (
     AssignmentRoutingSnapshot,
@@ -61,6 +62,7 @@ class DatabasePrimaryRunWorkflow:
         self.lifecycle = RunLifecycleWorkflow(repositories, readiness_check)
         self.measurements = MeasurementPersistenceWorkflow(repositories)
         self.queries = DatabaseRunQueryService(repositories, repositories)
+        self.reporting = DatabaseReportingService(repositories, self.queries)
         self.replacements = ReplacementPersistenceWorkflow(repositories)
 
     def check_ready(self):
@@ -81,6 +83,7 @@ class DatabasePrimaryRunWorkflow:
         limit_snapshot: Mapping,
         part_number_snapshot: str | None,
         front_panel_channel_count: int | None,
+        run_purpose: str = "production",
         started_at_utc: datetime | None = None,
         switch_replacement_reason: str | None = None,
     ) -> DatabaseRunContext:
@@ -117,6 +120,7 @@ class DatabasePrimaryRunWorkflow:
             limit_snapshot=limit_snapshot,
             part_number_snapshot=part_number_snapshot,
             front_panel_channel_count=front_panel_channel_count,
+            run_purpose=run_purpose,
             started_at_utc=started,
         )
         return self._context(run, assignment)

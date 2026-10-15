@@ -1,7 +1,7 @@
 """User-facing Light Workbench identity and release information."""
 
 APP_NAME = "Light Workbench"
-APP_VERSION = "1.30.0"
+APP_VERSION = "1.32.0"
 APP_TAGLINE = "Make light work, light work! Ha!"
 APP_DESCRIPTION = (
     "Optical testing and measurement software for insertion-loss testing, "
@@ -37,6 +37,7 @@ def about_text():
             "- Numbered runs grouped by unit with shared replacements and spares",
             "- Append-only accepted-reading and retest history with run viewer",
             "- SQL Server-primary production run and measurement persistence",
+            "- Run-purpose selection with production-analysis safeguards",
             "",
             "Designed for Windows optical production testing.",
         )

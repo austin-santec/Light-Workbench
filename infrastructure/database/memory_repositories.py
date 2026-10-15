@@ -29,6 +29,7 @@ from domain.database_records import (
     require_text,
     require_utc,
 )
+from domain.run_purpose import VALID_RUN_PURPOSES
 
 
 class InMemoryRepositories:
@@ -271,7 +272,7 @@ class InMemoryRepositories:
         mode = str(spec.wavelength_mode).upper()
         if mode not in {"SM", "MM"}:
             raise ValueError("Wavelength mode must be SM or MM")
-        if spec.run_purpose not in {"production", "engineering", "training", "calibration"}:
+        if spec.run_purpose not in VALID_RUN_PURPOSES:
             raise ValueError("Invalid run purpose")
         record = RunRecord(
             run_id=self._next("run"),
@@ -340,6 +341,58 @@ class InMemoryRepositories:
             )
         )
 
+    def list_report_runs(self) -> tuple[RunRecord, ...]:
+        return tuple(
+            sorted(
+                self.runs.values(),
+                key=lambda item: (item.run_started_at_utc, item.run_id),
+            )
+        )
+
+    def list_report_assignments(self) -> tuple[AssignmentRecord, ...]:
+        return tuple(
+            sorted(
+                self.assignments.values(),
+                key=lambda item: (item.installed_at_utc, item.assignment_id),
+            )
+        )
+
+    def list_report_units(self) -> tuple[UnitRecord, ...]:
+        return tuple(sorted(self.units.values(), key=lambda item: item.unit_id))
+
+    def list_report_switches(self) -> tuple[SwitchRecord, ...]:
+        return tuple(sorted(self.switches.values(), key=lambda item: item.switch_id))
+
+    def report_measurements_for_runs(
+        self, run_ids: tuple[int, ...]
+    ) -> tuple[MeasurementRecord, ...]:
+        selected = {int(value) for value in run_ids}
+        return tuple(
+            sorted(
+                (
+                    item
+                    for item in self.measurements.values()
+                    if item.run_id in selected
+                ),
+                key=lambda item: item.measurement_id,
+            )
+        )
+
+    def report_replacements_for_assignments(
+        self, assignment_ids: tuple[int, ...]
+    ) -> tuple[ReplacementRecord, ...]:
+        selected = {int(value) for value in assignment_ids}
+        return tuple(
+            sorted(
+                (
+                    item
+                    for item in self.replacements.values()
+                    if item.assignment_id in selected
+                ),
+                key=lambda item: item.replacement_id,
+            )
+        )
+
     def list_for_unit(self, unit_id: int) -> tuple[RunRecord, ...]:
         assignment_ids = {
             item.assignment_id
@@ -370,7 +423,13 @@ class InMemoryRepositories:
         )
 
     def finish(
-        self, run_id: int, completion_status: str, run_ended_at_utc: datetime
+        self,
+        run_id: int,
+        completion_status: str,
+        run_ended_at_utc: datetime,
+        *,
+        analysis_status: str | None = None,
+        analysis_exclusion_reason: str | None = None,
     ) -> RunRecord:
         if completion_status not in {"complete", "stopped", "failed"}:
             raise ValueError("Invalid terminal completion status")
@@ -386,6 +445,14 @@ class InMemoryRepositories:
             current,
             completion_status=completion_status,
             run_ended_at_utc=ended,
+            analysis_status=analysis_status or current.analysis_status,
+            analysis_exclusion_reason=(
+                analysis_exclusion_reason
+                if analysis_status == "excluded"
+                else None
+                if analysis_status is not None
+                else current.analysis_exclusion_reason
+            ),
         )
         self.runs[updated.run_id] = updated
         return updated

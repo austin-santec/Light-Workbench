@@ -10,6 +10,19 @@ IMPORTANT: Keep the complete LightWorkbench folder together. Do not copy or
 run LightWorkbench.exe by itself. The _internal folder contains required
 application files.
 
+DATABASE BRANCH STORAGE
+-----------------------
+
+New production runs require the configured SQL Server database and Windows
+Authentication. Start Run is blocked when connectivity or schema preflight
+fails. Write IL saves the complete two-wavelength reading to SQL Server before
+the application advances; a failed write remains pending for retry.
+
+Existing CSV/JSON runs can still be opened for review but are not uploaded and
+cannot be continued as database runs. Support logs, diagnostic exports, and COC
+workbooks remain local files. Database-backed COC export asks the operator to
+choose an output folder.
+
 
 1. WHAT IS REQUIRED
 -------------------
@@ -71,7 +84,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.29.3; an existing executable keeps its prior version until rebuilt. The main
+1.32.0; an existing executable keeps its prior version until rebuilt. The main
 window opens maximized by default and can be restored with the normal Windows
 title-bar control.
 

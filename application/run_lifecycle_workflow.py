@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from application.database_repositories import RunRepository
 from domain.database_records import RunRecord, RunStartSpec, utc_now
 from domain.database_run_lifecycle import StaleRunDecision
+from domain.run_purpose import default_analysis_policy, normalize_run_purpose
 
 
 class DatabaseReadinessResult(Protocol):
@@ -59,15 +60,10 @@ class RunLifecycleWorkflow:
         if not getattr(preflight, "ready", False):
             raise DatabaseRunUnavailableError(preflight)
 
-        purpose = str(run_purpose).strip().lower()
+        purpose = normalize_run_purpose(run_purpose)
         if analysis_status is None:
-            if purpose == "production":
-                analysis_status = "pending"
-            else:
-                analysis_status = "excluded"
-                analysis_exclusion_reason = (
-                    analysis_exclusion_reason or f"Run purpose: {purpose}"
-                )
+            analysis_status, default_reason = default_analysis_policy(purpose)
+            analysis_exclusion_reason = analysis_exclusion_reason or default_reason
         if purpose != "production" and analysis_status == "included":
             raise ValueError("Only production runs may enter normal production analysis")
         spec = RunStartSpec(
@@ -95,10 +91,24 @@ class RunLifecycleWorkflow:
         completion_status: str,
         ended_at_utc: datetime | None = None,
     ) -> RunRecord:
+        current = self._repository.get(run_id)
+        if current is None:
+            raise ValueError("Run was not found")
+        if current.run_purpose == "production" and completion_status == "complete":
+            analysis_status = "included"
+            exclusion_reason = None
+        elif current.run_purpose != "production":
+            analysis_status = "excluded"
+            exclusion_reason = "Run purpose: %s" % current.run_purpose
+        else:
+            analysis_status = "pending"
+            exclusion_reason = None
         return self._repository.finish(
             run_id,
             completion_status,
             ended_at_utc or utc_now(),
+            analysis_status=analysis_status,
+            analysis_exclusion_reason=exclusion_reason,
         )
 
     def resume_run(self, run_id: int) -> RunRecord:

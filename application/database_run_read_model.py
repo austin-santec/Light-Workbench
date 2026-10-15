@@ -204,6 +204,7 @@ class DatabaseRunSnapshot:
             measurements=self.measurements,
             metadata=self.metadata,
             criteria=dict(self.run.limit_snapshot),
+            run_purpose=self.run.run_purpose,
         )
 
     def replacement_analysis(
@@ -249,6 +250,23 @@ class DatabaseRunSnapshot:
         )
 
 
+def build_database_run_snapshot(
+    run: RunRecord,
+    history_rows: Sequence[DatabaseMeasurementRecord],
+) -> DatabaseRunSnapshot:
+    """Build current/history projections from one accepted-attempt snapshot."""
+    current_by_channel = {}
+    for record in history_rows:
+        prior = current_by_channel.get(record.logical_channel)
+        if prior is None or record.attempt_number > prior.attempt_number:
+            current_by_channel[record.logical_channel] = record
+    current = tuple(
+        _domain_measurement(run, current_by_channel[channel])
+        for channel in sorted(current_by_channel)
+    )
+    return DatabaseRunSnapshot(run, current, _history_attempts(run, history_rows))
+
+
 class DatabaseRunQueryService:
     """Load current and historical rows through repository contracts."""
 
@@ -264,12 +282,8 @@ class DatabaseRunQueryService:
         run = self._runs.get(run_id)
         if run is None:
             raise ValueError("Run was not found")
-        current_rows, history_rows = self._measurements.snapshot_for_run(run_id)
-        current = tuple(
-            _domain_measurement(run, record)
-            for record in sorted(current_rows, key=lambda item: item.logical_channel)
-        )
-        return DatabaseRunSnapshot(run, current, _history_attempts(run, history_rows))
+        _current_rows, history_rows = self._measurements.snapshot_for_run(run_id)
+        return build_database_run_snapshot(run, history_rows)
 
     def list_for_assignment(self, assignment_id: int) -> tuple[DatabaseRunSnapshot, ...]:
         return tuple(
@@ -281,4 +295,8 @@ class DatabaseRunQueryService:
         return tuple(self.load(run.run_id) for run in self._runs.list_for_unit(unit_id))
 
 
-__all__ = ["DatabaseRunQueryService", "DatabaseRunSnapshot"]
+__all__ = [
+    "DatabaseRunQueryService",
+    "DatabaseRunSnapshot",
+    "build_database_run_snapshot",
+]

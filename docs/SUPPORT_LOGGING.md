@@ -2,14 +2,14 @@
 
 ## Purpose and scope
 
-Light Workbench 1.30.0 includes always-on, local engineering support logs. Their
+Light Workbench 1.32.0 includes always-on, local engineering support logs. Their
 purpose is to help engineering reconstruct operator workflows, hardware
 communication, two-wavelength measurements, insertion-loss calculations,
 connection ownership, persistence, exports, and failures.
 
 Support logging is best-effort instrumentation. It does not control hardware,
 change measurement timing or calculations, commit readings, or replace the
-authoritative CSV/JSON run record. The files are local and editable; they are
+authoritative SQL Server run record. The files are local and editable; they are
 not a tamper-proof audit trail and do not satisfy the future immutable audit
 history described by FUN-048.
 

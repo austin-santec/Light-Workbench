@@ -67,6 +67,8 @@ be used as source locations. The release scripts keep deployment output in
   repository coordination: `application/coc_workflow.py`; operator selection:
   `ui/coc_export_dialog.py`; workbook mechanics: `infrastructure/coc_export.py`.
 - Model-specific insertion-loss criteria: `domain/limit_profiles.py`.
+- Stable run-purpose values and production-analysis policy:
+  `domain/run_purpose.py`.
 - Vendor-neutral contracts and composed hardware lifecycle: `hardware/`.
 - Hardware identity/status presentation: `hardware/device_identity.py` and
   `ui/hardware_status.py`.
@@ -75,8 +77,10 @@ be used as source locations. The release scripts keep deployment output in
   `infrastructure/database/migrations.py`; immutable SQL scripts are in
   `infrastructure/database/sql_migrations/`; guarded integration reset and
   backup/restore operations are in `infrastructure/database/maintenance.py`.
-  Database SQL must remain private to this layer. Application repositories and
-  the runtime connection factory are later milestones.
+  Database SQL remains private to this layer. Repository contracts, SQL-primary
+  orchestration, and read-only reporting live under `application/`; reporting
+  records/CSV formatting live under `domain/`; the report dialog lives in
+  `ui/database_reports.py`.
 - Administrator criteria INI persistence: `infrastructure/limit_profile_repository.py`.
 - Session-only administrator authorization and dialogs:
   `application/admin_session.py` and `ui/admin_config.py`.
@@ -91,4 +95,8 @@ be used as source locations. The release scripts keep deployment output in
   support dialogs: `ui/support_logs.py`.
 - Compatibility behavior for older callers: existing root-level facades.
 - Packaging and deployment behavior: `ilm_app.spec` and the PowerShell release
-  scripts, not application runtime modules.
+  scripts, not application runtime modules. SQL migrations are required runtime
+  resources: `ilm_app.spec` discovers every source `.sql` migration through
+  `tools/release_resources.py` and packages it under
+  `_internal/infrastructure/database/sql_migrations/`. Release verification
+  requires the packaged filenames and SHA-256 hashes to match source.

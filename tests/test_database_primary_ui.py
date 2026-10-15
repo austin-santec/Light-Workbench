@@ -120,6 +120,29 @@ class DatabasePrimaryUiTests(unittest.TestCase):
         window.run_repository.load_csv.assert_not_called()
         window.close()
 
+    def test_database_reports_action_opens_read_only_reporting_dialog(self):
+        window = MainWindow(database_workflow=self.workflow)
+        before = (
+            len(self.repositories.runs),
+            len(self.repositories.measurements),
+            len(self.repositories.replacements),
+        )
+
+        with patch("ilm_app.DatabaseReportsDialog") as dialog_type:
+            window.database_reports_action.trigger()
+
+        dialog_type.assert_called_once_with(self.workflow.reporting, window)
+        dialog_type.return_value.exec_.assert_called_once_with()
+        self.assertEqual(
+            before,
+            (
+                len(self.repositories.runs),
+                len(self.repositories.measurements),
+                len(self.repositories.replacements),
+            ),
+        )
+        window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

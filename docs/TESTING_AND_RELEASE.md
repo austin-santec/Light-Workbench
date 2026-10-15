@@ -58,6 +58,12 @@ port compatibility, strict 2.5000 dB publication blocking, optimization
 confirmation, 45/48 template selection, row trimming, merged ranges, print
 area, source-template immutability, and preservation of source run readings.
 
+Run-purpose coverage must verify the Production default, non-production
+exclusion from production analysis, terminal completion policy, purpose display
+for loaded runs, continuation/retest preservation, and rejection of explicit
+non-production COC sources. Legacy file-backed runs without a purpose remain
+loadable for historical review.
+
 Persistent-connection tests must verify partial connection success, duplicate
 session prevention, exclusive lease conflicts, release without disconnect,
 single-thread native calls, laser-safe shutdown, and application-close cleanup.
@@ -112,6 +118,10 @@ machine that only runs the packaged executable.
 - Build from a clean or controlled environment when preparing a release.
 - Verify that support files, templates, assets, documentation, and
   `OP815M.dll` are present beside/in the packaged application as intended.
+- Treat every file in `infrastructure/database/sql_migrations/` as a required
+  immutable runtime resource. `ilm_app.spec` discovers the `.sql` files
+  dynamically and places them under
+  `_internal/infrastructure/database/sql_migrations/` in the one-folder build.
 - Smoke-test the packaged executable separately from running the source.
 
 ## Generated files
@@ -139,7 +149,11 @@ used as the location for architecture decisions.
 
 `build_windows.ps1` calls `verify_release.ps1` automatically after copying the
 support files. The verifier checks the executable, installation guide,
-dependency checker, operator guide, and PyInstaller `_internal` directory.
+dependency checker, operator guide, PyInstaller `_internal` directory, and COC
+templates. It also requires the source and packaged SQL migration directories
+to exist, verifies that the source set is nonempty, and compares every packaged
+migration with source by filename and SHA-256 hash. Missing, altered, or stale
+packaged migrations fail verification; the verifier never repairs a release.
 
 `package_release.ps1` repeats that verification, reads the version from
 `config\app_info.py`, and creates `releases\LightWorkbench-v<version>.zip`. It does

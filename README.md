@@ -43,6 +43,13 @@ limits. OSX-100 data can be reviewed, analyzed, and exported through the
 matching SM or MM COC workflow. OSX-150 MM data remains reviewable and
 analyzable, but OSX-150 MM COC export is not supported.
 
+Each new hardware run also has a **Run purpose** selector. It defaults to
+**Production** and offers Engineering, Training, and Calibration for non-production
+work. Non-production runs remain saved and reviewable but are excluded from normal
+production analysis; the selected purpose is stored with the run and cannot be
+changed on a loaded historical run. The purpose is also shown beside the run
+completion/result status and in Run information.
+
 For every channel, it can:
 
 - Automatically route the connected OSX-100/OSX-150 to the requested logical channel.
@@ -173,6 +180,7 @@ redaction, and support-bundle details.
 | `domain/reference_catalog.py` | Stable run-local reference labels and snapshot deduplication |
 | `domain/raw_export.py` | Pure tab-separated formatting for copying accepted readings to Excel |
 | `domain/coc_preparation.py` | Pure multi-run COC merge, provenance, completeness, port-map, and publication rules |
+| `domain/run_purpose.py` | Stable run-purpose options and production-analysis policy |
 | `domain/diagnostic_analysis.py` | In-memory diagnostic samples and variation statistics |
 | `domain/diagnostic_trace.py` | Typed in-memory hardware trace event model |
 | `domain/support_events.py` | Typed allowlisted engineering support-event schema |
@@ -280,7 +288,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.30.0**; an existing executable keeps its prior
+current source version is **1.32.0**; an existing executable keeps its prior
 version until rebuilt.
 
 The desktop application opens maximized by default while retaining the normal
@@ -296,6 +304,14 @@ Use `Tools > Dark Mode` to switch between the light and dark application
 themes. New installations start in dark mode, and the last selected theme is
 saved for the next launch. The red operator-action accent remains the same in
 both themes.
+
+Use `Tools > Database Reports...` on the database branch to search read-only
+unit/switch assignment, run, channel/retest, and replacement history. Normal
+production metrics include only production runs marked `included`; uncheck the
+production-only scope to inspect pending, excluded, superseded, engineering,
+training, or calibration records while troubleshooting. Report calculations
+use each run's saved measurements and limit snapshot. Exporting the current
+report tab creates an explicit CSV file and does not modify database records.
 
 It can open an existing CSV, display both wavelength values, show recorded
 metadata, highlight channels over the configurable loss limit, and summarize

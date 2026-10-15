@@ -212,6 +212,18 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(window.result_status_label.text(), "Result: Pass")
         window.close()
 
+    def test_run_purpose_defaults_to_production_and_warns_for_nonproduction(self):
+        window = MainWindow()
+        self.assertEqual(window.hardware_run_purpose.currentData(), "production")
+        self.assertTrue(window.run_purpose_notice_label.isHidden())
+        window.hardware_run_purpose.setCurrentIndex(
+            window.hardware_run_purpose.findData("engineering")
+        )
+        self.assertIn("excluded from production analysis", window.run_purpose_notice_label.text())
+        self.assertFalse(window.run_purpose_notice_label.isHidden())
+        self.assertIn("Engineering", window.run_purpose_status_label.text())
+        window.close()
+
     def test_open_csv_starts_in_default_run_folder(self):
         window = MainWindow()
         with patch(
@@ -867,6 +879,7 @@ class MainWindowTests(unittest.TestCase):
             [
                 "Switch VISA Address...",
                 "Get IP...",
+                "Database Reports...",
                 "Check Dependencies...",
                 "Red Light Test...",
                 "Live IL Reading...",

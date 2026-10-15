@@ -127,6 +127,11 @@ from domain.part_numbers import parse_osx_part_number
 from domain.database_records import SwitchSpec, UnitSpec
 from domain.unit_switch_assignments import AssignmentChangeRequiredError
 from domain.coc_preparation import CocSourceRun
+from domain.run_purpose import (
+    RUN_PURPOSE_OPTIONS,
+    normalize_run_purpose,
+    run_purpose_label,
+)
 from domain.run_status import (
     COMPLETION_COMPLETE,
     COMPLETION_INCOMPLETE,
@@ -182,6 +187,7 @@ from ui.admin_config import AdminConfigDialog, AdminPasswordDialog
 from ui.reading_history import ReadingHistoryDialog
 from ui.coc_export_dialog import CocExportDialog, format_optimization_warning
 from ui.switch_ip import SwitchIpAddressDialog
+from ui.database_reports import DatabaseReportsDialog
 from ui.collapsible_group_box import CollapsibleGroupBox
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
@@ -816,6 +822,7 @@ class MainWindow(QMainWindow):
         self._run_terminal_status = None
         self._run_completion_reason = ""
         self._run_completed_at_utc = ""
+        self._run_purpose_editable = True
         self._loaded_run_profile_unavailable = False
         self._loaded_run_profile_reason = ""
         self.reference_workflow = None
@@ -1337,10 +1344,55 @@ class MainWindow(QMainWindow):
             else "Connect the measurement hardware before calculating a reference."
         )
         self._refresh_reference_controls()
+        self._set_run_purpose_editable(self._run_purpose_editable)
         self.retest_button.setEnabled(
             bool(self.run_data and self.run_data.measurements)
             and run_available
         )
+
+    def _set_run_purpose_editable(self, editable: bool):
+        """Keep purpose immutable for loaded history and active runs."""
+
+        self._run_purpose_editable = bool(editable)
+        if hasattr(self, "hardware_run_purpose"):
+            self.hardware_run_purpose.setEnabled(
+                self._run_purpose_editable and not self.hardware_run_active
+            )
+
+    def _run_purpose_selection_changed(self, *_args):
+        if not hasattr(self, "hardware_run_purpose"):
+            return
+        purpose = str(self.hardware_run_purpose.currentData() or "production")
+        if purpose == "production":
+            self.run_purpose_notice_label.clear()
+            self.run_purpose_notice_label.hide()
+        else:
+            self.run_purpose_notice_label.setText(
+                "%s runs are retained for support and review but excluded from "
+                "production analysis." % run_purpose_label(purpose)
+            )
+            self.run_purpose_notice_label.show()
+        if hasattr(self, "run_purpose_status_label"):
+            self.run_purpose_status_label.setText(
+                "Purpose: %s" % run_purpose_label(purpose)
+            )
+
+    def _set_run_purpose(self, value, *, editable: bool):
+        """Apply a persisted purpose without changing it through UI signals."""
+
+        try:
+            purpose = normalize_run_purpose(value)
+        except ValueError:
+            purpose = "production"
+        index = self.hardware_run_purpose.findData(purpose)
+        if index >= 0:
+            self.hardware_run_purpose.blockSignals(True)
+            try:
+                self.hardware_run_purpose.setCurrentIndex(index)
+            finally:
+                self.hardware_run_purpose.blockSignals(False)
+        self._run_purpose_selection_changed()
+        self._set_run_purpose_editable(editable)
 
     def _hardware_connection_operation_finished(self, operation_name, results):
         if hasattr(self, "connect_hardware_button"):
@@ -1485,6 +1537,10 @@ class MainWindow(QMainWindow):
         )
         self.get_switch_ip_action.triggered.connect(self.show_switch_ip)
         tools_menu.addAction(self.get_switch_ip_action)
+        self.database_reports_action = QAction("Database Reports...", self)
+        self.database_reports_action.setEnabled(self.database_workflow is not None)
+        self.database_reports_action.triggered.connect(self.show_database_reports)
+        tools_menu.addAction(self.database_reports_action)
         dependency_action = QAction("Check Dependencies...", self)
         dependency_action.triggered.connect(self.show_dependency_check)
         tools_menu.addAction(dependency_action)
@@ -1767,6 +1823,28 @@ class MainWindow(QMainWindow):
         hardware_setup_layout.addWidget(self.hardware_tested_by, 6, 1)
         self.reference_status_label = QLabel("Reference status: Not referenced")
         self.reference_status_label.setWordWrap(True)
+        hardware_setup_layout.addWidget(QLabel("Run purpose:"), 6, 2)
+        self.hardware_run_purpose = QComboBox()
+        for label, value in RUN_PURPOSE_OPTIONS:
+            self.hardware_run_purpose.addItem(label, value)
+        self.hardware_run_purpose.setToolTip(
+            "Choose why this run is being performed. Engineering, training, and "
+            "calibration runs are retained but excluded from production analysis."
+        )
+        self.hardware_run_purpose.currentIndexChanged.connect(
+            self._run_purpose_selection_changed
+        )
+        hardware_setup_layout.addWidget(self.hardware_run_purpose, 6, 3)
+        self.run_purpose_notice_label = QLabel()
+        self.run_purpose_notice_label.setWordWrap(True)
+        self.run_purpose_notice_label.setStyleSheet("color: #d89b00;")
+        hardware_setup_layout.addWidget(
+            self.run_purpose_notice_label,
+            8,
+            0,
+            1,
+            2,
+        )
         hardware_setup_layout.addWidget(QLabel("Run number:"), 7, 0)
         self.hardware_run_number = QSpinBox()
         self.hardware_run_number.setRange(1, 9999)
@@ -1802,6 +1880,8 @@ class MainWindow(QMainWindow):
         self._refresh_reference_controls()
         self._refresh_wavelength_mode_ui()
         self._refresh_front_panel_channel_count_label()
+        self._run_purpose_selection_changed()
+        self._set_run_purpose_editable(True)
         self.update_channel_mode_controls(self.hardware_channel_mode.currentIndex())
         controls_box = QGroupBox("Hardware controls")
         self.hardware_controls_box = controls_box
@@ -1987,15 +2067,18 @@ class MainWindow(QMainWindow):
         table_filter_layout.addWidget(self.comparison_run_combo)
         self.completion_status_label = QLabel("Run: Not started")
         self.result_status_label = QLabel("Result: Not evaluated")
+        self.run_purpose_status_label = QLabel("Purpose: Production")
         for status_label in (
             self.completion_status_label,
             self.result_status_label,
+            self.run_purpose_status_label,
         ):
             status_label.setObjectName("run_status")
             status_label.setToolTip("No run is loaded.")
             status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         table_filter_layout.addWidget(self.completion_status_label)
         table_filter_layout.addWidget(self.result_status_label)
+        table_filter_layout.addWidget(self.run_purpose_status_label)
         table_filter_layout.addStretch()
         table_panel_layout.addLayout(table_filter_layout)
         self.table = QTableWidget(0, 4)
@@ -2100,6 +2183,7 @@ class MainWindow(QMainWindow):
             "Operating band",
             "Tested by",
             "Run number",
+            "Run purpose",
             "Source file",
         ):
             label = QLabel("-")
@@ -3047,6 +3131,29 @@ class MainWindow(QMainWindow):
         )
         self.hardware_connection_manager.query_switch_ip(operation_id)
 
+    def show_database_reports(self):
+        """Open read-only SQL reporting after a bounded readiness check."""
+        if self.database_workflow is None:
+            QMessageBox.information(
+                self,
+                "Database Reports",
+                "Database reporting is not configured for this application session.",
+            )
+            return
+        try:
+            readiness = self.database_workflow.check_ready()
+        except Exception as error:
+            QMessageBox.warning(self, "Database Reports", str(error))
+            return
+        if not getattr(readiness, "ready", False):
+            QMessageBox.warning(
+                self,
+                "Database Reports",
+                getattr(readiness, "operator_message", "The database is unavailable."),
+            )
+            return
+        DatabaseReportsDialog(self.database_workflow.reporting, self).exec_()
+
     def _switch_ip_query_finished(self, operation_id, address, error):
         """Present one manager-owned IP result on the GUI thread."""
         if operation_id != self._switch_ip_query_operation_id:
@@ -3888,6 +3995,10 @@ class MainWindow(QMainWindow):
             return
 
         self.database_run_context = None
+        self._set_run_purpose(
+            run_data.metadata.get("run_purpose"),
+            editable=False,
+        )
         self.database_pending_measurement = None
         self.run_data = run_data
         self.run_recorder = None
@@ -3969,6 +4080,12 @@ class MainWindow(QMainWindow):
             self.metadata_labels[key].setText(value or "Not recorded")
         self.metadata_labels["Run number"].setText(
             str(self.hardware_run_number.value())
+        )
+        stored_purpose = run_data.metadata.get("run_purpose")
+        self.metadata_labels["Run purpose"].setText(
+            run_purpose_label(stored_purpose)
+            if stored_purpose
+            else "Not recorded"
         )
         loaded_run_id = ""
         payload = {}
@@ -4457,6 +4574,8 @@ class MainWindow(QMainWindow):
                 or "",
                 "Switch model": context.switch.switch_model,
                 "Run number": str(context.run.run_number),
+                "Run purpose": run_purpose_label(context.run.run_purpose),
+                "run_purpose": context.run.run_purpose,
                 "OPM wavelengths nm": ",".join(
                     str(value)
                     for value in hardware.get(
@@ -4500,6 +4619,7 @@ class MainWindow(QMainWindow):
             measurements=tuple(context.snapshot.measurements),
             metadata=self._database_metadata(context),
             criteria=dict(context.run.limit_snapshot),
+            run_purpose=context.run.run_purpose,
         )
 
     def _apply_database_run_context(self, context, *, update_setup=True):
@@ -4549,6 +4669,7 @@ class MainWindow(QMainWindow):
             self.hardware_tested_by.setText(context.run.tested_by)
             self.hardware_run_number.setValue(context.run.run_number)
             self._set_wavelength_mode(context.run.wavelength_mode, invalidate=False)
+        self._set_run_purpose(context.run.run_purpose, editable=False)
         self.file_label.setText(
             "Database: %s / Run %d"
             % (context.unit.main_board_serial, context.run.run_number)
@@ -4561,6 +4682,7 @@ class MainWindow(QMainWindow):
             "Operating band",
             "Tested by",
             "Run number",
+            "Run purpose",
         ):
             self.metadata_labels[key].setText(metadata.get(key) or "Not recorded")
         self.replacement_analysis = None
@@ -4707,24 +4829,27 @@ class MainWindow(QMainWindow):
             return
         if not self._authorize_hardware_start(retest=retest):
             return
-        confirmation = QMessageBox.question(
-            self,
-            "Start real hardware run",
-            "This will use the connected measurement hardware and optical "
-            "switch, and it will move the switch. "
-            "Start the hardware run?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if confirmation != QMessageBox.Yes:
-            return
-
         run_mode = "new"
         if not retest and self.run_data is not None:
             run_mode = self.choose_hardware_run_mode()
             if run_mode is None:
                 return
         if run_mode == "continue" and not self.confirm_existing_run_identity():
+            return
+        if run_mode == "new":
+            self._set_run_purpose_editable(True)
+        purpose = str(self.hardware_run_purpose.currentData() or "production")
+        confirmation = QMessageBox.question(
+            self,
+            "Start real hardware run",
+            "This will use the connected measurement hardware and optical "
+            "switch, and it will move the switch.\n\n"
+            "Run purpose: %s\n\nStart the hardware run?"
+            % run_purpose_label(purpose),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirmation != QMessageBox.Yes:
             return
 
         selected_identity = self._current_hardware_identity()
@@ -4963,6 +5088,7 @@ class MainWindow(QMainWindow):
                     "front_panel_channel_count": (
                         part_details.front_panel_channel_count
                     ),
+                    "run_purpose": purpose,
                 }
                 try:
                     context = self.database_workflow.start_new_run(
@@ -5046,6 +5172,7 @@ class MainWindow(QMainWindow):
             unit_serial=selected_identity.get("Main board serial"),
             switch_serial=selected_identity.get("Switch serial"),
             operator_initials=self.hardware_tested_by.text().strip(),
+            run_purpose=purpose,
             retest=retest,
             live_write_mode=self.live_write_mode_enabled,
             status="started",
@@ -5082,6 +5209,8 @@ class MainWindow(QMainWindow):
                     "Switch serial": self.hardware_switch_serial.text().strip(),
                     "Operating band": self.hardware_operating_band.currentText().strip() or "O band",
                     "Tested by": self.hardware_tested_by.text().strip(),
+                    "Run purpose": purpose,
+                    "run_purpose": purpose,
                     "Run number": str(selected_run_number),
                     "Wavelength mode": self.measurement_configuration.wavelength_profile.code,
                     "OPM wavelengths nm": ",".join(
@@ -5182,6 +5311,7 @@ class MainWindow(QMainWindow):
         self.metadata_labels["Run number"].setText(
             self.run_data.metadata.get("Run number", str(selected_run_number))
         )
+        self.metadata_labels["Run purpose"].setText(run_purpose_label(purpose))
         self.refresh_analysis()
 
         request = build_hardware_run_request(
@@ -6399,6 +6529,7 @@ class MainWindow(QMainWindow):
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(True)
         self.active_run_reference_snapshot = None
+        self._set_run_purpose_editable(False)
         self.refresh_run_status(include_composite=False)
         self.statusBar().showMessage(
             "Hardware run complete. Readings are saved in SQL Server."
@@ -6431,6 +6562,7 @@ class MainWindow(QMainWindow):
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(bool(self.run_data and self.run_data.measurements))
         self.active_run_reference_snapshot = None
+        self._set_run_purpose_editable(False)
         self.refresh_run_status(include_composite=False)
         self.statusBar().showMessage("Hardware run stopped. Completed readings remain visible.")
 
@@ -6459,6 +6591,7 @@ class MainWindow(QMainWindow):
         self.change_hardware_channel_button.setEnabled(False)
         self.stop_hardware_button.setEnabled(False)
         self.active_run_reference_snapshot = None
+        self._set_run_purpose_editable(False)
         self.refresh_run_status(include_composite=False)
         QMessageBox.critical(self, "Hardware run stopped", message)
 
@@ -6752,6 +6885,23 @@ class MainWindow(QMainWindow):
         result_text = "Result: %s" % assessment.result_label
         self.completion_status_label.setText(completion_text)
         self.result_status_label.setText(result_text)
+        if self.database_run_context is not None:
+            purpose_value = self.database_run_context.run.run_purpose
+        else:
+            purpose_value = (
+                self.run_data.metadata.get("run_purpose")
+                if self.run_data is not None
+                else None
+            )
+        purpose_text = (
+            run_purpose_label(purpose_value)
+            if purpose_value
+            else "Not recorded"
+        )
+        self.run_purpose_status_label.setText("Purpose: %s" % purpose_text)
+        self.run_purpose_status_label.setToolTip(
+            "Purpose recorded with this run: %s" % purpose_text
+        )
         tooltip = assessment.tooltip()
         self.completion_status_label.setToolTip(tooltip)
         self.result_status_label.setToolTip(tooltip)
@@ -6791,6 +6941,7 @@ class MainWindow(QMainWindow):
             assessment.completed_channel_count,
             assessment.planned_channel_count,
             assessment.compatible_run_numbers,
+            purpose_text,
         )
         if key != self._last_run_status_key and self.run_data is not None:
             self._record_support(
@@ -6800,6 +6951,11 @@ class MainWindow(QMainWindow):
                 result_status=assessment.result_status,
                 planned_channel_count=assessment.planned_channel_count,
                 completed_channel_count=assessment.completed_channel_count,
+                run_purpose=(
+                    str(purpose_value or "")
+                    if purpose_value
+                    else "not_recorded"
+                ),
                 compatible_run_numbers=",".join(
                     str(value) for value in assessment.compatible_run_numbers
                 ),

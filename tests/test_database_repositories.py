@@ -125,6 +125,16 @@ class RepositoryContractMixin:
             repository.list_for_assignment(assignment.assignment_id),
             (run, repository.get(next_run.run_id)),
         )
+        self.assertIn(run, repository.list_report_runs())
+        self.assertIn(assignment, repository.list_report_assignments())
+        self.assertIn(
+            unit.unit_id,
+            {item.unit_id for item in repository.list_report_units()},
+        )
+        self.assertIn(
+            switch.switch_id,
+            {item.switch_id for item in repository.list_report_switches()},
+        )
 
         first = repository.append_attempt(
             MeasurementSpec(
@@ -261,6 +271,21 @@ class RepositoryContractMixin:
         )
         self.assertEqual(replacement.previous_physical_port, 1)
         self.assertEqual(replacement_again.previous_physical_port, 49)
+        self.assertIn(
+            third,
+            repository.report_measurements_for_runs((run.run_id,)),
+        )
+        self.assertEqual(
+            repository.report_measurements_for_runs(()),
+            (),
+        )
+        self.assertEqual(
+            repository.report_replacements_for_assignments(
+                (assignment.assignment_id,)
+            ),
+            (replacement, replacement_again),
+        )
+        self.assertEqual(repository.report_replacements_for_assignments(()), ())
         self.assertEqual(
             repository.replacement_history_for_assignment(
                 assignment.assignment_id

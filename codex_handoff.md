@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.30.0**. The single
+The current source release is **Light Workbench 1.32.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -56,7 +56,7 @@ export. Historical compatibility classifications are preserved when loading
 older records.
 
 The database-focused branch has completed its SQL Server-primary cutover
-through Milestone 9. Development targets
+through Milestone 10. Development targets
 `localhost\SQLExpress`, database `LWBTestDB`, with Windows Authentication. The
 forward-only migration runner and initial eight-table/two-view schema are in
 `infrastructure/database/`; guarded reset and backup/restore tools operate only
@@ -73,6 +73,33 @@ CSV/JSON runs remain viewable but are not uploaded or writable database runs.
 Support logs, diagnostic exports, and generated COC files remain local. See
 `docs/DATABASE_ARCHITECTURE.md` and `docs/DATABASE_ROADMAP.md` before database
 work.
+
+New hardware runs require a recorded purpose: Production (the default),
+Engineering, Training, or Calibration. Non-production runs are retained for
+support/review but are excluded from normal production analysis. Completion and
+analysis status are finalized together for database runs; completed production
+runs become included, while stopped/failed production runs remain pending and
+non-production runs remain excluded. Loaded purposes are displayed in Run
+information and beside the table status, and continuation/retest operations
+retain the original purpose. COC preparation rejects explicitly non-production
+database sources while preserving compatibility for legacy files with no
+purpose metadata.
+
+`Tools > Database Reports...` is the read-only reporting surface. It includes
+assignment and run history, selected-run channel/retest attempts, replacement
+outcomes, saved-limit result derivation, and CSV export. Its normal production
+scope includes only production runs marked `included`; the operator must
+explicitly enable troubleshooting scope to include pending, excluded,
+superseded, or non-production data.
+
+SQL migration scripts are required packaged runtime resources. `ilm_app.spec`
+discovers every `.sql` file under
+`infrastructure/database/sql_migrations/` and places it at the same package-
+relative path under PyInstaller's `_internal` directory. `verify_release.ps1`
+uses `tools/release_resources.py` to require an exact filename and SHA-256
+match between source and package. Runtime resolution remains
+`Path(__file__).with_name("sql_migrations")`; missing resources fail database
+preflight rather than falling back to a developer checkout.
 
 | File | Responsibility |
 | --- | --- |
@@ -95,6 +122,7 @@ work.
 | application/ | Workflow controllers, measurement worker, planning, and transient hardware-run state. |
 | domain/ | Vendor-neutral models, calculations, replacement rules, timing, and reporting. |
 | domain/raw_export.py | Pure Excel-compatible TSV formatting for accepted run measurements; it does not persist data. |
+| domain/run_purpose.py | Stable purpose choices, labels, normalization, and production-analysis policy. |
 | domain/coc_preparation.py | Pure COC source compatibility, merge, completeness, threshold, physical-port, and optimization validation. |
 | application/coc_workflow.py | Discovers persisted unit runs, hydrates report source data, and delegates COC preparation without reading UI widgets. |
 | domain/diagnostic_analysis.py | In-memory diagnostic samples and separate repeatability/stability statistics. |
@@ -126,6 +154,7 @@ work.
 | config/app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
 | app_info.py | Compatibility facade for application release metadata. |
 | tools/dependency_check.py | Non-destructive prerequisite and connection diagnostics. |
+| tools/release_resources.py | Deterministic SQL migration discovery and source-to-package integrity verification used by release tooling. |
 | dependency_check.py | Compatibility facade for dependency diagnostics. |
 | domain/run_data.py | RunData and over-limit analysis rules; the root `run_data.py` remains a compatibility facade. |
 | infrastructure/csv_run_loader.py | Current and legacy CSV parsing for RunData. |

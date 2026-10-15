@@ -220,8 +220,9 @@ unit-scoped transaction lock. Runs preserve their setup, hardware, and limit
 snapshots and support explicit complete, stopped, and failed endings.
 Purpose and analysis eligibility are separate, non-production purposes default
 to exclusion, and stale runs remain in progress until an explicit resume,
-close-stopped, or close-failed decision. Production Start Run is intentionally
-not wired to this workflow until the database cutover milestone.
+close-stopped, or close-failed decision. Production Start Run is wired to this
+workflow; the UI defaults new runs to Production and records the selected
+purpose.
 
 ### Implement
 
@@ -247,6 +248,7 @@ not wired to this workflow until the database cutover milestone.
 - A failed run records the technical end state.
 - Engineering/training data is excluded from normal production analysis.
 - A stale run is not silently marked complete.
+- Purpose is preserved through loaded-run continuation and retest workflows.
 
 ### Exit criteria
 
@@ -422,6 +424,13 @@ not a permanent dual-write architecture.
 
 ## Milestone 10 - Reporting
 
+Status: complete. `Tools > Database Reports...` provides read-only joined
+assignment/run history, selected-run channel and retest history, replacement
+outcomes, saved-limit result derivation, production-safe filtering, explicit
+troubleshooting scope, and per-tab CSV export. The application layer owns
+filtering and derivation, Qt owns presentation and file selection, and report
+queries do not mutate authoritative records.
+
 ### Implement
 
 - Add read-only queries for unit, switch, assignment, run, and channel history.
@@ -503,8 +512,8 @@ unittest suite, compilation of changed Python modules, and `git diff --check`.
 6. Move replacement/spare history and current-value queries to SQL Server.
 7. Complete controlled database/file parity testing.
 8. Cut the database branch over to SQL Server-primary behavior.
-9. Pilot future data on the network server.
-10. Enable reporting after backup and restore procedures are proven.
+9. Enable read-only database reporting with production-safe defaults.
+10. Pilot future data on the network server and prove operational recovery.
 
 The executable must not be rebuilt merely because documentation or database
 scripts changed. Follow the normal version and build policy once runtime code

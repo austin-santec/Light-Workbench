@@ -58,6 +58,30 @@ class CocPreparationTests(unittest.TestCase):
         self.assertEqual(result.supplemental_run_number, None)
         self.assertEqual(result.effective_criteria, CRITERIA)
 
+    def test_nonproduction_source_is_rejected_but_legacy_missing_purpose_is_allowed(self):
+        engineering = source(
+            1,
+            [MeasurementRecord(1, 1.0, 1.1, 1)],
+            run_purpose="engineering",
+        )
+        result = prepare_coc(engineering, 1)
+        self.assertFalse(result.eligible)
+        self.assertIn(
+            "non_production_run",
+            {issue.code for issue in result.validation_issues},
+        )
+
+        legacy = source(2, [MeasurementRecord(1, 1.0, 1.1, 1)])
+        legacy = CocSourceRun(
+            legacy.run_number,
+            legacy.source_path,
+            legacy.measurements,
+            dict(legacy.metadata),
+            legacy.criteria,
+            legacy.source_identifier,
+        )
+        self.assertTrue(prepare_coc(legacy, 1).eligible)
+
     def test_unit_18901_style_replacements_create_complete_passing_report(self):
         baseline = [
             MeasurementRecord(channel, 1.0, 1.1, channel)

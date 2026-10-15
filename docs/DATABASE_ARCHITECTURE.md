@@ -2,7 +2,7 @@
 
 ## Status and purpose
 
-Status: implemented through the database-primary runtime cutover (Milestone 9)
+Status: implemented through read-only database reporting (Milestone 10)
 using forward-only migration `0002_nonnegative_measurement_losses.sql`.
 Database-neutral repositories and the unit, assignment, run-lifecycle,
 atomic-measurement, current/history query, and assignment-scoped routing
@@ -564,6 +564,30 @@ For database-backed COC export, the operator explicitly chooses the output
 folder because there is no authoritative local run directory. COC files remain
 derived exports and are not written back as run storage.
 
+## Read-only reporting
+
+`Tools > Database Reports...` uses a read-only application reporting service
+over the same repository and run-projection boundaries as the production UI.
+It does not issue run, measurement, assignment, replacement, or spare writes.
+The report includes:
+
+- joined unit, switch, and assignment history;
+- run history filtered by model, mode, operator, UTC date, completion status,
+  purpose, and analysis status;
+- complete accepted channel/attempt history, including superseded retests;
+- retest counts and frequency;
+- assignment replacement history with the outcome of the linked run reading;
+- pass/fail and optimization results derived from current accepted readings
+  and the immutable limit snapshot saved with that run; and
+- explicit CSV export of the currently selected report tab.
+
+Normal production metrics include only `production` runs whose
+`analysis_status` is `included` and which have not been superseded. Pending,
+excluded, superseded, engineering, training, and calibration data is available
+only when the operator explicitly selects the broader troubleshooting scope.
+CSV reports are local derived outputs, never authoritative storage or an
+automatic synchronization mechanism.
+
 ## Security and operations
 
 - Use Windows Authentication and least-privilege database roles.
@@ -604,6 +628,8 @@ Resolved:
 - Support logs remain local.
 - The simplified eight-table schema and two read-only views are the approved
   baseline.
+- Read-only reporting lives in Light Workbench and uses application/repository
+  boundaries rather than SQL in Qt presentation code.
 
 Remaining before production:
 
@@ -611,8 +637,6 @@ Remaining before production:
 2. Windows/domain groups and permissions.
 3. Backup, restore, retention, and archival policy.
 4. Exact production behavior for stale `in_progress` runs.
-5. Whether database reporting lives in Light Workbench or a separate read-only
-   application.
 
 ## Related documents
 
@@ -622,3 +646,12 @@ Remaining before production:
 - `docs/PROJECT_LAYOUT.md` - repository and source placement.
 - `docs/SUPPORT_LOGGING.md` - local engineering-log ownership.
 - `docs/TESTING_AND_RELEASE.md` - required validation and release checks.
+Run purpose is selected when a new run begins and is persisted in `IL_RUNS`.
+Production is the default; Engineering, Training, and Calibration are retained
+for support/review but are excluded from normal production analysis. Completion
+and analysis are separate: a completed production run is finalized as included,
+while stopped or failed production runs remain pending. Non-production runs stay
+excluded even after completion. Continuations and retests inherit the original
+purpose. Normal COC export requires every database source run to be Production;
+older file-backed runs with no purpose field remain compatible for historical
+viewing and export.

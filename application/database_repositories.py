@@ -80,7 +80,13 @@ class RunRepository(Protocol):
     def get(self, run_id: int) -> RunRecord | None: ...
 
     def finish(
-        self, run_id: int, completion_status: str, run_ended_at_utc: datetime
+        self,
+        run_id: int,
+        completion_status: str,
+        run_ended_at_utc: datetime,
+        *,
+        analysis_status: str | None = None,
+        analysis_exclusion_reason: str | None = None,
     ) -> RunRecord: ...
 
     def resume(self, run_id: int) -> RunRecord: ...
@@ -155,6 +161,26 @@ class RoutingRepository(ReplacementRepository, SpareRepository, Protocol):
         tuple[SpareEventRecord, ...],
         tuple[int, ...],
     ]: ...
+
+
+class ReportingRepository(Protocol):
+    """Read-only enumeration used by reporting; no report method may mutate."""
+
+    def list_report_runs(self) -> tuple[RunRecord, ...]: ...
+
+    def list_report_assignments(self) -> tuple[AssignmentRecord, ...]: ...
+
+    def list_report_units(self) -> tuple[UnitRecord, ...]: ...
+
+    def list_report_switches(self) -> tuple[SwitchRecord, ...]: ...
+
+    def report_measurements_for_runs(
+        self, run_ids: tuple[int, ...]
+    ) -> tuple[MeasurementRecord, ...]: ...
+
+    def report_replacements_for_assignments(
+        self, assignment_ids: tuple[int, ...]
+    ) -> tuple[ReplacementRecord, ...]: ...
 
 
 __all__ = [name for name in globals() if name.endswith("Repository")]

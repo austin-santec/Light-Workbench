@@ -9,6 +9,8 @@ from types import MappingProxyType
 from typing import Mapping
 from uuid import UUID
 
+from .run_purpose import normalize_run_purpose
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -296,8 +298,7 @@ class RunSpec:
         object.__setattr__(self, "wavelength_mode", mode)
         require_text(self.operating_band, "Operating band")
         require_text(self.application_version, "Application version")
-        if self.run_purpose not in {"production", "engineering", "training", "calibration"}:
-            raise ValueError("Invalid run purpose")
+        object.__setattr__(self, "run_purpose", normalize_run_purpose(self.run_purpose))
         if self.analysis_status not in {"pending", "included", "excluded", "superseded"}:
             raise ValueError("Invalid analysis status")
         if self.analysis_status == "excluded" and not str(
@@ -335,6 +336,7 @@ class RunStartSpec:
     notes: str | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "run_purpose", normalize_run_purpose(self.run_purpose))
         validated = self.with_run_number(1)
         if validated.analysis_status == "superseded":
             raise ValueError("A new run cannot begin in superseded analysis state")

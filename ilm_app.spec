@@ -1,8 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
 from pathlib import Path
 
 project_root = Path(SPEC).resolve().parent
+sys.path.insert(0, str(project_root))
+
+from tools.release_resources import discover_sql_migrations
+
+
+migration_directory = (
+    project_root / "infrastructure" / "database" / "sql_migrations"
+)
+migration_datas = [
+    (str(path), "infrastructure/database/sql_migrations")
+    for path in discover_sql_migrations(migration_directory)
+]
 
 
 a = Analysis(
@@ -50,7 +63,8 @@ a = Analysis(
             str(project_root / "ILM_READING_GUIDE.html"),
             ".",
         ),
-    ],
+    ]
+    + migration_datas,
     hiddenimports=["PyQt5.sip", "pyvisa"],
     hookspath=[],
     hooksconfig={},
