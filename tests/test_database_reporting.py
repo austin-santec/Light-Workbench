@@ -68,6 +68,7 @@ class DatabaseReportingTests(unittest.TestCase):
         purpose="production",
         analysis="pending",
         operator="AT",
+        station=3,
         started=None,
     ):
         run = self.repository.create(
@@ -77,6 +78,7 @@ class DatabaseReportingTests(unittest.TestCase):
                 client_run_uuid=uuid4(),
                 run_started_at_utc=started or NOW + timedelta(minutes=number),
                 tested_by=operator,
+                station_number=station,
                 wavelength_mode="SM",
                 operating_band="O band",
                 application_version="test",
@@ -183,6 +185,18 @@ class DatabaseReportingTests(unittest.TestCase):
         self.assertEqual(row.optimization_channel_count, 1)
         self.assertEqual(row.current_channel_count, 2)
         self.assertEqual(row.retest_attempt_count, 1)
+        self.assertEqual(row.station_number, 3)
+
+    def test_station_filter_and_export_column_are_supported(self):
+        included = self.populate_included_run()
+        other = self.create_run(2, analysis="included", station=4)
+
+        report = self.service.search(
+            ReportFilters(station_number=4, include_all_records=True)
+        )
+
+        self.assertEqual(tuple(row.run_id for row in report.runs), (other.run_id,))
+        self.assertEqual(run_report_rows(report)[0][7], "4")
 
     def test_channel_history_preserves_superseded_and_current_attempts(self):
         run = self.populate_included_run()

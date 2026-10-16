@@ -71,6 +71,7 @@ class RepositoryContractMixin:
                 client_run_uuid=run_uuid,
                 run_started_at_utc=NOW,
                 tested_by="AT",
+                station_number=7,
                 wavelength_mode="SM",
                 operating_band="O band",
                 application_version="test",
@@ -98,6 +99,7 @@ class RepositoryContractMixin:
                 client_run_uuid=uuid4(),
                 run_started_at_utc=NOW,
                 tested_by="AT",
+                station_number=7,
                 wavelength_mode="SM",
                 operating_band="O band",
                 application_version="test",
@@ -106,6 +108,7 @@ class RepositoryContractMixin:
             )
         )
         self.assertEqual(next_run.run_number, 2)
+        self.assertEqual(next_run.station_number, 7)
         self.assertEqual(
             repository.create_next(
                 RunStartSpec(

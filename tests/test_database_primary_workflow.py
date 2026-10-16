@@ -29,6 +29,7 @@ class DatabasePrimaryRunWorkflowTests(unittest.TestCase):
             installed_by="AT",
             initial_channel_map={1: 1, 2: 2},
             tested_by="AT",
+            station_number=4,
             wavelength_mode="SM",
             operating_band="O band",
             application_version="test",
@@ -46,6 +47,7 @@ class DatabasePrimaryRunWorkflowTests(unittest.TestCase):
     def test_start_commit_load_and_finish_use_authoritative_repositories(self):
         context = self._start()
         self.assertEqual(context.run.run_number, 1)
+        self.assertEqual(context.run.station_number, 4)
         self.assertEqual(context.unit.main_board_serial, "MB-100")
 
         pending = self.workflow.measurements.prepare_measurement(

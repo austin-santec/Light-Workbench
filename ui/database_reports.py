@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+    QSpinBox,
 )
 
 from domain.database_reporting import ReportFilters, format_report_csv
@@ -35,6 +36,7 @@ RUN_HEADERS = (
     "Run",
     "Started (UTC)",
     "Operator",
+    "Station",
     "Mode",
     "Completion",
     "Purpose",
@@ -96,7 +98,8 @@ QDialog#database_reports_dialog QCheckBox {
     color: #202124;
 }
 QDialog#database_reports_dialog QLineEdit,
-QDialog#database_reports_dialog QComboBox {
+QDialog#database_reports_dialog QComboBox,
+QDialog#database_reports_dialog QSpinBox {
     background: #ffffff;
     color: #202124;
     border: 1px solid #c7cdd1;
@@ -143,7 +146,8 @@ QDialog#database_reports_dialog QCheckBox {
     color: #e8eaed;
 }
 QDialog#database_reports_dialog QLineEdit,
-QDialog#database_reports_dialog QComboBox {
+QDialog#database_reports_dialog QComboBox,
+QDialog#database_reports_dialog QSpinBox {
     background: #373a40;
     color: #e8eaed;
     border: 1px solid #5a6069;
@@ -199,6 +203,7 @@ def run_report_rows(report) -> list[list[str]]:
             str(row.run_number),
             _timestamp(row.started_at_utc),
             row.tested_by,
+            "" if row.station_number is None else str(row.station_number),
             row.wavelength_mode,
             row.completion_status,
             row.run_purpose,
@@ -287,6 +292,9 @@ class DatabaseReportsDialog(QDialog):
         self.unit_edit = QLineEdit()
         self.switch_edit = QLineEdit()
         self.operator_edit = QLineEdit()
+        self.station_spin = QSpinBox()
+        self.station_spin.setRange(0, 9999)
+        self.station_spin.setSpecialValueText("Any station")
         self.from_edit = QLineEdit()
         self.from_edit.setPlaceholderText("YYYY-MM-DD")
         self.to_edit = QLineEdit()
@@ -324,6 +332,7 @@ class DatabaseReportsDialog(QDialog):
             ("Model:", self.model_combo),
             ("Mode:", self.mode_combo),
             ("Operator:", self.operator_edit),
+            ("Station:", self.station_spin),
             ("Completion:", self.completion_combo),
             ("Purpose:", self.purpose_combo),
             ("Analysis:", self.analysis_combo),
@@ -421,6 +430,9 @@ class DatabaseReportsDialog(QDialog):
             switch_model=self.model_combo.currentData(),
             wavelength_mode=self.mode_combo.currentData(),
             tested_by=self.operator_edit.text().strip(),
+            station_number=(
+                self.station_spin.value() if self.station_spin.value() > 0 else None
+            ),
             started_from_utc=self._date_value(self.from_edit.text()),
             started_to_utc=self._date_value(self.to_edit.text(), through=True),
             completion_status=self.completion_combo.currentData(),

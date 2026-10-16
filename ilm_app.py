@@ -823,6 +823,8 @@ class MainWindow(QMainWindow):
         self._run_completion_reason = ""
         self._run_completed_at_utc = ""
         self._run_purpose_editable = True
+        self._station_session_default = None
+        self._station_editable = True
         self._loaded_run_profile_unavailable = False
         self._loaded_run_profile_reason = ""
         self.reference_workflow = None
@@ -1345,6 +1347,7 @@ class MainWindow(QMainWindow):
         )
         self._refresh_reference_controls()
         self._set_run_purpose_editable(self._run_purpose_editable)
+        self._set_station_editable(self._station_editable)
         self.retest_button.setEnabled(
             bool(self.run_data and self.run_data.measurements)
             and run_available
@@ -1358,6 +1361,38 @@ class MainWindow(QMainWindow):
             self.hardware_run_purpose.setEnabled(
                 self._run_purpose_editable and not self.hardware_run_active
             )
+
+    def _set_station_editable(self, editable: bool):
+        """Keep a loaded database run's station immutable."""
+
+        self._station_editable = bool(editable)
+        if hasattr(self, "hardware_station_number"):
+            self.hardware_station_number.setEnabled(
+                self._station_editable and not self.hardware_run_active
+            )
+
+    def _station_number_selection_changed(self, value):
+        if getattr(self, "_station_editable", True) and int(value) > 0:
+            self._station_session_default = int(value)
+
+    def _set_station_number(self, value, *, editable=True):
+        self.hardware_station_number.blockSignals(True)
+        try:
+            self.hardware_station_number.setValue(
+                int(value) if value is not None and int(value) > 0 else 0
+            )
+        except (TypeError, ValueError):
+            self.hardware_station_number.setValue(0)
+        finally:
+            self.hardware_station_number.blockSignals(False)
+        self._set_station_editable(editable)
+
+    def _station_number_value(self):
+        value = int(self.hardware_station_number.value())
+        return value if value > 0 else None
+
+    def _restore_station_session_default(self):
+        self._set_station_number(self._station_session_default, editable=True)
 
     def _run_purpose_selection_changed(self, *_args):
         if not hasattr(self, "hardware_run_purpose"):
@@ -1821,9 +1856,20 @@ class MainWindow(QMainWindow):
             "Enter the operator's initials. They are saved with the run and COC."
         )
         hardware_setup_layout.addWidget(self.hardware_tested_by, 6, 1)
+        hardware_setup_layout.addWidget(QLabel("Station:"), 6, 2)
+        self.hardware_station_number = QSpinBox()
+        self.hardware_station_number.setRange(0, 9999)
+        self.hardware_station_number.setSpecialValueText("Not recorded")
+        self.hardware_station_number.setToolTip(
+            "Optional positive station number. New database runs require it."
+        )
+        self.hardware_station_number.valueChanged.connect(
+            self._station_number_selection_changed
+        )
+        hardware_setup_layout.addWidget(self.hardware_station_number, 6, 3)
         self.reference_status_label = QLabel("Reference status: Not referenced")
         self.reference_status_label.setWordWrap(True)
-        hardware_setup_layout.addWidget(QLabel("Run purpose:"), 6, 2)
+        hardware_setup_layout.addWidget(QLabel("Run purpose:"), 7, 2)
         self.hardware_run_purpose = QComboBox()
         for label, value in RUN_PURPOSE_OPTIONS:
             self.hardware_run_purpose.addItem(label, value)
@@ -1834,7 +1880,7 @@ class MainWindow(QMainWindow):
         self.hardware_run_purpose.currentIndexChanged.connect(
             self._run_purpose_selection_changed
         )
-        hardware_setup_layout.addWidget(self.hardware_run_purpose, 6, 3)
+        hardware_setup_layout.addWidget(self.hardware_run_purpose, 7, 3)
         self.run_purpose_notice_label = QLabel()
         self.run_purpose_notice_label.setWordWrap(True)
         self.run_purpose_notice_label.setStyleSheet("color: #d89b00;")
@@ -2182,6 +2228,7 @@ class MainWindow(QMainWindow):
             "Switch serial",
             "Operating band",
             "Tested by",
+            "Station number",
             "Run number",
             "Run purpose",
             "Source file",
@@ -4066,6 +4113,9 @@ class MainWindow(QMainWindow):
             operating_band = "O band"
         self.hardware_operating_band.setCurrentText(operating_band)
         self.hardware_tested_by.setText(run_data.metadata.get("Tested by", ""))
+        self._set_station_number(
+            run_data.metadata.get("Station number"), editable=False
+        )
         try:
             self.hardware_run_number.setValue(
                 max(1, int(run_data.metadata.get("Run number", 1)))
@@ -4075,7 +4125,10 @@ class MainWindow(QMainWindow):
         self.metadata_labels["Part number"].setText(
             run_data.metadata.get("Part number", "Not recorded")
         )
-        for key in ("Main board serial", "Switch serial", "Operating band", "Tested by"):
+        for key in (
+            "Main board serial", "Switch serial", "Operating band", "Tested by",
+            "Station number",
+        ):
             value = run_data.metadata.get(key)
             if value is None and key == "Switch serial":
                 value = run_data.metadata.get("Switch serial (last 5 digits)")
@@ -4283,6 +4336,7 @@ class MainWindow(QMainWindow):
             {
                 "Operating band": "O band",
                 "Tested by": self.hardware_tested_by.text().strip(),
+                "Station number": "",
                 "Mode": "Simulation",
                 "Run number": "1",
                 "Wavelength mode": configuration.wavelength_profile.code,
@@ -4300,6 +4354,7 @@ class MainWindow(QMainWindow):
             metadata={
                 "Operating band": "O band",
                 "Tested by": self.hardware_tested_by.text().strip(),
+                "Station number": "",
                 "Mode": "Simulation",
                 "Run number": "1",
                 "Wavelength mode": configuration.wavelength_profile.code,
@@ -4508,6 +4563,11 @@ class MainWindow(QMainWindow):
             "Switch serial": self.hardware_switch_serial.text().strip(),
             "Operating band": self.hardware_operating_band.currentText().strip(),
             "Tested by": self.hardware_tested_by.text().strip(),
+            "Station number": (
+                str(self._station_number_value())
+                if self._station_number_value() is not None
+                else ""
+            ),
         }
 
     @property
@@ -4669,6 +4729,7 @@ class MainWindow(QMainWindow):
             self.hardware_part_number.setCurrentText(metadata["Part number"])
             self.hardware_operating_band.setCurrentText(context.run.operating_band)
             self.hardware_tested_by.setText(context.run.tested_by)
+            self._set_station_number(context.run.station_number, editable=False)
             self.hardware_run_number.setValue(context.run.run_number)
             self._set_wavelength_mode(context.run.wavelength_mode, invalidate=False)
         self._set_run_purpose(context.run.run_purpose, editable=False)
@@ -4683,6 +4744,7 @@ class MainWindow(QMainWindow):
             "Switch serial",
             "Operating band",
             "Tested by",
+            "Station number",
             "Run number",
             "Run purpose",
         ):
@@ -4709,6 +4771,7 @@ class MainWindow(QMainWindow):
             operating_band = "O band"
         self.hardware_operating_band.setCurrentText(operating_band)
         self.hardware_tested_by.setText(metadata.get("Tested by", ""))
+        self._set_station_number(metadata.get("Station number"), editable=False)
 
     def confirm_existing_run_identity(self):
         """Offer to update a loaded run's identity before continuing it."""
@@ -4829,13 +4892,22 @@ class MainWindow(QMainWindow):
     def start_hardware(self, channels=None, retest=False):
         if self.hardware_run_active:
             return
-        if not self._authorize_hardware_start(retest=retest):
-            return
         run_mode = "new"
         if not retest and self.run_data is not None:
             run_mode = self.choose_hardware_run_mode()
             if run_mode is None:
                 return
+        if run_mode == "new" and not retest:
+            self._restore_station_session_default()
+        if not self._authorize_hardware_start(
+            retest=retest,
+            require_station_number=(
+                self.database_workflow is not None
+                and run_mode == "new"
+                and not retest
+            ),
+        ):
+            return
         if run_mode == "continue" and not self.confirm_existing_run_identity():
             return
         if run_mode == "new":
@@ -5074,6 +5146,7 @@ class MainWindow(QMainWindow):
                         )
                     },
                     "tested_by": self.hardware_tested_by.text().strip(),
+                    "station_number": self._station_number_value(),
                     "wavelength_mode": (
                         self.measurement_configuration.wavelength_profile.code
                     ),
@@ -5117,6 +5190,7 @@ class MainWindow(QMainWindow):
                     SupportEventCategory.CONNECTION,
                     "database.run_start_blocked",
                     level=SupportLogLevel.ERROR,
+                    station_number=self._station_number_value(),
                     error_message=str(error),
                     status="blocked",
                 )
@@ -5127,6 +5201,7 @@ class MainWindow(QMainWindow):
                     SupportEventCategory.WORKFLOW,
                     "database.run_start_failed",
                     level=SupportLogLevel.ERROR,
+                    station_number=self._station_number_value(),
                     error_type=type(error).__name__,
                     error_message=str(error),
                     status="error",
@@ -5174,6 +5249,7 @@ class MainWindow(QMainWindow):
             unit_serial=selected_identity.get("Main board serial"),
             switch_serial=selected_identity.get("Switch serial"),
             operator_initials=self.hardware_tested_by.text().strip(),
+            station_number=self._station_number_value(),
             run_purpose=purpose,
             retest=retest,
             live_write_mode=self.live_write_mode_enabled,
@@ -5310,6 +5386,7 @@ class MainWindow(QMainWindow):
         self.metadata_labels["Tested by"].setText(
             self.run_data.metadata.get("Tested by", "Not recorded")
         )
+        self.metadata_labels["Station number"].setText("Not recorded")
         self.metadata_labels["Run number"].setText(
             self.run_data.metadata.get("Run number", str(selected_run_number))
         )
@@ -5391,9 +5468,11 @@ class MainWindow(QMainWindow):
         self.refresh_run_status(include_composite=False)
         self._update_hardware_readiness_controls()
 
-    def _run_start_preflight(self):
+    def _run_start_preflight(self, *, require_station_number=None):
         """Collect current UI state and validate it without side effects."""
         reference = self.reference_session.snapshot
+        if require_station_number is None:
+            require_station_number = self.database_workflow is not None
         return validate_run_preflight(
             admin_mode=self.admin_session.is_active,
             metadata=self._current_hardware_identity(),
@@ -5412,6 +5491,7 @@ class MainWindow(QMainWindow):
                 else False
             ),
             wavelengths=self.measurement_configuration.opm_wavelengths_nm,
+            require_station_number=require_station_number,
         )
 
     @staticmethod
@@ -5435,6 +5515,7 @@ class MainWindow(QMainWindow):
             "part_number": self.hardware_part_number,
             "operating_band": self.hardware_operating_band,
             "tested_by": self.hardware_tested_by,
+            "station_number": self.hardware_station_number,
             "run_number": self.hardware_run_number,
             "channel_mode": self.hardware_channel_mode,
             "single_channel": self.hardware_single_channel,
@@ -5475,15 +5556,20 @@ class MainWindow(QMainWindow):
         )
         self._focus_preflight_issue(issues)
 
-    def _authorize_hardware_start(self, *, retest=False):
+    def _authorize_hardware_start(
+        self, *, retest=False, require_station_number=None
+    ):
         """Apply role policy to one production start before any side effect."""
-        result = self._run_start_preflight()
+        result = self._run_start_preflight(
+            require_station_number=require_station_number
+        )
         issue_codes = ", ".join(issue.code for issue in result.issues)
         self._record_support(
             SupportEventCategory.WORKFLOW,
             "run.preflight_started",
             admin_mode=self.admin_session.is_active,
             run_number=self.hardware_run_number.value(),
+            station_number=self._station_number_value(),
             channel_mode=self.hardware_channel_mode.currentText(),
             retest=retest,
             details=issue_codes,
@@ -5496,6 +5582,7 @@ class MainWindow(QMainWindow):
                 "run.preflight_blocked",
                 admin_mode=self.admin_session.is_active,
                 run_number=self.hardware_run_number.value(),
+                station_number=self._station_number_value(),
                 channel_mode=self.hardware_channel_mode.currentText(),
                 retest=retest,
                 details=issue_codes,
@@ -5505,12 +5592,32 @@ class MainWindow(QMainWindow):
             return False
 
         if result.metadata_issues:
+            blocking_metadata_issues = tuple(
+                issue
+                for issue in result.metadata_issues
+                if not issue.admin_metadata_bypassable
+            )
+            if blocking_metadata_issues:
+                self._record_support(
+                    SupportEventCategory.WORKFLOW,
+                    "run.preflight_blocked",
+                    admin_mode=self.admin_session.is_active,
+                    run_number=self.hardware_run_number.value(),
+                    station_number=self._station_number_value(),
+                    channel_mode=self.hardware_channel_mode.currentText(),
+                    retest=retest,
+                    details=issue_codes,
+                    status="blocked",
+                )
+                self._show_preflight_blocked(result)
+                return False
             if not self.admin_session.is_active:
                 self._record_support(
                     SupportEventCategory.WORKFLOW,
                     "run.preflight_blocked",
                     admin_mode=False,
                     run_number=self.hardware_run_number.value(),
+                    station_number=self._station_number_value(),
                     channel_mode=self.hardware_channel_mode.currentText(),
                     retest=retest,
                     details=issue_codes,
@@ -5524,6 +5631,7 @@ class MainWindow(QMainWindow):
                     "run.preflight_blocked",
                     admin_mode=True,
                     run_number=self.hardware_run_number.value(),
+                    station_number=self._station_number_value(),
                     channel_mode=self.hardware_channel_mode.currentText(),
                     retest=retest,
                     details=issue_codes,
@@ -5536,6 +5644,7 @@ class MainWindow(QMainWindow):
             "run.preflight_passed",
             admin_mode=self.admin_session.is_active,
             run_number=self.hardware_run_number.value(),
+            station_number=self._station_number_value(),
             channel_mode=self.hardware_channel_mode.currentText(),
             retest=retest,
             details=issue_codes,
@@ -6521,6 +6630,7 @@ class MainWindow(QMainWindow):
                 else ""
             ),
             measurement_count=(len(self.run_data.measurements) if self.run_data else 0),
+            station_number=self._station_number_value(),
             status="success",
         )
         self.finish_switch_test_session()
@@ -6554,6 +6664,7 @@ class MainWindow(QMainWindow):
                 else ""
             ),
             measurement_count=(len(self.run_data.measurements) if self.run_data else 0),
+            station_number=self._station_number_value(),
             status="stopped",
         )
         self.finish_switch_test_session()
@@ -6584,6 +6695,7 @@ class MainWindow(QMainWindow):
             ),
             error_message=message,
             measurement_count=(len(self.run_data.measurements) if self.run_data else 0),
+            station_number=self._station_number_value(),
             status="error",
         )
         self.finish_switch_test_session()
@@ -8153,6 +8265,9 @@ class MainWindow(QMainWindow):
                     "Part number": part_number,
                     "Main board serial": self.coc_exporter.normalise_serial(serial),
                     "Tested by": tested_by,
+                    "Station number": str(
+                        base_run.metadata.get("Station number") or "Not recorded"
+                    ),
                     "COC output file": output_path.name,
                     "COC output path": str(output_path),
                     "COC exported at": datetime.now().isoformat(timespec="seconds"),

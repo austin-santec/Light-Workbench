@@ -42,6 +42,7 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "run_number",
         "run_identifier",
         "operator_initials",
+        "station_number",
         "unit_serial",
         "switch_serial",
         "device_category",

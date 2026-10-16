@@ -84,7 +84,7 @@ class DatabasePreflightTests(unittest.TestCase):
         )
         result = check_database_preflight(_Factory(connection))
         self.assertTrue(result.ready)
-        self.assertEqual(result.current_schema_version, 2)
+        self.assertEqual(result.current_schema_version, 3)
         self.assertTrue(connection.closed)
 
     def test_missing_schema_is_reported_as_outdated_without_mutation(self):

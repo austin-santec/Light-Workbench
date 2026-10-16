@@ -83,6 +83,7 @@ class DatabasePrimaryRunWorkflow:
         limit_snapshot: Mapping,
         part_number_snapshot: str | None,
         front_panel_channel_count: int | None,
+        station_number: int | None = None,
         run_purpose: str = "production",
         started_at_utc: datetime | None = None,
         switch_replacement_reason: str | None = None,
@@ -120,6 +121,7 @@ class DatabasePrimaryRunWorkflow:
             limit_snapshot=limit_snapshot,
             part_number_snapshot=part_number_snapshot,
             front_panel_channel_count=front_panel_channel_count,
+            station_number=station_number,
             run_purpose=run_purpose,
             started_at_utc=started,
         )

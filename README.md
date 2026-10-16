@@ -606,7 +606,10 @@ hardware or prevent manual entry.
 The Part number field is also an editable drop-down containing the current
 standard OSX-150 part numbers. Operating band is selected from `O band` or
 `C band`. The `Tested by` field accepts the operator's initials and is saved
-with the run and copied into `G4` of the COC workbook.
+with the run and copied into `G4` of the COC workbook. Database-backed runs
+also record a simple positive Station number. It identifies which testing
+station produced the run; it is not a station registry or workstation
+auto-detection system.
 The read-only `Front-panel channels` value beside the setup fields is derived
 from the part number's three-digit channel field. It is not manually editable.
 

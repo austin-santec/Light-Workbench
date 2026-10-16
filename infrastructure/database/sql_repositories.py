@@ -414,9 +414,10 @@ class SqlRepositories:
                     operating_band, application_version, run_purpose,
                     analysis_status, analysis_exclusion_reason,
                     part_number_snapshot, front_panel_channel_count,
+                    station_number,
                     measurement_hardware_json, limit_snapshot_json, notes
                 ) OUTPUT INSERTED.run_id
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 spec.assignment_id,
                 spec.run_number,
@@ -431,6 +432,7 @@ class SqlRepositories:
                 spec.analysis_exclusion_reason,
                 spec.part_number_snapshot,
                 spec.front_panel_channel_count,
+                spec.station_number,
                 _json(spec.measurement_hardware),
                 _json(spec.limit_snapshot),
                 spec.notes,
@@ -1101,12 +1103,12 @@ class SqlRepositories:
             run_id=row[0], assignment_id=row[1], run_number=row[2],
             client_run_uuid=UUID(str(row[3])), run_started_at_utc=_utc(row[4]),
             tested_by=row[5], wavelength_mode=row[6], operating_band=row[7],
-            application_version=row[8], measurement_hardware=_mapping(row[18]),
-            limit_snapshot=_mapping(row[19]), completion_status=row[9],
+            application_version=row[8], measurement_hardware=_mapping(row[19]),
+            limit_snapshot=_mapping(row[20]), station_number=row[17], completion_status=row[9],
             run_ended_at_utc=_utc(row[10]), run_purpose=row[11],
             analysis_status=row[12], analysis_exclusion_reason=row[13],
             superseded_by_run_id=row[14], part_number_snapshot=row[15],
-            front_panel_channel_count=row[16], notes=row[17],
+            front_panel_channel_count=row[16], notes=row[18],
         )
 
     @staticmethod
@@ -1151,7 +1153,8 @@ class SqlRepositories:
             run.operating_band, run.application_version, run.completion_status,
             run.run_ended_at_utc, run.run_purpose, run.analysis_status,
             run.analysis_exclusion_reason, run.superseded_by_run_id,
-            run.part_number_snapshot, run.front_panel_channel_count, run.notes,
+            run.part_number_snapshot, run.front_panel_channel_count,
+            run.station_number, run.notes,
             run.measurement_hardware_json, run.limit_snapshot_json
         FROM dbo.IL_RUNS AS run
     """

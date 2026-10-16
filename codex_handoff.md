@@ -59,7 +59,8 @@ The database-focused branch has completed its SQL Server-primary cutover
 through Milestone 10. Development targets
 `localhost\SQLExpress`, database `LWBTestDB`, with Windows Authentication. The
 forward-only migration runner and initial eight-table/two-view schema are in
-`infrastructure/database/`; guarded reset and backup/restore tools operate only
+`infrastructure/database/`; migration 0003 adds the nullable positive
+`IL_RUNS.station_number` field. Guarded reset and backup/restore tools operate only
 on `LWBTestDB_Integration`. Backup verification restores to a temporary
 database, runs `DBCC CHECKDB`, validates the schema, and cleans up. The
 clean-start schema is
@@ -85,6 +86,12 @@ retain the original purpose. COC preparation is purpose-neutral: explicitly
 production, engineering, training, and calibration database sources are all
 eligible when they satisfy the technical COC requirements, while legacy files
 with no purpose metadata remain compatible.
+
+New database runs also require a simple positive station number. It is stored
+directly on `IL_RUNS`, shown in Run information and database reports, included
+in relevant local support events and COC provenance, and preserved for
+continuations/retests. Older runs may display `Not recorded`; loading them does
+not change the session's station default.
 
 `Tools > Database Reports...` is the read-only reporting surface. It includes
 assignment and run history, selected-run channel/retest attempts, replacement

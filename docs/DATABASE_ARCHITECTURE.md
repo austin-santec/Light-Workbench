@@ -2,8 +2,9 @@
 
 ## Status and purpose
 
-Status: implemented through read-only database reporting (Milestone 10)
-using forward-only migration `0002_nonnegative_measurement_losses.sql`.
+Status: implemented through read-only database reporting (Milestone 10), with
+station-number persistence added by forward-only migration
+`0003_station_number.sql`.
 Database-neutral repositories and the unit, assignment, run-lifecycle,
 atomic-measurement, current/history query, and assignment-scoped routing
 boundaries are connected to the production hardware workflow.
@@ -245,6 +246,7 @@ One record per Light Workbench test run.
 | `run_started_at_utc` | `DATETIME2(3)` | Run start time |
 | `run_ended_at_utc` | `DATETIME2(3) NULL` | Complete, stopped, or failed time |
 | `tested_by` | `NVARCHAR(100)` | Operator |
+| `station_number` | `INT NULL` | Simple positive station identifier; legacy runs may be null |
 | `wavelength_mode` | `VARCHAR(2)` | `SM` or `MM` |
 | `operating_band` | `VARCHAR(20)` | O band or C band |
 | `application_version` | `NVARCHAR(30)` | Light Workbench version |
@@ -264,6 +266,14 @@ One record per Light Workbench test run.
 `client_run_uuid` is generated before the first insertion attempt and never
 changes. Retrying a create operation with the same UUID must resolve the
 existing run rather than create a duplicate.
+
+For new database-backed runs, the operator enters a positive station number in
+the Hardware Test Setup area. The station is stored on `IL_RUNS`, not in a
+station registry. It is immutable after the run starts, is preserved through
+retests and continuation, and is shown as `Not recorded` for older runs that
+predate migration 0003. Loading an older run does not replace the session's
+station default. Admin Mode cannot bypass the station requirement for a new
+database run.
 
 Operator-facing `run_number` is allocated per unit by the run repository. The
 SQL implementation locks the unit row while it calculates the next number

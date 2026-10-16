@@ -17,6 +17,7 @@ class ReportFilters:
     switch_model: str = ""
     wavelength_mode: str = ""
     tested_by: str = ""
+    station_number: int | None = None
     started_from_utc: datetime | None = None
     started_to_utc: datetime | None = None
     completion_status: str = ""
@@ -56,6 +57,7 @@ class RunReportRow:
     started_at_utc: datetime
     ended_at_utc: datetime | None
     tested_by: str
+    station_number: int | None
     wavelength_mode: str
     operating_band: str
     completion_status: str

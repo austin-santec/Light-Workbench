@@ -438,6 +438,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\database\\sql_migrations\\0002_nonnegative_measurement_losses.sql',
    'DATA'),
+  ('infrastructure\\database\\sql_migrations\\0003_station_number.sql',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\sql_migrations\\0003_station_number.sql',
+   'DATA'),
   ('libcrypto-3.dll',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\DLLs\\libcrypto-3.dll',
    'BINARY'),

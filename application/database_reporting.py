@@ -186,6 +186,8 @@ class DatabaseReportingService:
                 _equals(switch.switch_model, filters.switch_model),
                 _equals(run.wavelength_mode, filters.wavelength_mode),
                 _contains(run.tested_by, filters.tested_by),
+                filters.station_number is None
+                or run.station_number == filters.station_number,
                 _equals(run.completion_status, filters.completion_status),
                 _equals(run.run_purpose, filters.run_purpose),
                 _equals(run.analysis_status, filters.analysis_status),
@@ -246,6 +248,7 @@ class DatabaseReportingService:
             started_at_utc=run.run_started_at_utc,
             ended_at_utc=run.run_ended_at_utc,
             tested_by=run.tested_by,
+            station_number=run.station_number,
             wavelength_mode=run.wavelength_mode,
             operating_band=run.operating_band,
             completion_status=run.completion_status,

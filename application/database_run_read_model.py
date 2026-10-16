@@ -126,6 +126,11 @@ class DatabaseRunSnapshot:
         values = {
             "Run number": str(self.run.run_number),
             "Tested by": self.run.tested_by,
+            "Station number": (
+                str(self.run.station_number)
+                if self.run.station_number is not None
+                else ""
+            ),
             "Wavelength mode": self.run.wavelength_mode,
             "Operating band": self.run.operating_band,
             "Part number": self.run.part_number_snapshot or "",

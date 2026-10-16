@@ -114,6 +114,7 @@ class RunRecord:
     application_version: str
     measurement_hardware: Mapping
     limit_snapshot: Mapping
+    station_number: int | None = None
     completion_status: str = "in_progress"
     run_ended_at_utc: datetime | None = None
     run_purpose: str = "production"
@@ -125,6 +126,10 @@ class RunRecord:
     notes: str | None = None
 
     def __post_init__(self) -> None:
+        if self.station_number is not None:
+            object.__setattr__(
+                self, "station_number", require_positive(self.station_number, "Station number")
+            )
         object.__setattr__(
             self,
             "measurement_hardware",
@@ -278,6 +283,7 @@ class RunSpec:
     application_version: str
     measurement_hardware: Mapping = field(default_factory=dict)
     limit_snapshot: Mapping = field(default_factory=dict)
+    station_number: int | None = None
     run_purpose: str = "production"
     analysis_status: str = "pending"
     analysis_exclusion_reason: str | None = None
@@ -292,6 +298,10 @@ class RunSpec:
             self, "run_started_at_utc", require_utc(self.run_started_at_utc, "Run start time")
         )
         object.__setattr__(self, "tested_by", require_text(self.tested_by, "Tested by"))
+        if self.station_number is not None:
+            object.__setattr__(
+                self, "station_number", require_positive(self.station_number, "Station number")
+            )
         mode = str(self.wavelength_mode).upper()
         if mode not in {"SM", "MM"}:
             raise ValueError("Wavelength mode must be SM or MM")
@@ -328,6 +338,7 @@ class RunStartSpec:
     application_version: str
     measurement_hardware: Mapping = field(default_factory=dict)
     limit_snapshot: Mapping = field(default_factory=dict)
+    station_number: int | None = None
     run_purpose: str = "production"
     analysis_status: str = "pending"
     analysis_exclusion_reason: str | None = None
@@ -356,6 +367,7 @@ class RunStartSpec:
             client_run_uuid=self.client_run_uuid,
             run_started_at_utc=self.run_started_at_utc,
             tested_by=self.tested_by,
+            station_number=self.station_number,
             wavelength_mode=self.wavelength_mode,
             operating_band=self.operating_band,
             application_version=self.application_version,

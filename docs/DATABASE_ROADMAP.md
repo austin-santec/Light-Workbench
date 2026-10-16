@@ -41,7 +41,7 @@ rules.
 ## Milestone 1 - SQL Server foundation
 
 Status: complete. Forward-only migrations through
-`0002_nonnegative_measurement_losses.sql`, checksum/history validation, the
+`0003_station_number.sql`, checksum/history validation, the
 eight tables, two views, least-privilege database roles,
 guarded reset tooling, and isolated SQL integration tests are implemented. The
 local `LWBTestDB_Integration` database has been reset, migrated, backed up,

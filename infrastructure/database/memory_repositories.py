@@ -281,6 +281,7 @@ class InMemoryRepositories:
             client_run_uuid=spec.client_run_uuid,
             run_started_at_utc=require_utc(spec.run_started_at_utc, "Run start time"),
             tested_by=require_text(spec.tested_by, "Tested by"),
+            station_number=spec.station_number,
             wavelength_mode=mode,
             operating_band=require_text(spec.operating_band, "Operating band"),
             application_version=require_text(spec.application_version, "Application version"),
