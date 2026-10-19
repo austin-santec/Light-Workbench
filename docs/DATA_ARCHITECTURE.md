@@ -239,6 +239,29 @@ episode, including its start, invalid-sample count, and cleared/ended outcome.
 - Preserve template graphics and unrelated cell content during COC export.
 - Keep clipboard exports read-only with respect to run and unit persistence.
 
+## Extra physical-port attempts
+
+Optional engineering-interface probes above the part-number-derived
+front-panel count are not database records. Route attempts, unverified routes,
+temporary readings, retries, invalid/dark results, No More Physical Ports, and
+Stop Extra Testing remain local support evidence only. The program never
+updates authoritative switch capacity from one of these outcomes.
+
+An extra candidate enters `IL_MEASUREMENTS` only after a complete valid
+two-wavelength sample and explicit Write IL. It uses the candidate number as
+both `logical_channel` and `physical_port`, matching the existing extra-reading
+convention; its spare-candidate meaning is derived because it is greater than
+the run's immutable front-panel count. The normal atomic commit, append-only
+attempt history, reference snapshot, and operator identity rules are unchanged.
+Extra rows are available to replacement analysis but are excluded from
+front-panel completion and direct COC rows.
+
+The optional phase has a transient/support state of `not_offered`, `declined`,
+`in_progress`, `completed`, `stopped`, `failed`,
+`end_of_installed_ports_reported`, or `safety_ceiling_reached`. A phase failure
+does not delete or invalidate accepted front-panel data, and final required-run
+quality remains based on front-panel channels.
+
 ## Planned SQL Server persistence
 
 The database-focused development branch uses SQL Server as the authoritative

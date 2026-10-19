@@ -9,6 +9,7 @@ accumulating unrelated booleans and partially populated pending-reading data.
 from dataclasses import dataclass
 
 from application.hardware_planning import HardwareRunPlan
+from domain.extra_ports import ExtraPortPhaseStatus
 
 
 HardwareReading = tuple[int, int, float, float]
@@ -25,6 +26,9 @@ class HardwareRunSession:
     pending_reading: HardwareReading | None = None
     pending_channel: int | None = None
     pending_physical_port: int | None = None
+    extra_port_phase_status: str = ExtraPortPhaseStatus.NOT_OFFERED.value
+    extra_port_candidate: int | None = None
+    highest_confirmed_extra_port: int | None = None
 
     def begin(self, *, retest: bool, plan: HardwareRunPlan | None) -> None:
         """Start a fresh UI session from a normalized run plan."""
@@ -32,7 +36,20 @@ class HardwareRunSession:
         self.manual_channel_order = bool(plan and plan.manual_channel_order)
         self.full_pass = bool(plan and plan.full_pass)
         self.configured_channel_count = None
+        self.extra_port_phase_status = ExtraPortPhaseStatus.NOT_OFFERED.value
+        self.extra_port_candidate = None
+        self.highest_confirmed_extra_port = None
         self.clear_pending()
+
+    @property
+    def extra_port_active(self) -> bool:
+        return self.extra_port_phase_status == ExtraPortPhaseStatus.IN_PROGRESS.value
+
+    def set_extra_port_phase(self, status, candidate=None, highest_confirmed=None):
+        self.extra_port_phase_status = str(status)
+        self.extra_port_candidate = int(candidate) if candidate is not None else None
+        if highest_confirmed is not None:
+            self.highest_confirmed_extra_port = int(highest_confirmed)
 
     def set_configured_channel_count(self, channel_count: int) -> None:
         """Record the switch capacity reported by the worker."""

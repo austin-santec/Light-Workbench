@@ -178,6 +178,16 @@ class MeasurementPersistenceWorkflowTests(unittest.TestCase):
         self.assertFalse(hasattr(pending, "raw_power_dbm"))
         self.assertEqual(self.repository.history_for_run(self.sm_run.run_id), ())
 
+    def test_extra_candidate_is_atomic_and_exists_only_after_explicit_commit(self):
+        pending = self.prepare_sm(logical_channel=49, physical_port=49)
+        self.assertEqual(self.repository.history_for_run(self.sm_run.run_id), ())
+
+        record = self.workflow.commit(pending)
+
+        self.assertEqual(record.logical_channel, 49)
+        self.assertEqual(record.physical_port, 49)
+        self.assertEqual(len(self.repository.history_for_run(self.sm_run.run_id)), 1)
+
     def test_terminal_run_rejects_new_measurement(self):
         pending = self.prepare_sm()
         self.repository.finish(self.sm_run.run_id, "stopped", NOW)

@@ -62,6 +62,31 @@ active hardware run, including the pending uncommitted reading and the
 configured channel count. This state is separate from persisted measurements:
 only the existing commit path writes a reading to the run.
 
+For a new automatic full pass, the required logical-channel plan comes from
+the validated three-digit front-panel count in the part number. The switch's
+`CFG:SWT:END?` value is only a configured-logical-channel check: a value below
+the required count blocks the run, while a larger value does not add channels
+to the required pass. After all required channels are explicitly written, the
+worker can offer one optional extra-physical-port phase. Declining finishes the
+run; accepting probes one candidate at a time beginning at `N + 1`. Partial,
+manual-order, retest, continued/loaded, failed, and canceled runs do not make
+this offer.
+
+`domain/extra_ports.py` owns route confidence, phase-state, and administrator
+safety values. `hardware/santec_cli.py` owns the bounded TCP/2323 transport for
+the fixed `writereg mems.ch <physical port>` command. The application worker
+owns sequential probing and operator decisions, and Qt owns only presentation.
+The normal `set_channel()` path remains logical VISA/SCPI routing; the distinct
+`set_physical_port()` capability cannot change or reinterpret it. Both paths
+are serialized by the persistent hardware manager.
+
+An extra candidate remains provisional after routing and measurement. Retry,
+No More Physical Ports, Stop Extra Testing, rejected readings, and transport
+failures discard it. Only the existing Write IL commit path creates one atomic
+two-wavelength database attempt, using the candidate number as both channel
+identifier and physical port. This allows existing replacement analysis to use
+accepted extras without making them required channels or direct COC rows.
+
 `domain/measurement.py` owns the instrument-independent insertion-loss formula.
 `domain/wavelengths.py` independently models the operator-selected OPM/source
 wavelength pair. The selected mode is authoritative for new runs; historical

@@ -3,17 +3,24 @@
 import threading
 import time
 import uuid
+import math
 from collections.abc import Mapping, Sequence
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from domain.measurement import (
+    DARK_REFERENCE_THRESHOLD_DBM,
     NON_NEGATIVE_LOSS_THRESHOLD_DB,
     calculate_insertion_loss,
     validate_insertion_loss,
 )
 from domain.models import ConnectionState, DeviceCategory
+from domain.extra_ports import (
+    DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE,
+    ExtraPortPhaseStatus,
+    PhysicalPortRouteStatus,
+)
 from domain.wavelengths import (
     MeasurementConfiguration,
     SM_SOURCE_PROFILE,
@@ -43,6 +50,10 @@ class MeasurementWorker(QObject):
     stopped = pyqtSignal()
     failed = pyqtSignal(str)
     device_status_changed = pyqtSignal(object)
+    extra_port_offer_required = pyqtSignal(int)
+    extra_port_phase_changed = pyqtSignal(str, int, object)
+    extra_port_confirmation_required = pyqtSignal(int, object)
+    extra_port_issue = pyqtSignal(int, str, str)
 
     def __init__(
         self,
@@ -59,6 +70,9 @@ class MeasurementWorker(QObject):
         support_logger=None,
         workflow_id="",
         measurement_configuration_value: MeasurementConfiguration | None = None,
+        front_panel_channel_count: int | None = None,
+        offer_extra_ports=False,
+        maximum_physical_port_probe=DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE,
     ):
         super().__init__()
         self.power_meter = power_meter
@@ -79,6 +93,13 @@ class MeasurementWorker(QObject):
             if measurement_configuration_value is not None
             else measurement_configuration("SM", SM_SOURCE_PROFILE)
         )
+        self.front_panel_channel_count = (
+            int(front_panel_channel_count)
+            if front_panel_channel_count is not None
+            else None
+        )
+        self.offer_extra_ports = bool(offer_extra_ports)
+        self.maximum_physical_port_probe = int(maximum_physical_port_probe)
         self._stop_event = threading.Event()
         self._operator_ready = threading.Event()
         self._channel_selection_event = threading.Event()
@@ -95,6 +116,10 @@ class MeasurementWorker(QObject):
         self._negative_episode_active = False
         self._negative_episode_count = 0
         self._negative_episode_context = {}
+        self._extra_action_event = threading.Event()
+        self._extra_action_lock = threading.Lock()
+        self._extra_action = None
+        self._highest_confirmed_extra_port = None
 
     @pyqtSlot()
     def run(self):
@@ -118,7 +143,8 @@ class MeasurementWorker(QObject):
                 channels = list(self.channels)
             else:
                 configured_count = self.switch.configured_channel_count()
-                channels = list(range(1, configured_count + 1))
+                planned_count = self.front_panel_channel_count or configured_count
+                channels = list(range(1, planned_count + 1))
             if not channels:
                 raise RuntimeError("No channels were selected for measurement.")
             if hasattr(self.switch, "configured_channel_count"):
@@ -163,6 +189,9 @@ class MeasurementWorker(QObject):
                     self.existing_channels if self.resume_existing else None,
                     start_channel,
                 )
+
+            if self.offer_extra_ports and self.front_panel_channel_count is not None:
+                self._offer_and_run_extra_ports()
 
             terminal_state = "completed"
         except InterruptedError:
@@ -346,10 +375,34 @@ class MeasurementWorker(QObject):
             elapsed_ms=(time.perf_counter() - route_started) * 1000.0,
             status="success",
         )
+        return self._measure_routed_target(
+            channel,
+            physical_port,
+            index=index,
+            total=total,
+            emit_progress=emit_progress,
+            extra_port=False,
+        )
+
+    def _measure_routed_target(
+        self,
+        channel,
+        physical_port,
+        *,
+        index=None,
+        total=None,
+        emit_progress=True,
+        extra_port=False,
+    ):
+        """Measure an already-routed target without duplicating IL logic."""
         self._operator_ready.clear()
         self.operator_required.emit(channel, physical_port)
         if not self.live_write_mode:
             change = self._wait_for_operator()
+            if extra_port:
+                action = self._take_extra_action()
+                if action is not None:
+                    return {"extra_action": action}
             if change is not None:
                 return change
         self._raise_if_stopped()
@@ -390,6 +443,41 @@ class MeasurementWorker(QObject):
             )
             started = time.perf_counter()
             measurements = self.power_meter.measure_both_wavelengths()
+            if extra_port:
+                unusable_wavelengths = tuple(
+                    wavelength
+                    for wavelength in wavelengths
+                    if (
+                        wavelength not in measurements
+                        or not math.isfinite(float(measurements[wavelength]))
+                        or float(measurements[wavelength])
+                        < DARK_REFERENCE_THRESHOLD_DBM
+                    )
+                )
+                if unusable_wavelengths:
+                    self._record(
+                        SupportEventCategory.MEASUREMENT,
+                        "extra_ports.provisional_signal_invalid",
+                        level=SupportLogLevel.WARNING,
+                        operation_id=measurement_id,
+                        physical_port=physical_port,
+                        invalid_wavelength=",".join(
+                            str(value) for value in unusable_wavelengths
+                        ),
+                        measured_power_dbm={
+                            str(value): measurements.get(value)
+                            for value in wavelengths
+                        },
+                        reading_state="discarded",
+                        status="warning",
+                    )
+                    self.extra_port_issue.emit(
+                        physical_port,
+                        "invalid_signal",
+                        "No valid optical signal was received for wavelength(s) %s."
+                        % ", ".join(str(value) for value in unusable_wavelengths),
+                    )
+                    return {"extra_action": self._wait_for_extra_action()}
             losses = calculate_insertion_loss(
                 self.reference_powers, measurements, wavelengths
             )
@@ -478,6 +566,8 @@ class MeasurementWorker(QObject):
                 live_update=self.live_write_mode
             )
             self._raise_if_stopped()
+            if decision == "extra_action" and extra_port:
+                return {"extra_action": self._take_extra_action()}
             if isinstance(decision, dict):
                 return decision
             if decision == "live_update":
@@ -522,6 +612,244 @@ class MeasurementWorker(QObject):
                 repeated_reading=True,
                 status="requested",
             )
+
+    def _offer_and_run_extra_ports(self):
+        """Pause once after the front-panel pass, then probe extras sequentially."""
+        count = self.front_panel_channel_count
+        self._set_extra_phase(ExtraPortPhaseStatus.OFFERED, count)
+        self._record(
+            SupportEventCategory.WORKFLOW,
+            "extra_ports.offered",
+            front_panel_channel_count=count,
+            status="offered",
+        )
+        self.extra_port_offer_required.emit(count)
+        action = self._wait_for_extra_action()
+        if action != "begin":
+            self._set_extra_phase(ExtraPortPhaseStatus.DECLINED, count)
+            self._record(
+                SupportEventCategory.OPERATOR,
+                "extra_ports.declined",
+                front_panel_channel_count=count,
+                status="declined",
+            )
+            self._record(
+                SupportEventCategory.WORKFLOW,
+                "extra_ports.phase_completed",
+                phase_status=ExtraPortPhaseStatus.DECLINED.value,
+                status="completed",
+            )
+            return
+
+        candidate = count + 1
+        self._record(
+            SupportEventCategory.OPERATOR,
+            "extra_ports.accepted",
+            first_candidate=candidate,
+            safety_ceiling=self.maximum_physical_port_probe,
+            status="accepted",
+        )
+        while candidate <= self.maximum_physical_port_probe:
+            self._set_extra_phase(ExtraPortPhaseStatus.IN_PROGRESS, candidate)
+            outcome = self._run_extra_candidate(candidate)
+            if outcome == "written":
+                self._highest_confirmed_extra_port = candidate
+                self._record(
+                    SupportEventCategory.MEASUREMENT,
+                    "extra_ports.reading_written",
+                    physical_port=candidate,
+                    highest_confirmed_extra_port=candidate,
+                    status="success",
+                )
+                candidate += 1
+                continue
+            if outcome == "retry":
+                self._record(
+                    SupportEventCategory.OPERATOR,
+                    "extra_ports.retry_requested",
+                    physical_port=candidate,
+                    status="requested",
+                )
+                continue
+            if outcome == "no_more":
+                self._set_extra_phase(
+                    ExtraPortPhaseStatus.END_OF_INSTALLED_PORTS_REPORTED,
+                    candidate,
+                )
+                self._record(
+                    SupportEventCategory.OPERATOR,
+                    "extra_ports.end_of_installed_ports_reported",
+                    physical_port=candidate,
+                    highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+                    reading_state="discarded",
+                    status="reported",
+                )
+                self._record(
+                    SupportEventCategory.WORKFLOW,
+                    "extra_ports.phase_completed",
+                    phase_status=(
+                        ExtraPortPhaseStatus.END_OF_INSTALLED_PORTS_REPORTED.value
+                    ),
+                    highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+                    status="completed",
+                )
+                return
+            if outcome == "failed":
+                self._set_extra_phase(ExtraPortPhaseStatus.FAILED, candidate)
+            else:
+                self._set_extra_phase(ExtraPortPhaseStatus.STOPPED, candidate)
+            self._record(
+                SupportEventCategory.OPERATOR,
+                "extra_ports.phase_ended",
+                physical_port=candidate,
+                highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+                reading_state="discarded",
+                status=outcome,
+            )
+            self._record(
+                SupportEventCategory.WORKFLOW,
+                "extra_ports.phase_completed",
+                phase_status=(
+                    ExtraPortPhaseStatus.FAILED.value
+                    if outcome == "failed"
+                    else ExtraPortPhaseStatus.STOPPED.value
+                ),
+                highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+                status="failed" if outcome == "failed" else "completed",
+            )
+            return
+
+        self._set_extra_phase(
+            ExtraPortPhaseStatus.SAFETY_CEILING_REACHED,
+            self.maximum_physical_port_probe,
+        )
+        self._record(
+            SupportEventCategory.WORKFLOW,
+            "extra_ports.safety_ceiling_reached",
+            safety_ceiling=self.maximum_physical_port_probe,
+            highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+            status="stopped",
+        )
+        self.extra_port_issue.emit(
+            self.maximum_physical_port_probe,
+            "safety_ceiling",
+            "The configured maximum physical-port probe has been reached. "
+            "Ask an administrator to review the safety ceiling before testing more ports.",
+        )
+        self._wait_for_extra_action()
+        self._record(
+            SupportEventCategory.WORKFLOW,
+            "extra_ports.phase_completed",
+            phase_status=ExtraPortPhaseStatus.SAFETY_CEILING_REACHED.value,
+            highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+            status="completed",
+        )
+
+    def _run_extra_candidate(self, candidate):
+        """Route and provisionally measure one candidate until the operator decides."""
+        try:
+            result = self.switch.set_physical_port(
+                candidate,
+                self.maximum_physical_port_probe,
+            )
+            route_status = result.status
+            network_address = result.network_address
+            network_port = result.network_port
+            response = result.response
+            detail = result.detail
+        except Exception as error:
+            return self._extra_issue_decision(candidate, "route_failed", str(error))
+
+        self._record(
+            SupportEventCategory.HARDWARE,
+            "extra_ports.route_result",
+            physical_port=candidate,
+            network_address=network_address,
+            network_port=network_port,
+            verification_status=route_status.value,
+            response=response,
+            details=detail,
+            status=(
+                "error"
+                if route_status is PhysicalPortRouteStatus.FAILED
+                else "provisional"
+            ),
+        )
+        if route_status is PhysicalPortRouteStatus.FAILED:
+            return self._extra_issue_decision(
+                candidate,
+                "route_failed",
+                detail or "The direct physical-port route failed.",
+            )
+        if route_status is PhysicalPortRouteStatus.UNVERIFIED:
+            self.extra_port_confirmation_required.emit(candidate, result)
+            action = self._wait_for_extra_action()
+            if action != "proceed_unverified":
+                return action
+            self._record(
+                SupportEventCategory.OPERATOR,
+                "extra_ports.unverified_route_confirmed",
+                physical_port=candidate,
+                verification_status=route_status.value,
+                status="accepted",
+            )
+
+        try:
+            measurement_outcome = self._measure_routed_target(
+                candidate,
+                candidate,
+                emit_progress=False,
+                extra_port=True,
+            )
+        except Exception as error:
+            return self._extra_issue_decision(
+                candidate,
+                "measurement_failed",
+                "No usable optical reading was obtained: %s" % error,
+            )
+        if measurement_outcome is None:
+            return "written"
+        return measurement_outcome.get("extra_action", "retry")
+
+    def _extra_issue_decision(self, candidate, issue_kind, message):
+        self._record(
+            SupportEventCategory.HARDWARE,
+            "extra_ports.provisional_failed",
+            level=SupportLogLevel.WARNING,
+            physical_port=candidate,
+            issue_kind=issue_kind,
+            error_message=message,
+            reading_state="discarded",
+            status="warning",
+        )
+        self.extra_port_issue.emit(candidate, issue_kind, message)
+        action = self._wait_for_extra_action()
+        return "failed" if action == "stop_failed" else action
+
+    def _set_extra_phase(self, status, candidate):
+        details = {
+            "highest_confirmed_extra_port": self._highest_confirmed_extra_port,
+            "safety_ceiling": self.maximum_physical_port_probe,
+        }
+        self.extra_port_phase_changed.emit(status.value, int(candidate), details)
+
+    def _wait_for_extra_action(self):
+        while not self._extra_action_event.wait(0.1):
+            self._raise_if_stopped()
+        self._raise_if_stopped()
+        action = self._take_extra_action()
+        with self._decision_lock:
+            if self._decision == "extra_action":
+                self._decision = None
+                self._decision_event.clear()
+        return action
+
+    def _take_extra_action(self):
+        with self._extra_action_lock:
+            action = self._extra_action
+            self._extra_action = None
+            self._extra_action_event.clear()
+        return action
 
     def _set_meter_trace_context(self, **context):
         setter = getattr(self.power_meter, "set_trace_context", None)
@@ -653,7 +981,26 @@ class MeasurementWorker(QObject):
         self._operator_ready.set()
         self._channel_selection_event.set()
         self._continuation_selection_event.set()
+        self._extra_action_event.set()
         self._set_decision("write")
+
+    @pyqtSlot(bool)
+    def choose_extra_port_testing(self, enabled):
+        self._set_extra_action("begin" if enabled else "finish")
+
+    @pyqtSlot(str)
+    def extra_port_action(self, action):
+        allowed = {"retry", "no_more", "stop", "stop_failed", "proceed_unverified"}
+        if action not in allowed:
+            return
+        self._set_extra_action(action)
+        self._operator_ready.set()
+        self._set_decision("extra_action")
+
+    def _set_extra_action(self, action):
+        with self._extra_action_lock:
+            self._extra_action = action
+            self._extra_action_event.set()
 
     def _wait_for_operator(self):
         while not self._operator_ready.wait(0.1):

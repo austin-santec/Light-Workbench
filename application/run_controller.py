@@ -14,6 +14,7 @@ from PyQt5.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from domain.models import RunState
 from domain.wavelengths import MeasurementConfiguration
+from domain.extra_ports import DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE
 from hardware.interfaces import OpticalSwitch, PowerMeter
 from application.measurement_worker import MeasurementWorker
 
@@ -36,6 +37,9 @@ class HardwareRunRequest:
     workflow_id: str = ""
     reference_snapshot: Mapping[str, object] | None = None
     measurement_configuration: MeasurementConfiguration | None = None
+    front_panel_channel_count: int | None = None
+    offer_extra_ports: bool = False
+    maximum_physical_port_probe: int = DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE
 
 
 class HardwareRunController(QObject):
@@ -53,6 +57,10 @@ class HardwareRunController(QObject):
     thread_finished = pyqtSignal()
     state_changed = pyqtSignal(object)
     device_status_changed = pyqtSignal(object)
+    extra_port_offer_required = pyqtSignal(int)
+    extra_port_phase_changed = pyqtSignal(str, int, object)
+    extra_port_confirmation_required = pyqtSignal(int, object)
+    extra_port_issue = pyqtSignal(int, str, str)
 
     # These signals are connected to worker slots after the worker enters its
     # thread. Qt queues UI commands safely into the worker thread.
@@ -64,6 +72,8 @@ class HardwareRunController(QObject):
     _change_requested = pyqtSignal(int, bool)
     _finish_manual_requested = pyqtSignal()
     _stop_requested = pyqtSignal()
+    _choose_extra_ports_requested = pyqtSignal(bool)
+    _extra_port_action_requested = pyqtSignal(str)
 
     def __init__(self, parent=None, worker_factory=MeasurementWorker):
         super().__init__(parent)
@@ -113,6 +123,9 @@ class HardwareRunController(QObject):
                 support_logger=request.support_logger,
                 workflow_id=request.workflow_id,
                 measurement_configuration_value=request.measurement_configuration,
+                front_panel_channel_count=request.front_panel_channel_count,
+                offer_extra_ports=request.offer_extra_ports,
+                maximum_physical_port_probe=request.maximum_physical_port_probe,
             )
             thread = QThread(self)
             worker.moveToThread(thread)
@@ -155,6 +168,12 @@ class HardwareRunController(QObject):
         worker.reading_ready.connect(self._relay_reading_ready)
         worker.progress_changed.connect(self.progress_changed)
         worker.device_status_changed.connect(self.device_status_changed)
+        worker.extra_port_offer_required.connect(self.extra_port_offer_required)
+        worker.extra_port_phase_changed.connect(self.extra_port_phase_changed)
+        worker.extra_port_confirmation_required.connect(
+            self.extra_port_confirmation_required
+        )
+        worker.extra_port_issue.connect(self.extra_port_issue)
         worker.completed.connect(self._worker_completed)
         worker.stopped.connect(self._worker_stopped)
         worker.failed.connect(self._worker_failed)
@@ -171,6 +190,8 @@ class HardwareRunController(QObject):
             (self._change_requested, worker.change_channel),
             (self._finish_manual_requested, worker.finish_manual_pass),
             (self._stop_requested, worker.stop),
+            (self._choose_extra_ports_requested, worker.choose_extra_port_testing),
+            (self._extra_port_action_requested, worker.extra_port_action),
         ]
         for signal, slot in command_connections:
             # MeasurementWorker.run intentionally blocks on threading.Event
@@ -275,6 +296,12 @@ class HardwareRunController(QObject):
         if self.worker is not None:
             self._set_state(RunState.STOPPING)
             self._invoke_command(self._stop_requested)
+
+    def choose_extra_port_testing(self, enabled: bool) -> None:
+        self._invoke_command(self._choose_extra_ports_requested, bool(enabled))
+
+    def extra_port_action(self, action: str) -> None:
+        self._invoke_command(self._extra_port_action_requested, str(action))
 
     def stop_and_wait(self, timeout_ms: int = 5000) -> bool:
         """Request stop and wait during application shutdown."""

@@ -3,9 +3,10 @@
 import ipaddress
 import logging
 import re
+import threading
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from datetime import datetime, timezone
 
@@ -16,6 +17,7 @@ from hardware.visa_errors import (
     SwitchCommunicationError,
     classify_switch_visa_error,
 )
+from hardware.santec_cli import SantecCliProfile, SantecCliRouter
 
 
 SWITCH_SETTLING_TIME_SECONDS = 0.25
@@ -97,6 +99,7 @@ class SantecSwitchProfile:
     configured_channel_query: str = "CFG:SWT:END?"
     channel_command: str = "CLOSe %d"
     ip_address_query: str = ":SYSTem:COMMunicate:LAN:ADDRess?"
+    cli_profile: SantecCliProfile = field(default_factory=SantecCliProfile)
 
 
 class SwitchIpAddressError(RuntimeError):
@@ -245,6 +248,7 @@ class SantecOpticalSwitch:
         last_known_address: str = "",
         address_observer: Callable[[str], None] | None = None,
         trace_callback=None,
+        cli_router=None,
     ):
         self.resource_manager = None
         self.instrument = None
@@ -263,6 +267,8 @@ class SantecOpticalSwitch:
         self._last_failure = None
         self._trace_callbacks = []
         self._trace_metadata = {}
+        self._routing_lock = threading.RLock()
+        self._cli_router = cli_router
         if trace_callback is not None:
             self._trace_callbacks.append(trace_callback)
 
@@ -1028,51 +1034,68 @@ class SantecOpticalSwitch:
 
     def set_channel(self, channel: int) -> int:
         """Select a logical channel and return its verified physical port."""
-        self._require_connection()
-        if channel < MIN_SWITCH_CHANNEL:
-            raise ValueError(
-                "Switch channel must be %d or greater." % MIN_SWITCH_CHANNEL
-            )
+        with self._routing_lock:
+            self._require_connection()
+            if channel < MIN_SWITCH_CHANNEL:
+                raise ValueError(
+                    "Switch channel must be %d or greater." % MIN_SWITCH_CHANNEL
+                )
 
-        command = self.profile.channel_command % channel
-        started = time.perf_counter()
-        try:
-            self.instrument.write(command)
-        except pyvisa.errors.VisaIOError as error:
-            communication_error = self._communication_error(
-                error,
-                operation="routing logical channel %d" % channel,
-                command=command,
-                logical_channel=channel,
-            )
+            command = self.profile.channel_command % channel
+            started = time.perf_counter()
+            try:
+                self.instrument.write(command)
+            except pyvisa.errors.VisaIOError as error:
+                communication_error = self._communication_error(
+                    error,
+                    operation="routing logical channel %d" % channel,
+                    command=command,
+                    logical_channel=channel,
+                )
+                self._trace(
+                    "switch_route_failed",
+                    operation="write",
+                    command=command,
+                    logical_channel=channel,
+                    status="error",
+                    status_code=communication_error.classification.status_code,
+                    visa_status=communication_error.classification.status_name,
+                    error_category=communication_error.classification.category.value,
+                    disconnection_certainty=(
+                        communication_error.classification.disconnection_certainty
+                    ),
+                    error=str(error),
+                    elapsed_ms=(time.perf_counter() - started) * 1000.0,
+                )
+                raise communication_error from error
+            time.sleep(SWITCH_SETTLING_TIME_SECONDS)
+            physical_port = self.current_channel(logical_channel=channel)
             self._trace(
-                "switch_route_failed",
-                operation="write",
+                "switch_route_completed",
+                operation="set_channel",
                 command=command,
                 logical_channel=channel,
-                status="error",
-                status_code=communication_error.classification.status_code,
-                visa_status=communication_error.classification.status_name,
-                error_category=communication_error.classification.category.value,
-                disconnection_certainty=(
-                    communication_error.classification.disconnection_certainty
-                ),
-                error=str(error),
+                physical_port=physical_port,
+                status="success",
                 elapsed_ms=(time.perf_counter() - started) * 1000.0,
             )
-            raise communication_error from error
-        time.sleep(SWITCH_SETTLING_TIME_SECONDS)
-        physical_port = self.current_channel(logical_channel=channel)
-        self._trace(
-            "switch_route_completed",
-            operation="set_channel",
-            command=command,
-            logical_channel=channel,
-            physical_port=physical_port,
-            status="success",
-            elapsed_ms=(time.perf_counter() - started) * 1000.0,
-        )
-        return physical_port
+            return physical_port
+
+    def set_physical_port(self, physical_port: int, maximum_port: int = 64):
+        """Route one physical port through the isolated engineering CLI."""
+        with self._routing_lock:
+            self._require_connection()
+            network_address = self.get_ip_address()
+            router = self._cli_router
+            if router is None:
+                router = SantecCliRouter(
+                    self.profile.cli_profile,
+                    trace_callback=self._trace,
+                )
+            result = router.route(network_address, physical_port, maximum_port)
+            if result.permits_provisional_measurement or result.status.value == "unverified":
+                time.sleep(SWITCH_SETTLING_TIME_SECONDS)
+            return result
 
     def close(self) -> None:
         """Release both the instrument session and VISA resource manager."""
@@ -1096,6 +1119,7 @@ __all__ = [
     "SantecOpticalSwitch",
     "SantecSwitchProfile",
     "SantecSwitchProfileResolution",
+    "SantecCliProfile",
     "SANTEC_SWITCH_PROFILES",
     "SANTEC_OSX100_USB_PRODUCT_ID",
     "SANTEC_OSX150_USB_PRODUCT_ID",

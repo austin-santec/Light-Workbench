@@ -108,6 +108,11 @@ from domain.hardware_connection import (
     HardwareNotReadyError,
 )
 from domain.models import ConnectionState, DeviceCategory
+from domain.extra_ports import (
+    ExtraPortPhaseStatus,
+    ExtraPortSettings,
+    PhysicalPortRouteStatus,
+)
 from domain.limit_profiles import (
     LimitProfile,
     default_limit_profiles,
@@ -161,6 +166,7 @@ from infrastructure.coc_exporter import (
 from infrastructure.run_repository import DEFAULT_RUN_ROOT, FileRunRepository
 from infrastructure.unit_repository import FileUnitRepository
 from infrastructure.limit_profile_repository import LimitProfileRepository
+from infrastructure.extra_port_settings_repository import ExtraPortSettingsRepository
 from infrastructure.support_bundle import export_support_bundle
 from hardware.optical_switch import OSX150
 from hardware.power_meter import SantecPowerMeter, SimulatedPowerMeter
@@ -801,6 +807,11 @@ class ShortcutButton(QPushButton):
         text = shortcut.toString() if isinstance(shortcut, QKeySequence) else str(shortcut)
         self.shortcut_label.setText("[%s]" % (text or "Unassigned"))
 
+    def set_title(self, title):
+        """Update the visible and accessible action title."""
+        self.title_label.setText(str(title))
+        self.setAccessibleName(str(title))
+
 
 class MainWindow(QMainWindow):
     reference_values_changed = pyqtSignal(float, float)
@@ -839,12 +850,19 @@ class MainWindow(QMainWindow):
         self.pending_reading_validation = None
         self._syncing_reference_widgets = False
         self.limit_profile_repository = LimitProfileRepository()
+        self.extra_port_settings_repository = ExtraPortSettingsRepository()
+        self.extra_port_settings = ExtraPortSettings()
         self.limit_profiles = default_limit_profiles()
         self.limit_profile_error = None
         try:
             self.limit_profiles = self.limit_profile_repository.load_profiles()
         except (OSError, ValueError, TypeError) as error:
             self.limit_profile_error = str(error)
+        self.extra_port_settings_error = None
+        try:
+            self.extra_port_settings = self.extra_port_settings_repository.load()
+        except (OSError, ValueError, TypeError) as error:
+            self.extra_port_settings_error = str(error)
         self.active_limit_profile = self.limit_profiles[profile_key("OSX-150", "SM")]
         self._wavelength_mode_selection_method = "application_default_sm"
         self.ilm_source_profile = source_profile_for_mode(
@@ -1059,6 +1077,18 @@ class MainWindow(QMainWindow):
         self.hardware_controller.reading_ready.connect(self.hardware_reading_ready)
         self.hardware_controller.device_status_changed.connect(
             self._hardware_device_status_changed
+        )
+        self.hardware_controller.extra_port_offer_required.connect(
+            self.hardware_extra_port_offer_required
+        )
+        self.hardware_controller.extra_port_phase_changed.connect(
+            self.hardware_extra_port_phase_changed
+        )
+        self.hardware_controller.extra_port_confirmation_required.connect(
+            self.hardware_extra_port_confirmation_required
+        )
+        self.hardware_controller.extra_port_issue.connect(
+            self.hardware_extra_port_issue
         )
         self.hardware_controller.progress_changed.connect(
             self.hardware_progress_changed
@@ -1965,6 +1995,23 @@ class MainWindow(QMainWindow):
         measurement_controls_layout.addWidget(self.write_hardware_button)
         controls_layout.addLayout(measurement_controls_layout)
 
+        self.retry_extra_port_button = QPushButton("Retry Current Port")
+        self.retry_extra_port_button.clicked.connect(self.retry_extra_port)
+        self.no_more_extra_ports_button = QPushButton("No More Physical Ports")
+        self.no_more_extra_ports_button.clicked.connect(self.no_more_extra_ports)
+        self.stop_extra_testing_button = QPushButton("Stop Extra Testing")
+        self.stop_extra_testing_button.clicked.connect(self.stop_extra_testing)
+        extra_controls_layout = QVBoxLayout()
+        for button in (
+            self.retry_extra_port_button,
+            self.no_more_extra_ports_button,
+            self.stop_extra_testing_button,
+        ):
+            button.setVisible(False)
+            button.setEnabled(False)
+            extra_controls_layout.addWidget(button)
+        controls_layout.addLayout(extra_controls_layout)
+
         self.change_hardware_channel_button = QPushButton("Change Channel...")
         self.change_hardware_channel_button.setToolTip(
             "Change the channel being measured without stopping the run."
@@ -2857,11 +2904,18 @@ class MainWindow(QMainWindow):
             status="started",
         )
         previous_profiles = dict(self.limit_profiles)
-        dialog = AdminConfigDialog(self.limit_profiles, self.limit_profile_repository, self)
+        dialog = AdminConfigDialog(
+            self.limit_profiles,
+            self.limit_profile_repository,
+            self,
+            extra_port_settings=self.extra_port_settings,
+            extra_port_repository=self.extra_port_settings_repository,
+        )
         if dialog.exec_() != QDialog.Accepted:
             return
         try:
             self.limit_profiles = self.limit_profile_repository.load_profiles()
+            self.extra_port_settings = self.extra_port_settings_repository.load()
             self.limit_profile_error = None
         except (OSError, ValueError, TypeError) as error:
             self.limit_profile_error = str(error)
@@ -5062,6 +5116,39 @@ class MainWindow(QMainWindow):
 
         channels = preparation.channels
 
+        part_details = None
+        try:
+            part_details = parse_osx_part_number(
+                selected_identity.get("Part number", "")
+            )
+        except ValueError:
+            # Admin mode can intentionally bypass normal metadata preflight.
+            # Without a valid part number the legacy configured-count pass is
+            # retained, but optional physical-port probing is not offered.
+            part_details = None
+
+        if preparation.full_pass and part_details is not None:
+            connected_switch_info = self.hardware_connection_manager.snapshot(
+                HardwareCapability.OPTICAL_SWITCH
+            ).device_info
+            configured_count = connected_switch_info.configured_channel_count
+            if (
+                configured_count is not None
+                and int(configured_count) < part_details.front_panel_channel_count
+            ):
+                QMessageBox.warning(
+                    self,
+                    "Switch configuration is too small",
+                    "The part number requires %d front-panel channels, but the "
+                    "connected switch reports only %d configured logical channels. "
+                    "No run was started."
+                    % (
+                        part_details.front_panel_channel_count,
+                        int(configured_count),
+                    ),
+                )
+                return
+
         if retest:
             self._active_planned_channels = self._status_planned_channels()
         elif run_mode == "continue" and self.run_data is not None:
@@ -5070,7 +5157,11 @@ class MainWindow(QMainWindow):
             self._active_planned_channels = (
                 tuple(int(channel) for channel in channels)
                 if channels is not None
-                else None
+                else (
+                    tuple(range(1, part_details.front_panel_channel_count + 1))
+                    if part_details is not None
+                    else None
+                )
             )
         self._run_terminal_status = (
             self._run_terminal_status
@@ -5103,9 +5194,10 @@ class MainWindow(QMainWindow):
 
         if self.database_workflow is not None and not retest and run_mode == "new":
             try:
-                part_details = parse_osx_part_number(
-                    selected_identity.get("Part number", "")
-                )
+                if part_details is None:
+                    raise ValueError(
+                        "A valid OSX part number is required for a database run."
+                    )
                 switch_info = self.hardware_connection_manager.snapshot(
                     HardwareCapability.OPTICAL_SWITCH
                 ).device_info
@@ -5116,10 +5208,6 @@ class MainWindow(QMainWindow):
                 if not physical_count:
                     raise ValueError(
                         "The connected switch did not report its physical channel count."
-                    )
-                if preparation.plan is not None and preparation.plan.full_pass:
-                    self._active_planned_channels = tuple(
-                        range(1, int(physical_count) + 1)
                     )
                 database_run_args = {
                     "unit_spec": UnitSpec(
@@ -5417,6 +5505,21 @@ class MainWindow(QMainWindow):
             workflow_id=workflow_id,
             reference_snapshot=self.active_run_reference_snapshot,
             measurement_configuration=self.measurement_configuration,
+            front_panel_channel_count=(
+                part_details.front_panel_channel_count
+                if part_details is not None and preparation.full_pass
+                else None
+            ),
+            offer_extra_ports=(
+                bool(preparation.full_pass)
+                and not preparation.manual_channel_order
+                and not retest
+                and run_mode == "new"
+                and part_details is not None
+            ),
+            maximum_physical_port_probe=(
+                self.extra_port_settings.maximum_physical_port_probe
+            ),
         )
         try:
             self.hardware_controller.start(request)
@@ -5735,13 +5838,21 @@ class MainWindow(QMainWindow):
     def hardware_channel_configuration_ready(self, channel_count):
         self.hardware_session.set_configured_channel_count(channel_count)
         if self.hardware_full_pass and not self.hardware_retest:
-            self._active_planned_channels = tuple(range(1, int(channel_count) + 1))
+            try:
+                front_panel_count = parse_osx_part_number(
+                    self.hardware_part_number.currentText().strip()
+                ).front_panel_channel_count
+            except ValueError:
+                front_panel_count = int(channel_count)
+            self._active_planned_channels = tuple(
+                range(1, int(front_panel_count) + 1)
+            )
             if self.run_data is not None:
                 self.run_data.metadata["Channel mode"] = "Full configured pass"
                 self.run_data.metadata["Planned channels"] = ",".join(
                     str(channel) for channel in self._active_planned_channels
                 )
-                self.run_data.metadata["Planned channel count"] = str(channel_count)
+                self.run_data.metadata["Planned channel count"] = str(front_panel_count)
                 self._store_run_status(self._calculate_run_status(include_composite=False))
         self.refresh_run_status(include_composite=False)
 
@@ -5885,17 +5996,22 @@ class MainWindow(QMainWindow):
         self.hardware_session.set_pending_channel(channel, physical_port)
         self.pending_reading_validation = None
         self.hardware_live_indicator.setVisible(self.live_write_mode_enabled)
-        self.clear_current_reading(
-            channel,
-            "Move cable to this channel; live reading is active"
-            if self.live_write_mode_enabled
-            else "Move cable, then read values",
-        )
+        if self.hardware_session.extra_port_active:
+            instruction = "Extra physical port %d — pending" % physical_port
+        else:
+            instruction = (
+                "Move cable to this channel; live reading is active"
+                if self.live_write_mode_enabled
+                else "Move cable, then read values"
+            )
+        self.clear_current_reading(channel, instruction)
         self.continue_hardware_button.setEnabled(
             not self.live_write_mode_enabled
         )
         self.write_hardware_button.setEnabled(False)
-        self.change_hardware_channel_button.setEnabled(True)
+        self.change_hardware_channel_button.setEnabled(
+            not self.hardware_session.extra_port_active
+        )
         self.refresh_table()
         self.demo_channel_label.setText(
             "Channel %d routed to physical port %d - move cable, then %s"
@@ -5907,6 +6023,147 @@ class MainWindow(QMainWindow):
                 else "read",
             )
         )
+
+    def hardware_extra_port_offer_required(self, front_panel_count):
+        """Offer the optional engineering phase once the required pass is done."""
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Question)
+        message.setWindowTitle("Front-panel testing complete")
+        message.setText(
+            "All %d front-panel channels have been measured." % front_panel_count
+        )
+        message.setInformativeText(
+            "Would you like to test additional physical ports using the switch's "
+            "engineering interface? Extra-port readings are used for spare-port "
+            "and replacement analysis. They do not count as front-panel channels "
+            "and are not written directly to the COC."
+        )
+        test_button = message.addButton("Test Extra Ports", QMessageBox.ActionRole)
+        finish_button = message.addButton("Finish Run", QMessageBox.AcceptRole)
+        message.setDefaultButton(finish_button)
+        message.setEscapeButton(finish_button)
+        message.exec_()
+        enabled = message.clickedButton() == test_button
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "extra_ports.offer_decision",
+            front_panel_channel_count=front_panel_count,
+            choice="test_extra_ports" if enabled else "finish_run",
+            status="accepted" if enabled else "declined",
+        )
+        self._hardware_command("choose_extra_port_testing", enabled)
+
+    def hardware_extra_port_phase_changed(self, status, candidate, details):
+        highest = (details or {}).get("highest_confirmed_extra_port")
+        self.hardware_session.set_extra_port_phase(status, candidate, highest)
+        active = status == ExtraPortPhaseStatus.IN_PROGRESS.value
+        self.write_hardware_button.set_title(
+            "Write IL and Continue" if active else "Write IL"
+        )
+        for button in (
+            self.retry_extra_port_button,
+            self.no_more_extra_ports_button,
+            self.stop_extra_testing_button,
+        ):
+            button.setVisible(active)
+            button.setEnabled(active)
+        if active:
+            self.change_hardware_channel_button.setEnabled(False)
+            self.statusBar().showMessage(
+                "Extra physical port %d — pending" % candidate
+            )
+        elif status == ExtraPortPhaseStatus.SAFETY_CEILING_REACHED.value:
+            self.statusBar().showMessage(
+                "Extra-port safety ceiling reached; front-panel readings remain saved."
+            )
+
+    def hardware_extra_port_confirmation_required(self, candidate, result):
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Warning)
+        message.setWindowTitle("Physical-port route unverified")
+        message.setText(
+            "The command for physical port %d was sent, but the route was not verified."
+            % candidate
+        )
+        message.setInformativeText(
+            "%s\n\nProceed only if you have independently confirmed the route."
+            % (result.detail or "No recognized acknowledgement was received.")
+        )
+        proceed = message.addButton("Proceed Unverified", QMessageBox.ActionRole)
+        retry = message.addButton("Retry Current Port", QMessageBox.ActionRole)
+        no_more = message.addButton("No More Physical Ports", QMessageBox.DestructiveRole)
+        stop = message.addButton("Stop Extra Testing", QMessageBox.RejectRole)
+        message.setDefaultButton(stop)
+        message.setEscapeButton(stop)
+        message.exec_()
+        clicked = message.clickedButton()
+        action = (
+            "proceed_unverified"
+            if clicked == proceed
+            else "retry"
+            if clicked == retry
+            else "no_more"
+            if clicked == no_more
+            else "stop"
+        )
+        self._hardware_command("extra_port_action", action)
+
+    def hardware_extra_port_issue(self, candidate, issue_kind, detail):
+        if issue_kind == "safety_ceiling":
+            QMessageBox.warning(self, "Extra-port safety ceiling reached", detail)
+            self._hardware_command("extra_port_action", "stop")
+            return
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Warning)
+        message.setWindowTitle("Extra physical port could not be confirmed")
+        message.setText("Physical port %d was not saved." % candidate)
+        message.setInformativeText(
+            "%s\n\nThis can mean the port is not installed, the optical "
+            "connection is not ready, or routing was not confirmed." % detail
+        )
+        retry = message.addButton("Retry Current Port", QMessageBox.ActionRole)
+        no_more = message.addButton("No More Physical Ports", QMessageBox.DestructiveRole)
+        stop = message.addButton("Stop Extra Testing", QMessageBox.RejectRole)
+        message.setDefaultButton(stop)
+        message.setEscapeButton(stop)
+        message.exec_()
+        clicked = message.clickedButton()
+        action = (
+            "retry"
+            if clicked == retry
+            else "no_more"
+            if clicked == no_more
+            else "stop_failed"
+        )
+        self._hardware_command("extra_port_action", action)
+
+    def retry_extra_port(self):
+        self._discard_extra_port_provisional("retry")
+
+    def no_more_extra_ports(self):
+        self._discard_extra_port_provisional("no_more")
+
+    def stop_extra_testing(self):
+        self._discard_extra_port_provisional("stop")
+
+    def _discard_extra_port_provisional(self, action):
+        if not self.hardware_session.extra_port_active:
+            return
+        candidate = self.hardware_session.extra_port_candidate
+        self.database_pending_measurement = None
+        self.hardware_session.clear_pending()
+        self.pending_reading_validation = None
+        self.continue_hardware_button.setEnabled(False)
+        self.write_hardware_button.setEnabled(False)
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "extra_ports.provisional_discarded",
+            physical_port=candidate,
+            choice=action,
+            reading_state="discarded",
+            status="requested",
+        )
+        self._hardware_command("extra_port_action", action)
 
     def continue_hardware(self):
         if (
@@ -6319,7 +6576,9 @@ class MainWindow(QMainWindow):
         self.demo_1550_label.setText("%d nm: %.4f dB" % (wavelengths[1], loss_1550))
         self.continue_hardware_button.setEnabled(not self.live_write_mode_enabled)
         self.write_hardware_button.setEnabled(validation.valid)
-        self.change_hardware_channel_button.setEnabled(True)
+        self.change_hardware_channel_button.setEnabled(
+            not self.hardware_session.extra_port_active
+        )
         self.hardware_live_indicator.setVisible(self.live_write_mode_enabled)
         if validation.valid:
             self.demo_channel_label.setText(
@@ -6392,15 +6651,11 @@ class MainWindow(QMainWindow):
         ):
             return None
 
-        planned_count = self.hardware_configured_channel_count
-        if planned_count is None or int(planned_count) < 1:
-            return None
         try:
             part_context = self._front_panel_channel_context_for_active_run()
         except ValueError:
             return None
-        if part_context["front_panel_channel_count"] > int(planned_count):
-            return None
+        planned_count = part_context["front_panel_channel_count"]
         accepted_channels = {
             int(record.channel) for record in self.run_data.measurements
         }
@@ -6638,6 +6893,7 @@ class MainWindow(QMainWindow):
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
         self.change_hardware_channel_button.setEnabled(False)
+        self._finish_extra_port_ui()
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(True)
         self.active_run_reference_snapshot = None
@@ -6672,6 +6928,7 @@ class MainWindow(QMainWindow):
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
         self.change_hardware_channel_button.setEnabled(False)
+        self._finish_extra_port_ui()
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(bool(self.run_data and self.run_data.measurements))
         self.active_run_reference_snapshot = None
@@ -6703,11 +6960,22 @@ class MainWindow(QMainWindow):
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
         self.change_hardware_channel_button.setEnabled(False)
+        self._finish_extra_port_ui()
         self.stop_hardware_button.setEnabled(False)
         self.active_run_reference_snapshot = None
         self._set_run_purpose_editable(False)
         self.refresh_run_status(include_composite=False)
         QMessageBox.critical(self, "Hardware run stopped", message)
+
+    def _finish_extra_port_ui(self):
+        self.write_hardware_button.set_title("Write IL")
+        for button in (
+            self.retry_extra_port_button,
+            self.no_more_extra_ports_button,
+            self.stop_extra_testing_button,
+        ):
+            button.setEnabled(False)
+            button.setVisible(False)
 
     def _finish_database_run(self, completion_status):
         if self.database_workflow is None or self.database_run_context is None:

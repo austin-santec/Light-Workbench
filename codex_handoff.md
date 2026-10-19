@@ -318,6 +318,17 @@ short range.
 8. On completion or stop, the workflow releases its leases and healthy
    instruments remain connected. A failed device is closed and marked Error. Rows
    accepted before interruption remain persisted.
+8a. A new automatic full pass uses the part-number-derived front-panel count,
+not a larger temporary `CFG:SWT:END?` value, as its required logical plan. Once
+all required readings are written, the worker offers one safe-default Finish
+Run choice or an optional Test Extra Ports phase. The extra phase starts at
+`front_panel_count + 1` and routes through TCP/2323 with the fixed command
+`writereg mems.ch <port>`. Each candidate remains provisional until Write IL;
+Retry, No More Physical Ports, Stop Extra Testing, invalid readings, and route
+failures create no database measurement. No More records an operator-reported
+endpoint, while Stop makes no capacity inference. Accepted extras remain
+replacement-analysis candidates and never become direct COC rows. The default
+administrator safety ceiling is 64.
 9. Existing CSVs can be opened for analysis. The table highlights either
 wavelength over the warning limit and Select Over-Limit selects rows for
 retest.
@@ -452,6 +463,16 @@ information but block routing and close the session safely. It uses:
 - CFG:SWT:END? for the configured logical-channel count;
 - CLOSe <logical channel> to route a test channel;
 - CLOSe? to read the physical port actually selected.
+
+The optional direct-port engineering path is deliberately separate. It queries
+the connected switch IP over VISA, opens only that address on raw TCP port 2323,
+and sends `writereg mems.ch <physical port>` with a default CRLF ending. It does
+not use `CLOSe?`, alter permanent mapping, scan the network, or accept arbitrary
+CLI input. Responses are bounded and classified as verified, acknowledged,
+unverified, or failed; unverified routing requires explicit operator
+confirmation and failed routing cannot be accepted. The current timeout,
+framing, acknowledgement patterns, and absence of a default readback command
+still require physical firmware validation.
 
 `CLOSe?` must not be used as a connection probe. It is valid only after
 `CLOSe <logical channel>` has routed a channel.

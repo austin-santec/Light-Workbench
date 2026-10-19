@@ -50,6 +50,9 @@ class RunStartPreparationTests(unittest.TestCase):
             existing_channels=[1, 2],
             resume_existing=True,
             live_write_mode=True,
+            front_panel_channel_count=48,
+            offer_extra_ports=True,
+            maximum_physical_port_probe=64,
         )
 
         self.assertIs(request.power_meter_factory(), meter)
@@ -59,6 +62,9 @@ class RunStartPreparationTests(unittest.TestCase):
         self.assertTrue(request.live_write_mode)
         self.assertEqual(request.existing_channels, [1, 2])
         self.assertEqual(request.live_write_interval, 0.25)
+        self.assertEqual(request.front_panel_channel_count, 48)
+        self.assertTrue(request.offer_extra_ports)
+        self.assertEqual(request.maximum_physical_port_probe, 64)
 
 
 if __name__ == "__main__":

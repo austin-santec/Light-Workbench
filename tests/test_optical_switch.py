@@ -4,6 +4,7 @@ from unittest.mock import patch
 from pyvisa.errors import VisaIOError
 
 from domain.models import ConnectionState, DeviceCategory
+from domain.extra_ports import PhysicalPortRouteResult, PhysicalPortRouteStatus
 from hardware.optical_switch import (
     OSX150 as HardwareOSX150,
     SANTEC_OSX100_USB_PRODUCT_ID,
@@ -181,6 +182,38 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
                 switch.instrument = Instrument(response)
                 with self.assertRaises(SwitchIpAddressError):
                     switch.get_ip_address()
+
+    def test_direct_physical_route_uses_ip_query_and_separate_cli_capability(self):
+        class Instrument:
+            def query(self, command):
+                if command == ":SYSTem:COMMunicate:LAN:ADDRess?":
+                    return '"192.0.2.15"'
+                raise AssertionError(command)
+
+        class CliRouter:
+            def __init__(self):
+                self.calls = []
+
+            def route(self, address, physical_port, maximum_port):
+                self.calls.append((address, physical_port, maximum_port))
+                return PhysicalPortRouteResult(
+                    physical_port,
+                    PhysicalPortRouteStatus.ACKNOWLEDGED,
+                    response="OK",
+                    network_address=address,
+                )
+
+        router = CliRouter()
+        switch = HardwareOSX150(cli_router=router)
+        switch.model = "OSX-150"
+        switch.profile = SantecSwitchProfile(model="OSX-150")
+        switch.instrument = Instrument()
+
+        with patch("hardware.optical_switch.time.sleep"):
+            result = switch.set_physical_port(49, 64)
+
+        self.assertEqual(router.calls, [("192.0.2.15", 49, 64)])
+        self.assertEqual(result.status, PhysicalPortRouteStatus.ACKNOWLEDGED)
 
     def test_ip_query_reports_scpi_rejection_without_treating_it_as_visa_loss(self):
         class Instrument:

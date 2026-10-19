@@ -12,10 +12,16 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
 )
 
 from domain.limit_profiles import LimitProfile, default_limit_profiles, profile_key
+from domain.extra_ports import (
+    ExtraPortSettings,
+    MAXIMUM_MAXIMUM_PHYSICAL_PORT_PROBE,
+    MINIMUM_MAXIMUM_PHYSICAL_PORT_PROBE,
+)
 
 
 class AdminPasswordDialog(QDialog):
@@ -42,12 +48,22 @@ class AdminPasswordDialog(QDialog):
 class AdminConfigDialog(QDialog):
     """Edit both model profiles while keeping persistence outside the dialog."""
 
-    def __init__(self, profiles, repository, parent=None):
+    def __init__(
+        self,
+        profiles,
+        repository,
+        parent=None,
+        *,
+        extra_port_settings=None,
+        extra_port_repository=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Admin Config")
         self.setMinimumWidth(430)
         self.repository = repository
         self.profiles = dict(profiles)
+        self.extra_port_repository = extra_port_repository
+        self.extra_port_settings = extra_port_settings or ExtraPortSettings()
         self._dirty = False
         self._loading = False
         layout = QVBoxLayout(self)
@@ -79,6 +95,22 @@ class AdminConfigDialog(QDialog):
         self.warning_note = QLabel("Not applicable for OSX-100")
         self.warning_note.setWordWrap(True)
         form.addRow("", self.warning_note)
+        self.maximum_physical_port_probe_spin = QSpinBox()
+        self.maximum_physical_port_probe_spin.setRange(
+            MINIMUM_MAXIMUM_PHYSICAL_PORT_PROBE,
+            MAXIMUM_MAXIMUM_PHYSICAL_PORT_PROBE,
+        )
+        self.maximum_physical_port_probe_spin.setValue(
+            self.extra_port_settings.maximum_physical_port_probe
+        )
+        self.maximum_physical_port_probe_spin.setToolTip(
+            "Safety ceiling only; it does not assert that every port exists."
+        )
+        self.maximum_physical_port_probe_spin.valueChanged.connect(self._mark_dirty)
+        form.addRow(
+            "Maximum physical-port probe:",
+            self.maximum_physical_port_probe_spin,
+        )
         layout.addLayout(form)
         buttons = QHBoxLayout()
         save = QPushButton("Save Changes")
@@ -157,6 +189,11 @@ class AdminConfigDialog(QDialog):
         try:
             self.profiles[self._selected_key()] = self._profile_from_form()
             self.repository.save_profiles(self.profiles)
+            self.extra_port_settings = ExtraPortSettings(
+                self.maximum_physical_port_probe_spin.value()
+            ).validate()
+            if self.extra_port_repository is not None:
+                self.extra_port_repository.save(self.extra_port_settings)
         except (OSError, ValueError, TypeError) as error:
             QMessageBox.warning(self, "Could not save admin config", str(error))
             return
@@ -167,13 +204,22 @@ class AdminConfigDialog(QDialog):
     def _reload(self):
         try:
             self.profiles = self.repository.load_profiles()
+            if self.extra_port_repository is not None:
+                self.extra_port_settings = self.extra_port_repository.load()
         except (OSError, ValueError, TypeError) as error:
             QMessageBox.warning(self, "Could not reload admin config", str(error))
             return
         self._load_current_profile()
+        self.maximum_physical_port_probe_spin.setValue(
+            self.extra_port_settings.maximum_physical_port_probe
+        )
 
     def _restore_defaults(self):
         self.profiles = default_limit_profiles()
+        self.extra_port_settings = ExtraPortSettings()
+        self.maximum_physical_port_probe_spin.setValue(
+            self.extra_port_settings.maximum_physical_port_probe
+        )
         self._load_current_profile()
         self._dirty = True
 

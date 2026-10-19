@@ -67,6 +67,10 @@ class FakeSwitch:
             raise RuntimeError("switch communication lost")
         return channel
 
+    def set_physical_port(self, physical_port, maximum_port):
+        self.call_threads.append(threading.get_ident())
+        return (physical_port, maximum_port)
+
     def get_ip_address(self):
         self.call_threads.append(threading.get_ident())
         return "192.0.2.15"
@@ -171,6 +175,20 @@ class HardwareConnectionManagerTests(unittest.TestCase):
         self.assertEqual(proxy.set_channel(3), 3)
         proxy.close()
         self.assertTrue(self.manager.run_ready)
+
+    def test_logical_and_direct_physical_routes_share_serialized_executor(self):
+        self.manager, _, switch = self.make_manager()
+        self.manager.connect_switch().result(timeout=2)
+        proxy = self.manager.create_switch_proxy(
+            object(), "Hardware run", connect_if_needed=False
+        )
+        proxy.connect()
+
+        self.assertEqual(proxy.set_channel(3), 3)
+        self.assertEqual(proxy.set_physical_port(49, 64), (49, 64))
+        proxy.close()
+
+        self.assertEqual(len(set(switch.call_threads)), 1)
 
     def test_measurement_and_switch_can_connect_independently(self):
         self.manager, meter, switch = self.make_manager()

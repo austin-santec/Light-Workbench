@@ -56,6 +56,18 @@ class RunStatusTests(unittest.TestCase):
         self.assertEqual(status.completion_status, COMPLETION_COMPLETE)
         self.assertEqual(status.result_status, RESULT_PASS)
 
+    def test_extra_candidate_is_not_required_for_front_panel_completion(self):
+        status = assess_run_status(
+            records([(1, 1.0, 1.1), (49, 0.4, 0.5)]),
+            planned_channels=(1,),
+            terminal_status=COMPLETION_COMPLETE,
+            profile=PROFILE,
+            front_panel_channel_count=1,
+        )
+        self.assertEqual(status.completion_status, COMPLETION_COMPLETE)
+        self.assertEqual(status.completed_channel_count, 1)
+        self.assertEqual(status.result_status, RESULT_PASS)
+
     def test_optimization_and_failure_recovery_are_distinct(self):
         optimized = assess_run_status(
             records([(1, 2.3, 1.0)]),

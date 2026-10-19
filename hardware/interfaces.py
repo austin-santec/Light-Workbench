@@ -99,6 +99,14 @@ class OpticalSwitchNetworkInfo(Protocol):
         """Return the configured network address without changing routing."""
 
 
+@runtime_checkable
+class DirectPhysicalPortRouter(Protocol):
+    """Optional engineering capability for routing an unconfigured port."""
+
+    def set_physical_port(self, physical_port: int):
+        """Route a physical port and return a structured route result."""
+
+
 def validate_wavelength_readings(
     readings: Mapping[int, float],
     wavelengths: Sequence[int] = WAVELENGTHS_NM,

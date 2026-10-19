@@ -11,6 +11,8 @@ Application workflows should depend on capability contracts in
   closes.
 - `OpticalSwitch`: connects, reports configured logical channels, selects a
   logical channel, and closes.
+- `DirectPhysicalPortRouter`: optional engineering capability that routes a
+  validated physical port without treating it as a configured logical channel.
 
 The current `SantecPowerMeter` and `SantecOpticalSwitch` classes are adapters for these
 capabilities. The application should not import `OP815`, `pyvisa`, `ctypes`,
@@ -81,6 +83,49 @@ not route a channel, change a mapping, connect automatically, or write run data.
 Transport failures use the existing VISA classification; a firmware-level SCPI
 rejection or invalid address is reported as an unsupported/invalid IP response
 without claiming that the switch was physically disconnected.
+
+## Logical routing and direct physical-port routing
+
+Normal channels `1..N`, where `N` is parsed from the unit part number, continue
+to use USB/VISA `CLOSe <logical channel>`, the existing 250 ms switch-settling
+delay, and `CLOSe?` physical-port verification. A larger `CFG:SWT:END?` result
+does not expand the normal pass beyond `N`.
+
+Optional ports above `N` use the separate `set_physical_port()` capability.
+The adapter first obtains the already-connected switch's configured IP through
+the existing LAN query, then `hardware/santec_cli.py` opens only that address
+on named TCP port 2323 and sends exactly:
+
+```text
+writereg mems.ch <physical port>
+```
+
+It does not scan the network, accept arbitrary commands, edit permanent
+mapping, or call `CLOSe?` as a direct-port readback. The raw-TCP default uses
+CRLF, a 2.0 s connection timeout, a 1.0 s bounded response timeout, and a 4096
+byte response limit. Recognized success is `acknowledged`; configured readback
+can produce `verified`, but no readback command is enabled by default. Unknown
+responses are `unverified` and require explicit operator confirmation. CLI
+errors, refused connections, socket errors, and timeouts are `failed` and
+cannot produce an accepted measurement for that attempt.
+
+These transport defaults and acknowledgement patterns have automated socket-
+seam coverage but still require validation against each supported OSX firmware.
+The profile has an isolated optional readback-command setting for future use;
+no command has been guessed. USB/VISA and TCP routes share the connection
+manager's single hardware executor and the adapter's routing lock, so they
+cannot overlap.
+
+Unknown physical capacity is handled by operator-confirmed sequential
+discovery. The worker begins at `N + 1`; a command or provisional reading alone
+does not prove that a port exists. Write IL and Continue confirms and stores a
+candidate. Retry reroutes the same candidate without saving. No More Physical
+Ports records the operator-reported endpoint; Stop Extra Testing ends without
+inferring capacity. Both discard the current provisional candidate. The
+administrator-controlled safety ceiling defaults to physical port 64, which
+covers current 48-front-panel hardware with known spare ranges while preventing
+unbounded register writes. It is editable in Admin Config and is never treated
+as installed capacity.
 
 After a supported switch reaches the Connected state, the main window may use
 the serial already present in `DeviceInfo` as the setup's Main board serial and

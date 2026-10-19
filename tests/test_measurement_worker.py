@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import QApplication
 
 from application.measurement_worker import MeasurementWorker as ApplicationMeasurementWorker
 from domain.models import ConnectionState, DeviceCategory
+from domain.extra_ports import PhysicalPortRouteResult, PhysicalPortRouteStatus
 from hardware.session import OpticalTestSession
 from measurement_worker import MeasurementWorker
 
@@ -49,6 +50,11 @@ class InvalidThenValidPowerMeter(SequencePowerMeter):
         ])
 
 
+class DarkPowerMeter(FakePowerMeter):
+    def measure_both_wavelengths(self):
+        return {1310: -60.0, 1550: -61.0}
+
+
 class FakeSwitch:
     def __init__(self):
         self.connected = False
@@ -62,6 +68,32 @@ class FakeSwitch:
 
     def close(self):
         self.closed = True
+
+
+class ExtraPortSwitch(FakeSwitch):
+    def __init__(self, route_results=None):
+        super().__init__()
+        self.logical_routes = []
+        self.physical_routes = []
+        self.route_results = list(route_results or [])
+
+    def configured_channel_count(self):
+        return 8
+
+    def set_channel(self, channel):
+        self.logical_routes.append(channel)
+        return channel
+
+    def set_physical_port(self, physical_port, maximum_port):
+        self.physical_routes.append((physical_port, maximum_port))
+        if self.route_results:
+            return self.route_results.pop(0)
+        return PhysicalPortRouteResult(
+            physical_port,
+            PhysicalPortRouteStatus.ACKNOWLEDGED,
+            response="OK",
+            network_address="192.0.2.15",
+        )
 
 
 class CapturingSupportLogger:
@@ -436,6 +468,147 @@ class MeasurementWorkerTests(unittest.TestCase):
         self.assertEqual(progress, [(1, 3), (2, 3), (2, 3), (3, 3)])
         self.assertTrue(meter.closed)
         self.assertTrue(switch.closed)
+
+    def test_full_pass_uses_front_panel_count_then_sequential_extra_ports(self):
+        switch = ExtraPortSwitch([
+            PhysicalPortRouteResult(3, PhysicalPortRouteStatus.ACKNOWLEDGED),
+            PhysicalPortRouteResult(4, PhysicalPortRouteStatus.FAILED, detail="absent"),
+        ])
+        worker = MeasurementWorker(
+            FakePowerMeter(),
+            switch,
+            None,
+            {1310: 0.72, 1550: 0.28},
+            front_panel_channel_count=2,
+            offer_extra_ports=True,
+            maximum_physical_port_probe=8,
+        )
+        readings = []
+        worker.extra_port_offer_required.connect(
+            lambda _count: worker.choose_extra_port_testing(True)
+        )
+        worker.operator_required.connect(
+            lambda _channel, _port: worker.continue_current()
+        )
+
+        def accept_reading(*values):
+            readings.append(values)
+            worker.write_current()
+
+        worker.reading_ready.connect(accept_reading)
+        worker.extra_port_issue.connect(
+            lambda *_args: worker.extra_port_action("no_more")
+        )
+        worker.run()
+
+        self.assertEqual(switch.logical_routes, [1, 2])
+        self.assertEqual(switch.physical_routes, [(3, 8), (4, 8)])
+        self.assertEqual([reading[0] for reading in readings], [1, 2, 3])
+
+    def test_finish_run_declines_extra_ports_without_cli_route(self):
+        switch = ExtraPortSwitch()
+        worker = MeasurementWorker(
+            FakePowerMeter(), switch, None, {1310: 0.72, 1550: 0.28},
+            front_panel_channel_count=2, offer_extra_ports=True,
+        )
+        offers = []
+        worker.extra_port_offer_required.connect(
+            lambda count: (offers.append(count), worker.choose_extra_port_testing(False))
+        )
+        worker.operator_required.connect(lambda *_args: worker.continue_current())
+        worker.reading_ready.connect(lambda *_args: worker.write_current())
+        worker.run()
+
+        self.assertEqual(offers, [2])
+        self.assertEqual(switch.physical_routes, [])
+
+    def test_retry_does_not_advance_or_accept_a_provisional_candidate(self):
+        switch = ExtraPortSwitch()
+        worker = MeasurementWorker(
+            FakePowerMeter(), switch, None, {1310: 0.72, 1550: 0.28},
+            front_panel_channel_count=1, offer_extra_ports=True,
+            maximum_physical_port_probe=3,
+        )
+        extra_visits = []
+        worker.extra_port_offer_required.connect(
+            lambda _count: worker.choose_extra_port_testing(True)
+        )
+
+        def operator(channel, _port):
+            if channel == 2:
+                extra_visits.append(channel)
+                if len(extra_visits) == 1:
+                    worker.extra_port_action("retry")
+                else:
+                    worker.extra_port_action("no_more")
+            else:
+                worker.continue_current()
+
+        worker.operator_required.connect(operator)
+        worker.reading_ready.connect(lambda *_args: worker.write_current())
+        worker.run()
+
+        self.assertEqual(switch.physical_routes, [(2, 3), (2, 3)])
+        self.assertEqual(extra_visits, [2, 2])
+
+    def test_unverified_route_requires_explicit_confirmation(self):
+        switch = ExtraPortSwitch([
+            PhysicalPortRouteResult(2, PhysicalPortRouteStatus.UNVERIFIED),
+        ])
+        worker = MeasurementWorker(
+            FakePowerMeter(), switch, None, {1310: 0.72, 1550: 0.28},
+            front_panel_channel_count=1, offer_extra_ports=True,
+            maximum_physical_port_probe=2,
+        )
+        confirmations = []
+        worker.extra_port_offer_required.connect(
+            lambda _count: worker.choose_extra_port_testing(True)
+        )
+        worker.extra_port_confirmation_required.connect(
+            lambda port, _result: (
+                confirmations.append(port),
+                worker.extra_port_action("proceed_unverified"),
+            )
+        )
+        worker.operator_required.connect(lambda *_args: worker.continue_current())
+        worker.reading_ready.connect(lambda *_args: worker.write_current())
+        worker.extra_port_issue.connect(
+            lambda *_args: worker.extra_port_action("stop")
+        )
+        worker.run()
+
+        self.assertEqual(confirmations, [2])
+
+    def test_dark_extra_candidate_is_discarded_without_reading_ready(self):
+        switch = ExtraPortSwitch()
+        worker = MeasurementWorker(
+            DarkPowerMeter(), switch, None, {1310: 0.72, 1550: 0.28},
+            front_panel_channel_count=1, offer_extra_ports=True,
+            maximum_physical_port_probe=3,
+        )
+        readings = []
+        issues = []
+        worker.extra_port_offer_required.connect(
+            lambda _count: worker.choose_extra_port_testing(True)
+        )
+        worker.operator_required.connect(lambda *_args: worker.continue_current())
+
+        def handle_reading(*values):
+            readings.append(values)
+            worker.write_current()
+
+        def handle_issue(_port, kind, _message):
+            issues.append(kind)
+            worker.extra_port_action("no_more")
+
+        worker.reading_ready.connect(handle_reading)
+        worker.extra_port_issue.connect(handle_issue)
+        worker.run()
+
+        # The front-panel sample is intentionally dark in this artificial
+        # test and retains legacy behavior; only the extra candidate is gated.
+        self.assertEqual([item[0] for item in readings], [1])
+        self.assertEqual(issues, ["invalid_signal"])
 
 
 if __name__ == "__main__":

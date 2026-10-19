@@ -8,6 +8,7 @@ from application.run_controller import HardwareRunRequest
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from hardware.interfaces import OpticalSwitch, PowerMeter
 from domain.wavelengths import MeasurementConfiguration
+from domain.extra_ports import DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,9 @@ def build_hardware_run_request(
     workflow_id: str = "",
     reference_snapshot: Mapping[str, object] | None = None,
     measurement_configuration: MeasurementConfiguration | None = None,
+    front_panel_channel_count: int | None = None,
+    offer_extra_ports: bool = False,
+    maximum_physical_port_probe: int = DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE,
 ) -> HardwareRunRequest:
     """Create a controller request for already-created hardware adapters."""
     return HardwareRunRequest(
@@ -91,6 +95,9 @@ def build_hardware_run_request(
         workflow_id=workflow_id,
         reference_snapshot=dict(reference_snapshot) if reference_snapshot else None,
         measurement_configuration=measurement_configuration,
+        front_panel_channel_count=front_panel_channel_count,
+        offer_extra_ports=offer_extra_ports,
+        maximum_physical_port_probe=maximum_physical_port_probe,
     )
 
 
