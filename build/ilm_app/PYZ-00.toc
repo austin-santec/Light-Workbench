@@ -366,6 +366,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\diagnostic_trace.py',
    'PYMODULE'),
+  ('domain.extra_ports',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\extra_ports.py',
+   'PYMODULE'),
   ('domain.hardware_connection',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\hardware_connection.py',
@@ -552,6 +556,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\hardware\\power_meter.py',
    'PYMODULE'),
+  ('hardware.santec_cli',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\hardware\\santec_cli.py',
+   'PYMODULE'),
   ('hardware.session',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\hardware\\session.py',
@@ -700,6 +708,10 @@
   ('infrastructure.diagnostic_export',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\diagnostic_export.py',
+   'PYMODULE'),
+  ('infrastructure.extra_port_settings_repository',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\extra_port_settings_repository.py',
    'PYMODULE'),
   ('infrastructure.limit_profile_repository',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
