@@ -224,6 +224,32 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("Engineering", window.run_purpose_status_label.text())
         window.close()
 
+    def test_run_purpose_control_does_not_overlap_load_run_button(self):
+        window = MainWindow()
+        setup_layout = window.hardware_setup_box.content_widget.layout()
+
+        purpose_position = setup_layout.getItemPosition(
+            setup_layout.indexOf(window.hardware_run_purpose)
+        )
+        load_position = setup_layout.getItemPosition(
+            setup_layout.indexOf(window.load_run_button)
+        )
+
+        purpose_cells = {
+            (row, column)
+            for row in range(purpose_position[0], purpose_position[0] + purpose_position[2])
+            for column in range(
+                purpose_position[1], purpose_position[1] + purpose_position[3]
+            )
+        }
+        load_cells = {
+            (row, column)
+            for row in range(load_position[0], load_position[0] + load_position[2])
+            for column in range(load_position[1], load_position[1] + load_position[3])
+        }
+        self.assertTrue(purpose_cells.isdisjoint(load_cells))
+        window.close()
+
     def test_open_csv_starts_in_default_run_folder(self):
         window = MainWindow()
         with patch(

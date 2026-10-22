@@ -72,6 +72,9 @@ class MeasurementWorker(QObject):
         measurement_configuration_value: MeasurementConfiguration | None = None,
         front_panel_channel_count: int | None = None,
         offer_extra_ports=False,
+        run_mode="new",
+        retest=False,
+        existing_extra_physical_ports: Sequence[int] | None = None,
         maximum_physical_port_probe=DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE,
     ):
         super().__init__()
@@ -99,6 +102,13 @@ class MeasurementWorker(QObject):
             else None
         )
         self.offer_extra_ports = bool(offer_extra_ports)
+        self.run_mode = str(run_mode or "new")
+        self.retest = bool(retest)
+        self.existing_extra_physical_ports = {
+            int(port)
+            for port in (existing_extra_physical_ports or ())
+            if int(port) > 0
+        }
         self.maximum_physical_port_probe = int(maximum_physical_port_probe)
         self._stop_event = threading.Event()
         self._operator_ready = threading.Event()
@@ -167,7 +177,7 @@ class MeasurementWorker(QObject):
                 configured_count = max(channels)
             self.channel_configuration_ready.emit(configured_count)
             if self.manual_channel_order:
-                self._run_manual_channel_order(
+                completed_front_panel_channels = self._run_manual_channel_order(
                     configured_count,
                     self.existing_channels if self.resume_existing else None,
                 )
@@ -184,14 +194,16 @@ class MeasurementWorker(QObject):
                         default_channel,
                     )
                     start_channel = self._wait_for_continuation_selection()
-                self._run_channels(
+                completed_front_panel_channels = self._run_channels(
                     channels,
                     self.existing_channels if self.resume_existing else None,
                     start_channel,
                 )
 
-            if self.offer_extra_ports and self.front_panel_channel_count is not None:
-                self._offer_and_run_extra_ports()
+            self._evaluate_and_offer_extra_ports(
+                completed_front_panel_channels,
+                configured_count,
+            )
 
             terminal_state = "completed"
         except InterruptedError:
@@ -312,7 +324,7 @@ class MeasurementWorker(QObject):
                 current_channel = target_channel
 
             if len(completed_channels) >= len(all_channels):
-                return
+                return completed_channels
             if resume_channel is not None and resume_channel not in completed_channels:
                 current_channel = resume_channel
             else:
@@ -321,6 +333,8 @@ class MeasurementWorker(QObject):
                     all_channels,
                     completed_channels,
                 )
+
+        return completed_channels
 
     def _run_manual_channel_order(self, configured_count, existing_channels=None):
         """Let the operator choose channels until every channel is covered."""
@@ -344,7 +358,7 @@ class MeasurementWorker(QObject):
                         "The manual pass ended before every configured channel "
                         "was measured."
                     )
-                return
+                return completed_channels
             if channel < 1 or channel > configured_count:
                 raise RuntimeError(
                     "Selected channel must be from 1 through %d." % configured_count
@@ -360,6 +374,62 @@ class MeasurementWorker(QObject):
                 len(completed_channels),
                 configured_count,
             )
+
+    def _evaluate_and_offer_extra_ports(
+        self,
+        completed_front_panel_channels,
+        configured_count,
+    ):
+        """Record extra-port eligibility and offer it after full coverage."""
+        count = self.front_panel_channel_count
+        existing_extra = sorted(
+            port
+            for port in self.existing_extra_physical_ports
+            if count is not None and port > count
+        )
+        missing = []
+        if count is not None:
+            completed = {
+                int(channel)
+                for channel in completed_front_panel_channels
+                if 1 <= int(channel) <= count
+            }
+            missing = [
+                channel
+                for channel in range(1, count + 1)
+                if channel not in completed
+            ]
+        eligible = bool(
+            self.offer_extra_ports
+            and count is not None
+            and not missing
+            and count <= int(configured_count)
+        )
+        reason = "eligible" if eligible else (
+            "missing_front_panel_channels" if missing else "not_enabled"
+        )
+        self._record(
+            SupportEventCategory.WORKFLOW,
+            "extra_ports.eligibility_evaluated",
+            run_mode=self.run_mode,
+            full_pass=self.front_panel_channel_count is not None,
+            manual_channel_order=self.manual_channel_order,
+            retest=self.retest,
+            front_panel_channel_count=count,
+            configured_channel_count=configured_count,
+            completed_front_panel_channel_count=(
+                len(completed_front_panel_channels)
+                if count is not None
+                else 0
+            ),
+            missing_front_panel_channels=missing,
+            existing_extra_physical_ports=existing_extra,
+            eligible=eligible,
+            reason=reason,
+            status="eligible" if eligible else "not_eligible",
+        )
+        if eligible:
+            self._offer_and_run_extra_ports(existing_extra)
 
     def _measure_channel(self, channel, index=None, total=None, emit_progress=True):
         """Route, read, and accept one channel, including repeat reads."""
@@ -613,7 +683,7 @@ class MeasurementWorker(QObject):
                 status="requested",
             )
 
-    def _offer_and_run_extra_ports(self):
+    def _offer_and_run_extra_ports(self, existing_extra_physical_ports=()):
         """Pause once after the front-panel pass, then probe extras sequentially."""
         count = self.front_panel_channel_count
         self._set_extra_phase(ExtraPortPhaseStatus.OFFERED, count)
@@ -641,7 +711,10 @@ class MeasurementWorker(QObject):
             )
             return
 
+        existing_extra = set(existing_extra_physical_ports)
         candidate = count + 1
+        while candidate in existing_extra:
+            candidate += 1
         self._record(
             SupportEventCategory.OPERATOR,
             "extra_ports.accepted",
@@ -662,6 +735,8 @@ class MeasurementWorker(QObject):
                     status="success",
                 )
                 candidate += 1
+                while candidate in existing_extra:
+                    candidate += 1
                 continue
             if outcome == "retry":
                 self._record(

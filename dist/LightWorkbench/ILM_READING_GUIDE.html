@@ -276,10 +276,10 @@
     <div class="warning"><strong>Atomic readings:</strong> Light Workbench never treats one wavelength as a completed channel. If measurement or database persistence fails, no partial pair becomes an accepted measurement. Follow the popup; do not assume a value was saved merely because it appeared on screen.</div>
 
     <h2>8. Optional extra physical-port testing</h2>
-    <p>After a successful automatic full pass covers every required front-panel channel, Light Workbench asks whether to finish or test additional physical ports through the switch's engineering interface.</p>
+    <p>After a successful automatic full pass covers every required front-panel channel, Light Workbench asks whether to finish or test additional physical ports through the switch's engineering interface. This applies to both a new full pass and a continued full pass that completes its remaining front-panel channels.</p>
     <ol class="steps">
       <li>Choose <strong>Finish Run</strong> unless extra spare-port measurements are intentionally required.</li>
-      <li>If you choose <strong>Test Extra Ports</strong>, the program begins at front-panel count + 1 and routes each candidate sequentially using the fixed engineering command.</li>
+      <li>If you choose <strong>Test Extra Ports</strong>, the program begins at front-panel count + 1 and routes each candidate sequentially using the fixed engineering command. When continuing a run, previously accepted extra-port readings are skipped and testing resumes at the first missing candidate.</li>
       <li>If the route cannot be verified, proceed only after independently confirming it. Otherwise choose Retry, No More Physical Ports, or Stop Extra Testing.</li>
       <li>A candidate is provisional until a complete valid two-wavelength result is explicitly accepted with <strong>Write IL and Continue</strong>.</li>
       <li>Choose <strong>No More Physical Ports</strong> when the current candidate is not installed. Choose <strong>Stop Extra Testing</strong> to end without making a capacity claim.</li>
@@ -378,7 +378,7 @@
 10. Wait for a complete two-wavelength pair; nothing is saved yet.
 11. Write IL (+) to commit the pair to SQL Server and advance.
 12. Repeat until the plan is finished or intentionally stopped.
-13. For a full pass, finish or intentionally enter optional extra-port testing.
+13. For a new or continued full pass, finish or intentionally enter optional extra-port testing after all front-panel channels are complete.
 14. Review Run, Result, Analysis, and Reading History.
 15. Use Write COC... explicitly only when a COC is required.</div>
 

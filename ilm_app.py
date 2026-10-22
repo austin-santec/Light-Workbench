@@ -68,6 +68,7 @@ from application.hardware_planning import parse_hardware_channels
 from application.hardware_session import HardwareRunSession
 from application.run_start import (
     build_hardware_run_request,
+    evaluate_extra_port_offer_eligibility,
     prepare_hardware_run,
 )
 from application.run_preflight import (
@@ -1900,7 +1901,7 @@ class MainWindow(QMainWindow):
         hardware_setup_layout.addWidget(self.hardware_station_number, 6, 3)
         self.reference_status_label = QLabel("Reference status: Not referenced")
         self.reference_status_label.setWordWrap(True)
-        hardware_setup_layout.addWidget(QLabel("Run purpose:"), 7, 2)
+        hardware_setup_layout.addWidget(QLabel("Run purpose:"), 8, 2)
         self.hardware_run_purpose = QComboBox()
         for label, value in RUN_PURPOSE_OPTIONS:
             self.hardware_run_purpose.addItem(label, value)
@@ -1911,7 +1912,7 @@ class MainWindow(QMainWindow):
         self.hardware_run_purpose.currentIndexChanged.connect(
             self._run_purpose_selection_changed
         )
-        hardware_setup_layout.addWidget(self.hardware_run_purpose, 7, 3)
+        hardware_setup_layout.addWidget(self.hardware_run_purpose, 8, 3)
         self.run_purpose_notice_label = QLabel()
         self.run_purpose_notice_label.setWordWrap(True)
         self.run_purpose_notice_label.setStyleSheet("color: #d89b00;")
@@ -1945,7 +1946,7 @@ class MainWindow(QMainWindow):
         )
         hardware_setup_layout.addWidget(
             self.front_panel_channel_count_label,
-            8,
+            9,
             2,
             1,
             2,
@@ -5538,11 +5539,32 @@ class MainWindow(QMainWindow):
                 else None
             ),
             offer_extra_ports=(
-                bool(preparation.full_pass)
-                and not preparation.manual_channel_order
-                and not retest
-                and run_mode == "new"
-                and part_details is not None
+                evaluate_extra_port_offer_eligibility(
+                    full_pass=preparation.full_pass,
+                    manual_channel_order=preparation.manual_channel_order,
+                    retest=retest,
+                    run_mode=run_mode,
+                    has_part_number=part_details is not None,
+                ).eligible
+            ),
+            run_mode=run_mode,
+            retest=retest,
+            existing_extra_physical_ports=(
+                tuple(
+                    sorted(
+                        {
+                            int(record.physical_port or record.channel)
+                            for record in (self.run_data.measurements or ())
+                            if part_details is not None
+                            and int(record.channel)
+                            > part_details.front_panel_channel_count
+                            and int(record.physical_port or record.channel)
+                            > part_details.front_panel_channel_count
+                        }
+                    )
+                )
+                if run_mode == "continue" and self.run_data is not None
+                else ()
             ),
             maximum_physical_port_probe=(
                 self.extra_port_settings.maximum_physical_port_probe

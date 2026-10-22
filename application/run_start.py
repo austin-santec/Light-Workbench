@@ -21,6 +21,41 @@ class HardwareRunPreparation:
     manual_channel_order: bool
 
 
+@dataclass(frozen=True)
+class ExtraPortOfferEligibility:
+    """Policy decision for enabling the optional extra-port phase."""
+
+    eligible: bool
+    reason: str
+
+
+def evaluate_extra_port_offer_eligibility(
+    *,
+    full_pass: bool,
+    manual_channel_order: bool,
+    retest: bool,
+    run_mode: str,
+    has_part_number: bool,
+) -> ExtraPortOfferEligibility:
+    """Evaluate run-level conditions for offering extra physical ports.
+
+    Front-panel coverage is verified by the worker after the pass completes;
+    this decision covers the run configuration and required metadata.
+    """
+
+    if not full_pass:
+        return ExtraPortOfferEligibility(False, "not_a_full_pass")
+    if manual_channel_order:
+        return ExtraPortOfferEligibility(False, "manual_channel_order")
+    if retest:
+        return ExtraPortOfferEligibility(False, "selected_retest")
+    if run_mode not in {"new", "continue"}:
+        return ExtraPortOfferEligibility(False, "unsupported_run_mode")
+    if not has_part_number:
+        return ExtraPortOfferEligibility(False, "missing_part_number")
+    return ExtraPortOfferEligibility(True, "eligible")
+
+
 def prepare_hardware_run(
     *,
     retest: bool,
@@ -74,6 +109,9 @@ def build_hardware_run_request(
     measurement_configuration: MeasurementConfiguration | None = None,
     front_panel_channel_count: int | None = None,
     offer_extra_ports: bool = False,
+    run_mode: str = "new",
+    retest: bool = False,
+    existing_extra_physical_ports: Sequence[int] | None = None,
     maximum_physical_port_probe: int = DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE,
 ) -> HardwareRunRequest:
     """Create a controller request for already-created hardware adapters."""
@@ -97,12 +135,17 @@ def build_hardware_run_request(
         measurement_configuration=measurement_configuration,
         front_panel_channel_count=front_panel_channel_count,
         offer_extra_ports=offer_extra_ports,
+        run_mode=run_mode,
+        retest=retest,
+        existing_extra_physical_ports=existing_extra_physical_ports,
         maximum_physical_port_probe=maximum_physical_port_probe,
     )
 
 
 __all__ = [
     "HardwareRunPreparation",
+    "ExtraPortOfferEligibility",
     "build_hardware_run_request",
+    "evaluate_extra_port_offer_eligibility",
     "prepare_hardware_run",
 ]

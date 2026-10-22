@@ -522,6 +522,38 @@ class MeasurementWorkerTests(unittest.TestCase):
         self.assertEqual(offers, [2])
         self.assertEqual(switch.physical_routes, [])
 
+    def test_continued_full_pass_skips_existing_extra_ports(self):
+        switch = ExtraPortSwitch([
+            PhysicalPortRouteResult(4, PhysicalPortRouteStatus.ACKNOWLEDGED),
+            PhysicalPortRouteResult(6, PhysicalPortRouteStatus.FAILED, detail="absent"),
+        ])
+        worker = MeasurementWorker(
+            FakePowerMeter(),
+            switch,
+            None,
+            {1310: 0.72, 1550: 0.28},
+            resume_existing=True,
+            front_panel_channel_count=2,
+            offer_extra_ports=True,
+            run_mode="continue",
+            existing_extra_physical_ports=[3, 5],
+            maximum_physical_port_probe=8,
+        )
+        worker.extra_port_offer_required.connect(
+            lambda _count: worker.choose_extra_port_testing(True)
+        )
+        worker.operator_required.connect(
+            lambda _channel, _port: worker.continue_current()
+        )
+        worker.reading_ready.connect(lambda *_args: worker.write_current())
+        worker.extra_port_issue.connect(
+            lambda *_args: worker.extra_port_action("no_more")
+        )
+
+        worker.run()
+
+        self.assertEqual(switch.physical_routes, [(4, 8), (6, 8)])
+
     def test_retry_does_not_advance_or_accept_a_provisional_candidate(self):
         switch = ExtraPortSwitch()
         worker = MeasurementWorker(
