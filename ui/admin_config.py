@@ -12,16 +12,10 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
 )
 
 from domain.limit_profiles import LimitProfile, default_limit_profiles, profile_key
-from domain.extra_ports import (
-    ExtraPortSettings,
-    MAXIMUM_MAXIMUM_PHYSICAL_PORT_PROBE,
-    MINIMUM_MAXIMUM_PHYSICAL_PORT_PROBE,
-)
 
 
 class AdminPasswordDialog(QDialog):
@@ -53,17 +47,12 @@ class AdminConfigDialog(QDialog):
         profiles,
         repository,
         parent=None,
-        *,
-        extra_port_settings=None,
-        extra_port_repository=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Admin Config")
         self.setMinimumWidth(430)
         self.repository = repository
         self.profiles = dict(profiles)
-        self.extra_port_repository = extra_port_repository
-        self.extra_port_settings = extra_port_settings or ExtraPortSettings()
         self._dirty = False
         self._loading = False
         layout = QVBoxLayout(self)
@@ -77,12 +66,6 @@ class AdminConfigDialog(QDialog):
         self.mode_combo.addItem("MM (850/1300)", "MM")
         self.mode_combo.currentIndexChanged.connect(self._load_current_profile)
         form.addRow("Wavelength mode:", self.mode_combo)
-        self.profile_name_edit = QLineEdit()
-        self.profile_name_edit.textChanged.connect(self._mark_dirty)
-        form.addRow("Profile name:", self.profile_name_edit)
-        self.revision_edit = QLineEdit()
-        self.revision_edit.textChanged.connect(self._mark_dirty)
-        form.addRow("Revision:", self.revision_edit)
         self.too_good_spin = self._spin()
         self.too_good_spin.valueChanged.connect(self._mark_dirty)
         form.addRow("Too-good below:", self.too_good_spin)
@@ -97,26 +80,11 @@ class AdminConfigDialog(QDialog):
         self.minimum_improvement_spin.setToolTip(
             "A spare must improve the target channel's worse wavelength by at least this amount."
         )
-        form.addRow("Minimum replacement improvement:", self.minimum_improvement_spin)
+        self.minimum_improvement_label = QLabel("Minimum replacement improvement:")
+        form.addRow(self.minimum_improvement_label, self.minimum_improvement_spin)
         self.warning_note = QLabel("Not applicable for OSX-100")
         self.warning_note.setWordWrap(True)
         form.addRow("", self.warning_note)
-        self.maximum_physical_port_probe_spin = QSpinBox()
-        self.maximum_physical_port_probe_spin.setRange(
-            MINIMUM_MAXIMUM_PHYSICAL_PORT_PROBE,
-            MAXIMUM_MAXIMUM_PHYSICAL_PORT_PROBE,
-        )
-        self.maximum_physical_port_probe_spin.setValue(
-            self.extra_port_settings.maximum_physical_port_probe
-        )
-        self.maximum_physical_port_probe_spin.setToolTip(
-            "Safety ceiling only; it does not assert that every port exists."
-        )
-        self.maximum_physical_port_probe_spin.valueChanged.connect(self._mark_dirty)
-        form.addRow(
-            "Maximum physical-port probe:",
-            self.maximum_physical_port_probe_spin,
-        )
         layout.addLayout(form)
         buttons = QHBoxLayout()
         save = QPushButton("Save Changes")
@@ -159,8 +127,6 @@ class AdminConfigDialog(QDialog):
     def _load_current_profile(self, *_args):
         self._loading = True
         profile = self.profiles[self._selected_key()]
-        self.profile_name_edit.setText(profile.profile_name)
-        self.revision_edit.setText(profile.revision)
         self.too_good_spin.setValue(profile.too_good_below_db)
         self.warning_spin.setValue(profile.warning_above_db or 0.0)
         self.fail_spin.setValue(profile.fail_above_db)
@@ -169,6 +135,8 @@ class AdminConfigDialog(QDialog):
         )
         is_150 = self.model_combo.currentText() == "OSX-150"
         self.warning_spin.setEnabled(is_150)
+        self.minimum_improvement_label.setVisible(is_150)
+        self.minimum_improvement_spin.setVisible(is_150)
         self.warning_note.setVisible(not is_150)
         self._loading = False
 
@@ -195,10 +163,11 @@ class AdminConfigDialog(QDialog):
     def _profile_from_form(self):
         model = self.model_combo.currentText()
         mode = self.mode_combo.currentData()
+        existing_profile = self.profiles[self._selected_key()]
         return LimitProfile(
             model=model,
-            profile_name=self.profile_name_edit.text().strip(),
-            revision=self.revision_edit.text().strip(),
+            profile_name=existing_profile.profile_name,
+            revision=existing_profile.revision,
             too_good_below_db=self.too_good_spin.value(),
             warning_enabled=model == "OSX-150",
             warning_above_db=(
@@ -208,6 +177,8 @@ class AdminConfigDialog(QDialog):
             wavelength_mode=mode,
             minimum_replacement_improvement_db=(
                 self.minimum_improvement_spin.value()
+                if model == "OSX-150"
+                else existing_profile.minimum_replacement_improvement_db
             ),
         ).validate()
 
@@ -215,11 +186,6 @@ class AdminConfigDialog(QDialog):
         try:
             self.profiles[self._selected_key()] = self._profile_from_form()
             self.repository.save_profiles(self.profiles)
-            self.extra_port_settings = ExtraPortSettings(
-                self.maximum_physical_port_probe_spin.value()
-            ).validate()
-            if self.extra_port_repository is not None:
-                self.extra_port_repository.save(self.extra_port_settings)
         except (OSError, ValueError, TypeError) as error:
             QMessageBox.warning(self, "Could not save admin config", str(error))
             return
@@ -230,22 +196,13 @@ class AdminConfigDialog(QDialog):
     def _reload(self):
         try:
             self.profiles = self.repository.load_profiles()
-            if self.extra_port_repository is not None:
-                self.extra_port_settings = self.extra_port_repository.load()
         except (OSError, ValueError, TypeError) as error:
             QMessageBox.warning(self, "Could not reload admin config", str(error))
             return
         self._load_current_profile()
-        self.maximum_physical_port_probe_spin.setValue(
-            self.extra_port_settings.maximum_physical_port_probe
-        )
 
     def _restore_defaults(self):
         self.profiles = default_limit_profiles()
-        self.extra_port_settings = ExtraPortSettings()
-        self.maximum_physical_port_probe_spin.setValue(
-            self.extra_port_settings.maximum_physical_port_probe
-        )
         self._load_current_profile()
         self._dirty = True
 

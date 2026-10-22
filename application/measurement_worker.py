@@ -17,7 +17,7 @@ from domain.measurement import (
 )
 from domain.models import ConnectionState, DeviceCategory
 from domain.extra_ports import (
-    DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE,
+    EXTRA_PORT_HARD_SAFETY_LIMIT,
     ExtraPortPhaseStatus,
     PhysicalPortRouteStatus,
 )
@@ -75,7 +75,7 @@ class MeasurementWorker(QObject):
         run_mode="new",
         retest=False,
         existing_extra_physical_ports: Sequence[int] | None = None,
-        maximum_physical_port_probe=DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE,
+        extra_port_safety_limit: int | None = None,
     ):
         super().__init__()
         self.power_meter = power_meter
@@ -109,7 +109,16 @@ class MeasurementWorker(QObject):
             for port in (existing_extra_physical_ports or ())
             if int(port) > 0
         }
-        self.maximum_physical_port_probe = int(maximum_physical_port_probe)
+        self._extra_port_safety_limit = int(
+            EXTRA_PORT_HARD_SAFETY_LIMIT
+            if extra_port_safety_limit is None
+            else extra_port_safety_limit
+        )
+        if not 1 <= self._extra_port_safety_limit <= EXTRA_PORT_HARD_SAFETY_LIMIT:
+            raise ValueError(
+                "Internal extra-port safety limit must be between 1 and %d."
+                % EXTRA_PORT_HARD_SAFETY_LIMIT
+            )
         self._stop_event = threading.Event()
         self._operator_ready = threading.Event()
         self._channel_selection_event = threading.Event()
@@ -719,10 +728,10 @@ class MeasurementWorker(QObject):
             SupportEventCategory.OPERATOR,
             "extra_ports.accepted",
             first_candidate=candidate,
-            safety_ceiling=self.maximum_physical_port_probe,
+            safety_ceiling=self._extra_port_safety_limit,
             status="accepted",
         )
-        while candidate <= self.maximum_physical_port_probe:
+        while candidate <= self._extra_port_safety_limit:
             self._set_extra_phase(ExtraPortPhaseStatus.IN_PROGRESS, candidate)
             outcome = self._run_extra_candidate(candidate)
             if outcome == "written":
@@ -796,20 +805,20 @@ class MeasurementWorker(QObject):
 
         self._set_extra_phase(
             ExtraPortPhaseStatus.SAFETY_CEILING_REACHED,
-            self.maximum_physical_port_probe,
+            self._extra_port_safety_limit,
         )
         self._record(
             SupportEventCategory.WORKFLOW,
             "extra_ports.safety_ceiling_reached",
-            safety_ceiling=self.maximum_physical_port_probe,
+            safety_ceiling=self._extra_port_safety_limit,
             highest_confirmed_extra_port=self._highest_confirmed_extra_port,
             status="stopped",
         )
         self.extra_port_issue.emit(
-            self.maximum_physical_port_probe,
+            self._extra_port_safety_limit,
             "safety_ceiling",
-            "The configured maximum physical-port probe has been reached. "
-            "Ask an administrator to review the safety ceiling before testing more ports.",
+            "The internal extra-port safety limit has been reached. "
+            "Stop testing and contact engineering before attempting additional ports.",
         )
         self._wait_for_extra_action()
         self._record(
@@ -825,7 +834,7 @@ class MeasurementWorker(QObject):
         try:
             result = self.switch.set_physical_port(
                 candidate,
-                self.maximum_physical_port_probe,
+                self._extra_port_safety_limit,
             )
             route_status = result.status
             network_address = result.network_address
@@ -904,7 +913,7 @@ class MeasurementWorker(QObject):
     def _set_extra_phase(self, status, candidate):
         details = {
             "highest_confirmed_extra_port": self._highest_confirmed_extra_port,
-            "safety_ceiling": self.maximum_physical_port_probe,
+            "safety_ceiling": self._extra_port_safety_limit,
         }
         self.extra_port_phase_changed.emit(status.value, int(candidate), details)
 

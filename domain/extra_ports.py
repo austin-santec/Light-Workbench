@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from enum import Enum
 
 
-DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE = 64
-MINIMUM_MAXIMUM_PHYSICAL_PORT_PROBE = 49
-MAXIMUM_MAXIMUM_PHYSICAL_PORT_PROBE = 512
+# Emergency guard against an unbounded sequence of direct register writes.
+# This is deliberately not operator- or administrator-configurable and is not
+# interpreted as installed switch capacity.
+EXTRA_PORT_HARD_SAFETY_LIMIT = 512
 
 
 class PhysicalPortRouteStatus(str, Enum):
@@ -52,35 +53,9 @@ class ExtraPortPhaseStatus(str, Enum):
     SAFETY_CEILING_REACHED = "safety_ceiling_reached"
 
 
-@dataclass(frozen=True)
-class ExtraPortSettings:
-    """Administrator-controlled safety settings for sequential probing."""
-
-    maximum_physical_port_probe: int = DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE
-
-    def validate(self):
-        value = int(self.maximum_physical_port_probe)
-        if not (
-            MINIMUM_MAXIMUM_PHYSICAL_PORT_PROBE
-            <= value
-            <= MAXIMUM_MAXIMUM_PHYSICAL_PORT_PROBE
-        ):
-            raise ValueError(
-                "Maximum physical-port probe must be from %d through %d."
-                % (
-                    MINIMUM_MAXIMUM_PHYSICAL_PORT_PROBE,
-                    MAXIMUM_MAXIMUM_PHYSICAL_PORT_PROBE,
-                )
-            )
-        return ExtraPortSettings(value)
-
-
 __all__ = [
-    "DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE",
+    "EXTRA_PORT_HARD_SAFETY_LIMIT",
     "ExtraPortPhaseStatus",
-    "ExtraPortSettings",
-    "MAXIMUM_MAXIMUM_PHYSICAL_PORT_PROBE",
-    "MINIMUM_MAXIMUM_PHYSICAL_PORT_PROBE",
     "PhysicalPortRouteResult",
     "PhysicalPortRouteStatus",
 ]

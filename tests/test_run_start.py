@@ -55,7 +55,6 @@ class RunStartPreparationTests(unittest.TestCase):
             offer_extra_ports=True,
             run_mode="continue",
             existing_extra_physical_ports=[49, 50],
-            maximum_physical_port_probe=64,
         )
 
         self.assertIs(request.power_meter_factory(), meter)
@@ -69,7 +68,6 @@ class RunStartPreparationTests(unittest.TestCase):
         self.assertTrue(request.offer_extra_ports)
         self.assertEqual(request.run_mode, "continue")
         self.assertEqual(request.existing_extra_physical_ports, [49, 50])
-        self.assertEqual(request.maximum_physical_port_probe, 64)
 
     def test_extra_port_offer_allows_new_and_continued_full_passes(self):
         for run_mode in ("new", "continue"):

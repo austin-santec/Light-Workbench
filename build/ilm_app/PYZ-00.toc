@@ -709,10 +709,6 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\diagnostic_export.py',
    'PYMODULE'),
-  ('infrastructure.extra_port_settings_repository',
-   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
-   'Testing\\infrastructure\\extra_port_settings_repository.py',
-   'PYMODULE'),
   ('infrastructure.limit_profile_repository',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\limit_profile_repository.py',

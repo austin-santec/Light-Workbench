@@ -111,7 +111,6 @@ from domain.hardware_connection import (
 from domain.models import ConnectionState, DeviceCategory
 from domain.extra_ports import (
     ExtraPortPhaseStatus,
-    ExtraPortSettings,
     PhysicalPortRouteStatus,
 )
 from domain.limit_profiles import (
@@ -167,7 +166,6 @@ from infrastructure.coc_exporter import (
 from infrastructure.run_repository import DEFAULT_RUN_ROOT, FileRunRepository
 from infrastructure.unit_repository import FileUnitRepository
 from infrastructure.limit_profile_repository import LimitProfileRepository
-from infrastructure.extra_port_settings_repository import ExtraPortSettingsRepository
 from infrastructure.support_bundle import export_support_bundle
 from hardware.optical_switch import OSX150
 from hardware.power_meter import SantecPowerMeter, SimulatedPowerMeter
@@ -852,19 +850,12 @@ class MainWindow(QMainWindow):
         self.pending_reading_validation = None
         self._syncing_reference_widgets = False
         self.limit_profile_repository = LimitProfileRepository()
-        self.extra_port_settings_repository = ExtraPortSettingsRepository()
-        self.extra_port_settings = ExtraPortSettings()
         self.limit_profiles = default_limit_profiles()
         self.limit_profile_error = None
         try:
             self.limit_profiles = self.limit_profile_repository.load_profiles()
         except (OSError, ValueError, TypeError) as error:
             self.limit_profile_error = str(error)
-        self.extra_port_settings_error = None
-        try:
-            self.extra_port_settings = self.extra_port_settings_repository.load()
-        except (OSError, ValueError, TypeError) as error:
-            self.extra_port_settings_error = str(error)
         self.active_limit_profile = self.limit_profiles[profile_key("OSX-150", "SM")]
         self._wavelength_mode_selection_method = "application_default_sm"
         self.ilm_source_profile = source_profile_for_mode(
@@ -2910,14 +2901,11 @@ class MainWindow(QMainWindow):
             self.limit_profiles,
             self.limit_profile_repository,
             self,
-            extra_port_settings=self.extra_port_settings,
-            extra_port_repository=self.extra_port_settings_repository,
         )
         if dialog.exec_() != QDialog.Accepted:
             return
         try:
             self.limit_profiles = self.limit_profile_repository.load_profiles()
-            self.extra_port_settings = self.extra_port_settings_repository.load()
             self.limit_profile_error = None
         except (OSError, ValueError, TypeError) as error:
             self.limit_profile_error = str(error)
@@ -5566,9 +5554,6 @@ class MainWindow(QMainWindow):
                 if run_mode == "continue" and self.run_data is not None
                 else ()
             ),
-            maximum_physical_port_probe=(
-                self.extra_port_settings.maximum_physical_port_probe
-            ),
         )
         try:
             self.hardware_controller.start(request)
@@ -6123,7 +6108,7 @@ class MainWindow(QMainWindow):
             )
         elif status == ExtraPortPhaseStatus.SAFETY_CEILING_REACHED.value:
             self.statusBar().showMessage(
-                "Extra-port safety ceiling reached; front-panel readings remain saved."
+                "Internal extra-port safety limit reached; front-panel readings remain saved."
             )
 
     def hardware_extra_port_confirmation_required(self, candidate, result):
@@ -6159,7 +6144,7 @@ class MainWindow(QMainWindow):
 
     def hardware_extra_port_issue(self, candidate, issue_kind, detail):
         if issue_kind == "safety_ceiling":
-            QMessageBox.warning(self, "Extra-port safety ceiling reached", detail)
+            QMessageBox.warning(self, "Internal extra-port safety limit reached", detail)
             self._hardware_command("extra_port_action", "stop")
             return
         message = QMessageBox(self)
@@ -7857,6 +7842,7 @@ class MainWindow(QMainWindow):
         )
         layout.addRow("Front-panel channels:", front_panel_count_label)
 
+        minimum_improvement_text_label = QLabel("Minimum worthwhile improvement:")
         minimum_improvement_label = QLabel(
             "%.4f dB (Admin Config)"
             % self.active_limit_profile.minimum_replacement_improvement_db
@@ -7864,7 +7850,10 @@ class MainWindow(QMainWindow):
         minimum_improvement_label.setToolTip(
             "This threshold is controlled by the administrator for the active model and wavelength mode."
         )
-        layout.addRow("Minimum worthwhile improvement:", minimum_improvement_label)
+        layout.addRow(minimum_improvement_text_label, minimum_improvement_label)
+        is_150_profile = self.active_limit_profile.model == "OSX-150"
+        minimum_improvement_text_label.setVisible(is_150_profile)
+        minimum_improvement_label.setVisible(is_150_profile)
 
         bottom_spare_count = QSpinBox()
         bottom_spare_count.setRange(0, 20)

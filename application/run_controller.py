@@ -14,7 +14,6 @@ from PyQt5.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from domain.models import RunState
 from domain.wavelengths import MeasurementConfiguration
-from domain.extra_ports import DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE
 from hardware.interfaces import OpticalSwitch, PowerMeter
 from application.measurement_worker import MeasurementWorker
 
@@ -42,7 +41,6 @@ class HardwareRunRequest:
     run_mode: str = "new"
     retest: bool = False
     existing_extra_physical_ports: Sequence[int] | None = None
-    maximum_physical_port_probe: int = DEFAULT_MAXIMUM_PHYSICAL_PORT_PROBE
 
 
 class HardwareRunController(QObject):
@@ -131,7 +129,6 @@ class HardwareRunController(QObject):
                 run_mode=request.run_mode,
                 retest=request.retest,
                 existing_extra_physical_ports=request.existing_extra_physical_ports,
-                maximum_physical_port_probe=request.maximum_physical_port_probe,
             )
             thread = QThread(self)
             worker.moveToThread(thread)

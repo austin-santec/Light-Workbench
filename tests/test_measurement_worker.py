@@ -4,7 +4,11 @@ from PyQt5.QtWidgets import QApplication
 
 from application.measurement_worker import MeasurementWorker as ApplicationMeasurementWorker
 from domain.models import ConnectionState, DeviceCategory
-from domain.extra_ports import PhysicalPortRouteResult, PhysicalPortRouteStatus
+from domain.extra_ports import (
+    EXTRA_PORT_HARD_SAFETY_LIMIT,
+    PhysicalPortRouteResult,
+    PhysicalPortRouteStatus,
+)
 from hardware.session import OpticalTestSession
 from measurement_worker import MeasurementWorker
 
@@ -106,6 +110,19 @@ class CapturingSupportLogger:
 
 
 class MeasurementWorkerTests(unittest.TestCase):
+    def test_extra_port_hard_stop_is_internal_and_fixed_by_default(self):
+        worker = MeasurementWorker(
+            FakePowerMeter(),
+            FakeSwitch(),
+            [1],
+            {1310: 0.72, 1550: 0.28},
+        )
+
+        self.assertEqual(
+            worker._extra_port_safety_limit,
+            EXTRA_PORT_HARD_SAFETY_LIMIT,
+        )
+
     @classmethod
     def setUpClass(cls):
         cls.application = QApplication.instance() or QApplication([])
@@ -481,7 +498,7 @@ class MeasurementWorkerTests(unittest.TestCase):
             {1310: 0.72, 1550: 0.28},
             front_panel_channel_count=2,
             offer_extra_ports=True,
-            maximum_physical_port_probe=8,
+            extra_port_safety_limit=8,
         )
         readings = []
         worker.extra_port_offer_required.connect(
@@ -537,7 +554,7 @@ class MeasurementWorkerTests(unittest.TestCase):
             offer_extra_ports=True,
             run_mode="continue",
             existing_extra_physical_ports=[3, 5],
-            maximum_physical_port_probe=8,
+            extra_port_safety_limit=8,
         )
         worker.extra_port_offer_required.connect(
             lambda _count: worker.choose_extra_port_testing(True)
@@ -559,7 +576,7 @@ class MeasurementWorkerTests(unittest.TestCase):
         worker = MeasurementWorker(
             FakePowerMeter(), switch, None, {1310: 0.72, 1550: 0.28},
             front_panel_channel_count=1, offer_extra_ports=True,
-            maximum_physical_port_probe=3,
+            extra_port_safety_limit=3,
         )
         extra_visits = []
         worker.extra_port_offer_required.connect(
@@ -590,7 +607,7 @@ class MeasurementWorkerTests(unittest.TestCase):
         worker = MeasurementWorker(
             FakePowerMeter(), switch, None, {1310: 0.72, 1550: 0.28},
             front_panel_channel_count=1, offer_extra_ports=True,
-            maximum_physical_port_probe=2,
+            extra_port_safety_limit=2,
         )
         confirmations = []
         worker.extra_port_offer_required.connect(
@@ -616,7 +633,7 @@ class MeasurementWorkerTests(unittest.TestCase):
         worker = MeasurementWorker(
             DarkPowerMeter(), switch, None, {1310: 0.72, 1550: 0.28},
             front_panel_channel_count=1, offer_extra_ports=True,
-            maximum_physical_port_probe=3,
+            extra_port_safety_limit=3,
         )
         readings = []
         issues = []

@@ -128,11 +128,10 @@ discovery. The worker begins at `N + 1`; a command or provisional reading alone
 does not prove that a port exists. Write IL and Continue confirms and stores a
 candidate. Retry reroutes the same candidate without saving. No More Physical
 Ports records the operator-reported endpoint; Stop Extra Testing ends without
-inferring capacity. Both discard the current provisional candidate. The
-administrator-controlled safety ceiling defaults to physical port 64, which
-covers current 48-front-panel hardware with known spare ranges while preventing
-unbounded register writes. It is editable in Admin Config and is never treated
-as installed capacity.
+inferring capacity. Both discard the current provisional candidate. An internal
+hard stop at physical port 512 prevents unbounded register writes. It is not
+operator- or administrator-configurable and is never treated as installed
+capacity; reaching it requires engineering review.
 
 After a supported switch reaches the Connected state, the main window may use
 the serial already present in `DeviceInfo` as the setup's Main board serial and
