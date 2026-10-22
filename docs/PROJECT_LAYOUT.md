@@ -80,7 +80,9 @@ be used as source locations. The release scripts keep deployment output in
   Database SQL remains private to this layer. Repository contracts, SQL-primary
   orchestration, and read-only reporting live under `application/`; reporting
   records/CSV formatting live under `domain/`; the report dialog lives in
-  `ui/database_reports.py`.
+  `ui/database_reports.py`. Database replacement editor state and atomic
+  change orchestration live in `application/replacement_persistence_workflow.py`;
+  its SQL-aware dialog lives in `ui/database_replacements.py`.
 - Administrator criteria INI persistence: `infrastructure/limit_profile_repository.py`.
 - Session-only administrator authorization and dialogs:
   `application/admin_session.py` and `ui/admin_config.py`.

@@ -419,6 +419,22 @@ Replacement recommendations remain temporary derived results and are never
 written to `CHANNEL_REPLACEMENTS` unless an operator separately documents a
 completed manual replacement.
 
+The database-backed editor is logical-channel centered. It resolves the
+current effective physical port from `vw_CurrentChannelMap`, shows the complete
+ordered SQL history, and derives assignment, related run, identity context,
+and UTC time. Recommendation selection may prefill the proposed port,
+category, improvement, and editable default reason, but selection is not a
+write. The operator must still provide or confirm the reason and operator and
+explicitly confirm that the physical reroute happened outside the application.
+Optional details are stored without loss in `notes`.
+
+Corrections, reversals, and repeated replacements append new rows. The UI does
+not expose SQL history deletion or legacy void semantics. Replacement rows and
+explicit spare designation/undesignation events approved in the same dialog
+are validated and committed in one transaction. After commit or failure, the
+application reloads the authoritative routing snapshot; no local replacement
+fallback is permitted.
+
 ### `DESIGNATED_SPARES`
 
 Append-only spare designation history.
@@ -491,6 +507,12 @@ single stable routing snapshot returns the effective map, both histories, and
 the active designated-spare set. This snapshot is scoped by `assignment_id`,
 so replacing a physical switch starts from the new assignment's baseline map
 without discarding or applying the old switch's history.
+
+Existing active spares are presented as retained by default. Analysis-derived
+spare suggestions may be preselected for review, but neither recommendation
+generation nor opening the editor writes an event. An existing spare is
+undesignated only by an explicit operator selection saved as a new append-only
+event.
 
 ## Required indexes
 

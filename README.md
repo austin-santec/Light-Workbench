@@ -501,15 +501,25 @@ switch mappings, or COC output. The prompt is not shown for partial, selected,
 stopped, failed, retest-only, loaded-only, or unsupported MM runs.
 
 After physically performing swaps, use `Manage Port Replacements...` in the
-Replacement analysis panel. The operator records the `Current Port`,
-`Replacement Port`, reason, and initials; the application supplies the UTC
-timestamp. Recommended swaps can be pre-filled, and designated spare ports
-remain available. Replacement events are append-only, so a later change such
-as `14 -> 41 -> 43` preserves the entire chain while normal COC consumers use
-the effective `14 -> 43` projection. Records and designated spares are saved
-in the unit's shared `unit.json`; recording them does not alter measurements
-or recommendations and never commands or verifies the switch. The workflow
-does not use `CLOSe?`; general routing behavior is documented separately.
+Replacement analysis panel. For a database run, the operator selects a logical
+channel and the application supplies the assignment, current effective port,
+unit/switch context, related run, and UTC timestamp. Choosing an analysis
+recommendation also fills its proposed port, category, measured improvement,
+and a suggested editable reason. Manual replacements remain available. The
+operator supplies or confirms the proposed port, reason, operator, optional
+details, and an explicit statement that the physical reroute was completed
+outside Light Workbench. Opening or canceling the dialog records nothing.
+
+SQL replacement history is append-only. A later change such as
+`logical 14: 14 -> 41 -> 43` preserves both database rows while normal COC
+consumers use the effective `14 -> 43` projection. Corrections and reversals
+also append a row; they never delete history. Existing designated spares start
+selected, newly recommended spares are preselected for review, and spare
+events are written only when the operator saves. The replacement and spare
+changes from one approval are committed atomically and then reloaded from SQL
+Server. Legacy file-backed runs retain their compatible unit-record workflow.
+Recording replacements never commands or verifies the switch and does not use
+`CLOSe?`; general routing behavior is documented separately.
 Use `Copy Replacement Notes` beside the management button to copy the active
 replacement records with their available reason, operator, and timestamp for
 pasting into the Unit Editor notes.

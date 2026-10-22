@@ -338,7 +338,9 @@
 
     <h2>12. Replacement analysis and records</h2>
     <p><strong>Analyze Replacements</strong> uses accepted front-panel readings and accepted extra-port readings to suggest improvements. Recommendations are advisory. Light Workbench does not command the switch to change a permanent mapping and does not use <code>CLOSe?</code> to verify a replacement.</p>
-    <p>After a physical reroute is completed through the approved external process, use <strong>Manage Port Replacements...</strong> to document the old port, new port, reason, operator, and timestamp. The history is append-only, so repeated replacements remain traceable. <strong>Copy Replacement Notes</strong> creates text suitable for external notes.</p>
+    <p>After a physical reroute is completed through the approved external process, use <strong>Manage Port Replacements...</strong>. For database runs, select the logical channel; Light Workbench supplies the current effective port, assignment/run context, identity, and UTC timestamp. A selected recommendation also supplies its proposed port, category, improvement, and an editable default reason. For a manual change, choose the logical channel and proposed physical port.</p>
+    <p>You must provide or confirm the reason and operator, may enter optional details, and must explicitly confirm that the physical reroute was completed outside Light Workbench. Opening or canceling the window records nothing. SQL history is append-only: Replace Again and correction/reversal actions add a row instead of deleting history. Existing and recommended designated spares are reviewed before Save. The application then reloads the effective map and audit history from SQL Server.</p>
+    <div class="warning"><strong>Replacement boundary:</strong> Light Workbench records the operator's documentation. It does not command the switch to change its permanent mapping, does not use <code>CLOSe?</code> to verify a replacement, and does not infer that an analysis recommendation was completed.</div>
 
     <h2>13. Write a COC explicitly</h2>
     <ol class="steps">

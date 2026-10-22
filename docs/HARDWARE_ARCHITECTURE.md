@@ -116,6 +116,13 @@ no command has been guessed. USB/VISA and TCP routes share the connection
 manager's single hardware executor and the adapter's routing lock, so they
 cannot overlap.
 
+Replacement recording is not a routing operation. The SQL-backed replacement
+editor reads the current effective assignment map from the database and records
+operator-supplied documentation only after explicit physical-completion
+confirmation. It does not call `CLOSe`, `CLOSe?`, the CLI tunnel, VISA, or any
+other switch command, and it does not claim that the external mapping was
+verified.
+
 Unknown physical capacity is handled by operator-confirmed sequential
 discovery. The worker begins at `N + 1`; a command or provisional reading alone
 does not prove that a port exists. Write IL and Continue confirms and stores a

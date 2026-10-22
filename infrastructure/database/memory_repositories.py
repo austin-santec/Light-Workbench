@@ -792,6 +792,32 @@ class InMemoryRepositories:
                 self.active_spares_for_assignment(assignment_id),
             )
 
+    def apply_routing_changes(self, replacement_specs, spare_event_specs):
+        """Apply one replacement approval atomically for hardware-free workflows."""
+        specs = tuple(replacement_specs)
+        spare_specs = tuple(spare_event_specs)
+        assignment_ids = {
+            spec.assignment_id for spec in (*specs, *spare_specs)
+        }
+        if len(assignment_ids) != 1:
+            raise ValueError("Routing changes must target one assignment")
+        assignment_id = next(iter(assignment_ids))
+        with self._lock:
+            replacements_before = dict(self.replacements)
+            spares_before = dict(self.spare_events)
+            ids_before = dict(self._next_ids)
+            try:
+                for spec in specs:
+                    self.append(spec)
+                for spec in spare_specs:
+                    self.append_event(spec)
+            except Exception:
+                self.replacements = replacements_before
+                self.spare_events = spares_before
+                self._next_ids = ids_before
+                raise
+            return self.routing_snapshot_for_assignment(assignment_id)
+
     def _routing_context(self, assignment_id: int, *, require_active: bool = False):
         assignment = self.assignments.get(int(assignment_id))
         if assignment is None:

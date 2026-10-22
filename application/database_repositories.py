@@ -153,6 +153,17 @@ class SpareRepository(Protocol):
 
 
 class RoutingRepository(ReplacementRepository, SpareRepository, Protocol):
+    def apply_routing_changes(
+        self,
+        replacement_specs: tuple[ReplacementSpec, ...],
+        spare_event_specs: tuple[SpareEventSpec, ...],
+    ) -> tuple[
+        tuple[ChannelMapRecord, ...],
+        tuple[ReplacementRecord, ...],
+        tuple[SpareEventRecord, ...],
+        tuple[int, ...],
+    ]: ...
+
     def routing_snapshot_for_assignment(
         self, assignment_id: int
     ) -> tuple[

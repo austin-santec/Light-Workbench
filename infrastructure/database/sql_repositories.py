@@ -840,73 +840,7 @@ class SqlRepositories:
 
     def append(self, spec: ReplacementSpec) -> ReplacementRecord:
         with self._factory.transaction() as cursor:
-            context = self._routing_context(
-                cursor, spec.assignment_id, require_active=True
-            )
-            channel_map = {
-                item.logical_channel: item
-                for item in self._current_channel_map(cursor, spec.assignment_id)
-            }
-            route = channel_map.get(spec.logical_channel)
-            if route is None:
-                raise ValueError("Replacement logical channel is not in the assignment")
-            if route.effective_physical_port != spec.previous_physical_port:
-                raise ValueError(
-                    "Previous physical port does not match the current channel map"
-                )
-            if spec.replacement_physical_port > context[4]:
-                raise ValueError("Replacement physical port exceeds switch capacity")
-            if any(
-                item.logical_channel != spec.logical_channel
-                and item.effective_physical_port == spec.replacement_physical_port
-                for item in channel_map.values()
-            ):
-                raise ValueError("Replacement physical port is already in use")
-            if spec.related_run_id is not None:
-                related = cursor.execute(
-                    "SELECT assignment_id FROM dbo.IL_RUNS WHERE run_id = ?",
-                    spec.related_run_id,
-                ).fetchone()
-                if related is None or int(related[0]) != spec.assignment_id:
-                    raise ValueError("Related run does not belong to this assignment")
-            prior = cursor.execute(
-                """
-                SELECT TOP (1) replaced_at_utc
-                FROM dbo.CHANNEL_REPLACEMENTS
-                WHERE assignment_id = ? AND logical_channel = ?
-                ORDER BY replaced_at_utc DESC, replacement_id DESC
-                """,
-                spec.assignment_id,
-                spec.logical_channel,
-            ).fetchone()
-            if spec.replaced_at_utc < context[2] or (
-                prior is not None and spec.replaced_at_utc < _utc(prior[0])
-            ):
-                raise ValueError("Replacement time precedes its assignment history")
-            replacement_id = cursor.execute(
-                """
-                INSERT INTO dbo.CHANNEL_REPLACEMENTS (
-                    assignment_id, logical_channel, previous_physical_port,
-                    replacement_physical_port, reason, replaced_by,
-                    replaced_at_utc, related_run_id, notes
-                ) OUTPUT INSERTED.replacement_id
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                spec.assignment_id,
-                spec.logical_channel,
-                spec.previous_physical_port,
-                spec.replacement_physical_port,
-                spec.reason,
-                spec.replaced_by,
-                spec.replaced_at_utc,
-                spec.related_run_id,
-                spec.notes,
-            ).fetchone()[0]
-            row = cursor.execute(
-                self._REPLACEMENT_SELECT + " WHERE replacement.replacement_id = ?",
-                replacement_id,
-            ).fetchone()
-            return self._replacement(row)
+            return self._append_replacement(cursor, spec)
 
     def replacement_history_for_assignment(
         self, assignment_id: int
@@ -930,47 +864,25 @@ class SqlRepositories:
 
     def append_event(self, spec: SpareEventSpec) -> SpareEventRecord:
         with self._factory.transaction() as cursor:
-            context = self._routing_context(
-                cursor, spec.assignment_id, require_active=True
-            )
-            if spec.physical_port > context[4]:
-                raise ValueError("Spare physical port exceeds switch capacity")
-            prior = cursor.execute(
-                """
-                SELECT TOP (1) action, recorded_at_utc
-                FROM dbo.DESIGNATED_SPARES
-                WHERE assignment_id = ? AND physical_port = ?
-                ORDER BY spare_event_id DESC
-                """,
-                spec.assignment_id,
-                spec.physical_port,
-            ).fetchone()
-            current_action = prior[0] if prior is not None else "undesignated"
-            if current_action == spec.action:
-                raise ValueError(f"Physical port is already {spec.action}")
-            if spec.recorded_at_utc < context[2] or (
-                prior is not None and spec.recorded_at_utc < _utc(prior[1])
-            ):
-                raise ValueError("Spare event time precedes its assignment history")
-            event_id = cursor.execute(
-                """
-                INSERT INTO dbo.DESIGNATED_SPARES (
-                    assignment_id, physical_port, action, recorded_by,
-                    recorded_at_utc, notes
-                ) OUTPUT INSERTED.spare_event_id VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                spec.assignment_id,
-                spec.physical_port,
-                spec.action,
-                spec.recorded_by,
-                spec.recorded_at_utc,
-                spec.notes,
-            ).fetchone()[0]
-            row = cursor.execute(
-                self._SPARE_SELECT + " WHERE spare.spare_event_id = ?",
-                event_id,
-            ).fetchone()
-            return self._spare(row)
+            return self._append_spare_event(cursor, spec)
+
+    def apply_routing_changes(self, replacement_specs, spare_event_specs):
+        """Validate and append one operator approval as a single transaction."""
+        specs = tuple(replacement_specs)
+        spare_specs = tuple(spare_event_specs)
+        assignment_ids = {
+            spec.assignment_id for spec in (*specs, *spare_specs)
+        }
+        if len(assignment_ids) != 1:
+            raise ValueError("Routing changes must target one assignment")
+        assignment_id = next(iter(assignment_ids))
+        with self._factory.transaction() as cursor:
+            self._routing_context(cursor, assignment_id, require_active=True)
+            for spec in specs:
+                self._append_replacement(cursor, spec)
+            for spec in spare_specs:
+                self._append_spare_event(cursor, spec)
+            return self._routing_snapshot(cursor, assignment_id)
 
     def spare_history_for_assignment(
         self, assignment_id: int
@@ -987,19 +899,128 @@ class SqlRepositories:
     def routing_snapshot_for_assignment(self, assignment_id: int):
         with self._factory.transaction() as cursor:
             self._routing_context(cursor, assignment_id, lock=True)
-            replacements = cursor.execute(
-                self._REPLACEMENT_SELECT
-                + " WHERE replacement.assignment_id = ? "
-                "ORDER BY replacement.replacement_id",
-                assignment_id,
-            ).fetchall()
-            spare_history = self._spare_history(cursor, assignment_id)
-            return (
-                self._current_channel_map(cursor, assignment_id),
-                tuple(self._replacement(row) for row in replacements),
-                spare_history,
-                self._active_spares_from_history(spare_history),
-            )
+            return self._routing_snapshot(cursor, assignment_id)
+
+    def _append_replacement(self, cursor, spec: ReplacementSpec):
+        context = self._routing_context(cursor, spec.assignment_id, require_active=True)
+        channel_map = {
+            item.logical_channel: item
+            for item in self._current_channel_map(cursor, spec.assignment_id)
+        }
+        route = channel_map.get(spec.logical_channel)
+        if route is None:
+            raise ValueError("Replacement logical channel is not in the assignment")
+        if route.effective_physical_port != spec.previous_physical_port:
+            raise ValueError("Previous physical port does not match the current channel map")
+        if spec.replacement_physical_port > context[4]:
+            raise ValueError("Replacement physical port exceeds switch capacity")
+        if any(
+            item.logical_channel != spec.logical_channel
+            and item.effective_physical_port == spec.replacement_physical_port
+            for item in channel_map.values()
+        ):
+            raise ValueError("Replacement physical port is already in use")
+        if spec.related_run_id is not None:
+            related = cursor.execute(
+                "SELECT assignment_id FROM dbo.IL_RUNS WHERE run_id = ?",
+                spec.related_run_id,
+            ).fetchone()
+            if related is None or int(related[0]) != spec.assignment_id:
+                raise ValueError("Related run does not belong to this assignment")
+        prior = cursor.execute(
+            """
+            SELECT TOP (1) replaced_at_utc
+            FROM dbo.CHANNEL_REPLACEMENTS
+            WHERE assignment_id = ? AND logical_channel = ?
+            ORDER BY replaced_at_utc DESC, replacement_id DESC
+            """,
+            spec.assignment_id,
+            spec.logical_channel,
+        ).fetchone()
+        if spec.replaced_at_utc < context[2] or (
+            prior is not None and spec.replaced_at_utc < _utc(prior[0])
+        ):
+            raise ValueError("Replacement time precedes its assignment history")
+        replacement_id = cursor.execute(
+            """
+            INSERT INTO dbo.CHANNEL_REPLACEMENTS (
+                assignment_id, logical_channel, previous_physical_port,
+                replacement_physical_port, reason, replaced_by,
+                replaced_at_utc, related_run_id, notes
+            ) OUTPUT INSERTED.replacement_id
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            spec.assignment_id,
+            spec.logical_channel,
+            spec.previous_physical_port,
+            spec.replacement_physical_port,
+            spec.reason,
+            spec.replaced_by,
+            spec.replaced_at_utc,
+            spec.related_run_id,
+            spec.notes,
+        ).fetchone()[0]
+        row = cursor.execute(
+            self._REPLACEMENT_SELECT + " WHERE replacement.replacement_id = ?",
+            replacement_id,
+        ).fetchone()
+        return self._replacement(row)
+
+    def _append_spare_event(self, cursor, spec: SpareEventSpec):
+        context = self._routing_context(cursor, spec.assignment_id, require_active=True)
+        if spec.physical_port > context[4]:
+            raise ValueError("Spare physical port exceeds switch capacity")
+        prior = cursor.execute(
+            """
+            SELECT TOP (1) action, recorded_at_utc
+            FROM dbo.DESIGNATED_SPARES
+            WHERE assignment_id = ? AND physical_port = ?
+            ORDER BY spare_event_id DESC
+            """,
+            spec.assignment_id,
+            spec.physical_port,
+        ).fetchone()
+        current_action = prior[0] if prior is not None else "undesignated"
+        if current_action == spec.action:
+            raise ValueError(f"Physical port is already {spec.action}")
+        if spec.recorded_at_utc < context[2] or (
+            prior is not None and spec.recorded_at_utc < _utc(prior[1])
+        ):
+            raise ValueError("Spare event time precedes its assignment history")
+        event_id = cursor.execute(
+            """
+            INSERT INTO dbo.DESIGNATED_SPARES (
+                assignment_id, physical_port, action, recorded_by,
+                recorded_at_utc, notes
+            ) OUTPUT INSERTED.spare_event_id VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            spec.assignment_id,
+            spec.physical_port,
+            spec.action,
+            spec.recorded_by,
+            spec.recorded_at_utc,
+            spec.notes,
+        ).fetchone()[0]
+        row = cursor.execute(
+            self._SPARE_SELECT + " WHERE spare.spare_event_id = ?",
+            event_id,
+        ).fetchone()
+        return self._spare(row)
+
+    def _routing_snapshot(self, cursor, assignment_id: int):
+        replacements = cursor.execute(
+            self._REPLACEMENT_SELECT
+            + " WHERE replacement.assignment_id = ? "
+            "ORDER BY replacement.replacement_id",
+            assignment_id,
+        ).fetchall()
+        spare_history = self._spare_history(cursor, assignment_id)
+        return (
+            self._current_channel_map(cursor, assignment_id),
+            tuple(self._replacement(row) for row in replacements),
+            spare_history,
+            self._active_spares_from_history(spare_history),
+        )
 
     def _routing_context(
         self,

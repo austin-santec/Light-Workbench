@@ -105,6 +105,7 @@ class ReplacementReportRow:
     replaced_by: str
     replaced_at_utc: datetime
     related_run_number: int | None
+    notes: str
     outcome: str
 
 

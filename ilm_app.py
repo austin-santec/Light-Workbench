@@ -194,6 +194,7 @@ from ui.reading_history import ReadingHistoryDialog
 from ui.coc_export_dialog import CocExportDialog, format_optimization_warning
 from ui.switch_ip import SwitchIpAddressDialog
 from ui.database_reports import DatabaseReportsDialog
+from ui.database_replacements import DatabaseReplacementDialog
 from ui.collapsible_group_box import CollapsibleGroupBox
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
@@ -4754,13 +4755,39 @@ class MainWindow(QMainWindow):
         self.unit_directory = None
         self.unit_record = {}
         self.replacement_history = []
+        replacement_by_id = {
+            item.replacement_id: item
+            for item in context.routing.replacement_history
+        }
         self.completed_replacements = [
             {
                 "current_port": item.initial_physical_port,
                 "replacement_port": item.effective_physical_port,
+                "logical_channel": item.logical_channel,
+                "reason": (
+                    replacement_by_id[item.latest_replacement_id].reason
+                    if item.latest_replacement_id in replacement_by_id
+                    else ""
+                ),
+                "operator": (
+                    replacement_by_id[item.latest_replacement_id].replaced_by
+                    if item.latest_replacement_id in replacement_by_id
+                    else ""
+                ),
+                "recorded_at_utc": (
+                    replacement_by_id[item.latest_replacement_id]
+                    .replaced_at_utc.isoformat()
+                    if item.latest_replacement_id in replacement_by_id
+                    else ""
+                ),
+                "reason_details": (
+                    replacement_by_id[item.latest_replacement_id].notes or ""
+                    if item.latest_replacement_id in replacement_by_id
+                    else ""
+                ),
             }
             for item in context.routing.channel_map
-            if item.is_replaced
+            if item.effective_physical_port != item.initial_physical_port
         ]
         self.designated_spares = list(context.routing.active_spares)
         self.run_data.completed_replacements = list(self.completed_replacements)
@@ -7502,15 +7529,14 @@ class MainWindow(QMainWindow):
         recommendations = []
         if self.replacement_analysis:
             recommendations = self.replacement_analysis.get("recommendations", [])
+        if self.database_run_context is not None:
+            self._show_database_replacements(recommendations)
+            return
         dialog = CompletedReplacementDialog(
             self.completed_replacements,
             recommendations,
             self.designated_spares,
-            history=(
-                None
-                if self.database_run_context is not None
-                else self.replacement_history
-            ),
+            history=self.replacement_history,
             operator=self.hardware_tested_by.text().strip(),
             context={
                 "source_run_number": (
@@ -7526,28 +7552,16 @@ class MainWindow(QMainWindow):
         if dialog.exec_() != QDialog.Accepted:
             return
 
-        if self.database_run_context is not None:
-            try:
-                self._persist_database_routing_changes(dialog)
-            except Exception as error:
-                QMessageBox.critical(
-                    self,
-                    "Could not save replacement records",
-                    "No local fallback was used. Review the requested mapping and "
-                    "database connection, then try again:\n%s" % error,
-                )
-                return
-        else:
-            self.replacement_history = list(dialog.history)
-            self.completed_replacements = effective_replacements(
-                self.replacement_history
+        self.replacement_history = list(dialog.history)
+        self.completed_replacements = effective_replacements(
+            self.replacement_history
+        )
+        self.designated_spares = list(dialog.designated_spares)
+        if self.run_data is not None:
+            self.run_data.completed_replacements = list(
+                self.completed_replacements
             )
-            self.designated_spares = list(dialog.designated_spares)
-            if self.run_data is not None:
-                self.run_data.completed_replacements = list(
-                    self.completed_replacements
-                )
-            self.persist_unit_record()
+        self.persist_unit_record()
         self._record_support(
             SupportEventCategory.OPERATOR,
             "replacement.records_saved",
@@ -7569,66 +7583,133 @@ class MainWindow(QMainWindow):
         self.refresh_replacement_summary()
         self.refresh_run_status()
         self.statusBar().showMessage(
-            "Completed replacements and designated spares saved to SQL Server."
-            if self.database_run_context is not None
-            else "Completed replacements and designated spares saved to the unit record."
+            "Completed replacements and designated spares saved to the unit record."
+        )
+
+    def _show_database_replacements(self, recommendations):
+        """Open the SQL-aware editor without converting audit rows to legacy events."""
+        context = self.database_run_context
+        if context is None or self.database_workflow is None:
+            return
+        analysis = self.replacement_analysis or {}
+        recommended_spares = [
+            item["physical_port"] for item in analysis.get("bottom_spares", [])
+        ]
+        measured_ports = [
+            item.physical_port
+            for item in context.snapshot.measurements
+            if item.physical_port is not None
+        ]
+        model = self.database_workflow.replacements.build_editor_model(
+            snapshot=context.routing,
+            related_run_id=context.run.run_id,
+            recommendations=recommendations,
+            recommended_spares=recommended_spares,
+            measured_physical_ports=measured_ports,
+            default_operator=self.hardware_tested_by.text().strip(),
+            unit_label=context.unit.main_board_serial,
+            switch_label="%s %s"
+            % (context.switch.switch_model, context.switch.switch_serial),
+        )
+        dialog = DatabaseReplacementDialog(model, self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        try:
+            self._persist_database_routing_changes(dialog)
+        except Exception as error:
+            refresh_error = None
+            try:
+                refreshed = self.database_workflow.refresh(context.run.run_id)
+                self._apply_database_run_context(refreshed, update_setup=False)
+            except Exception as reload_error:
+                refresh_error = reload_error
+            self._record_support(
+                SupportEventCategory.PERSISTENCE,
+                "replacement.database_save_failed",
+                level=SupportLogLevel.ERROR,
+                run_number=context.run.run_number,
+                unit_serial=context.unit.main_board_serial,
+                status="error",
+                details=(
+                    "%s: %s%s"
+                    % (
+                        type(error).__name__,
+                        error,
+                        (
+                            "; authoritative reload also failed: %s" % refresh_error
+                            if refresh_error is not None
+                            else ""
+                        ),
+                    )
+                ),
+            )
+            message = (
+                "No replacement or spare changes were committed. The database "
+                "rejected the atomic save:\n%s" % error
+            )
+            if refresh_error is not None:
+                message += (
+                    "\n\nThe database state could not be reloaded. Close this run "
+                    "and reconnect before making another routing change."
+                )
+            QMessageBox.critical(self, "Could not save replacement records", message)
+            return
+        try:
+            refreshed = self.database_workflow.refresh(context.run.run_id)
+            self._apply_database_run_context(refreshed, update_setup=False)
+        except Exception as error:
+            self._record_support(
+                SupportEventCategory.PERSISTENCE,
+                "replacement.database_reload_failed",
+                level=SupportLogLevel.ERROR,
+                run_number=context.run.run_number,
+                unit_serial=context.unit.main_board_serial,
+                status="error",
+                details="Routing changes committed, but reload failed: %s: %s"
+                % (type(error).__name__, error),
+            )
+            QMessageBox.critical(
+                self,
+                "Replacement records saved; refresh failed",
+                "The atomic database save completed, but Light Workbench could not "
+                "reload the authoritative routing state:\n%s\n\nClose this run and "
+                "reconnect before making another routing change." % error,
+            )
+            return
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "replacement.records_saved",
+            run_number=context.run.run_number,
+            unit_serial=context.unit.main_board_serial,
+            measurement_count=len(dialog.replacement_requests),
+            details=(
+                "%d replacement(s), %d spare designation(s), and %d spare "
+                "undesignation(s) appended."
+                % (
+                    len(dialog.replacement_requests),
+                    len(dialog.spares_to_designate),
+                    len(dialog.spares_to_undesignate),
+                )
+            ),
+            status="success",
+        )
+        self.statusBar().showMessage(
+            "Replacement history and designated spares reloaded from SQL Server."
         )
 
     def _persist_database_routing_changes(self, dialog):
-        """Append the dialog's effective routing changes to the active assignment."""
+        """Atomically append explicitly approved SQL routing documentation."""
         context = self.database_run_context
         if context is None or self.database_workflow is None:
             raise ValueError("No database-backed unit is loaded")
-        workflow = self.database_workflow.replacements
-        current_by_initial = {
-            item.initial_physical_port: item for item in context.routing.channel_map
-        }
-        desired = {
-            int(item["current_port"]): item
-            for item in effective_replacements(dialog.history)
-        }
-        operator = self.hardware_tested_by.text().strip()
-        for initial_port, mapping in current_by_initial.items():
-            desired_record = desired.get(initial_port)
-            desired_port = (
-                int(desired_record["replacement_port"])
-                if desired_record is not None
-                else int(mapping.initial_physical_port)
-            )
-            if desired_port == mapping.effective_physical_port:
-                continue
-            workflow.record_replacement(
-                assignment_id=context.assignment.assignment_id,
-                logical_channel=mapping.logical_channel,
-                previous_physical_port=mapping.effective_physical_port,
-                replacement_physical_port=desired_port,
-                reason=(
-                    str((desired_record or {}).get("reason") or "Operator update")
-                ),
-                replaced_by=(
-                    str((desired_record or {}).get("operator") or operator)
-                ),
-                related_run_id=context.run.run_id,
-                notes="Recorded from Manage Port Replacements",
-            )
-        existing_spares = set(context.routing.active_spares)
-        desired_spares = {int(value) for value in dialog.designated_spares}
-        for port in sorted(desired_spares - existing_spares):
-            workflow.designate_spare(
-                context.assignment.assignment_id,
-                port,
-                operator,
-                notes="Recorded from Manage Port Replacements",
-            )
-        for port in sorted(existing_spares - desired_spares):
-            workflow.undesignate_spare(
-                context.assignment.assignment_id,
-                port,
-                operator,
-                notes="Recorded from Manage Port Replacements",
-            )
-        refreshed = self.database_workflow.refresh(context.run.run_id)
-        self._apply_database_run_context(refreshed, update_setup=False)
+        self.database_workflow.replacements.apply_changes(
+            assignment_id=context.assignment.assignment_id,
+            related_run_id=context.run.run_id,
+            replacements=dialog.replacement_requests,
+            spares_to_designate=dialog.spares_to_designate,
+            spares_to_undesignate=dialog.spares_to_undesignate,
+            spare_operator=dialog.spare_operator,
+        )
 
     def copy_replacement_notes(self):
         """Copy completed physical-port swaps for pasting into Unit Editor."""

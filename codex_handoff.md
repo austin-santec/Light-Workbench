@@ -100,6 +100,17 @@ scope includes only production runs marked `included`; the operator must
 explicitly enable troubleshooting scope to include pending, excluded,
 superseded, or non-production data.
 
+Database-backed `Manage Port Replacements...` is logical-channel centered and
+uses the assignment routing snapshot as its source of truth. It shows the real
+SQL audit history, derives the current effective port and database context,
+and keeps recommendations advisory until explicitly queued. The operator must
+confirm reason, operator, optional details, and that the physical reroute was
+completed outside Light Workbench. Replacements plus approved spare changes
+commit atomically; corrections and reversals append records, and the UI reloads
+all routing projections from SQL Server. The workflow issues no hardware
+mapping or verification command. Legacy file-backed replacement editing keeps
+its compatible event model.
+
 SQL migration scripts are required packaged runtime resources. `ilm_app.spec`
 discovers every `.sql` file under
 `infrastructure/database/sql_migrations/` and places it at the same package-
@@ -158,6 +169,7 @@ preflight rather than falling back to a developer checkout.
 | ui/live_il_reading.py | Meter-only Live IL Reading dialog. It connects only to the OP815, calculates both wavelength losses from editable references, supports non-persistent reconnect repeatability testing and timed live updates, and never controls the switch or persists data. |
 | ui/power_measurement_diagnostics.py | Non-recording raw-power diagnostic dialog showing absolute readings and exact IL math, with optional independent switch routing and opt-in trace export. |
 | ui/coc_export_dialog.py | Prepare COC modal for front-panel count, explicit base/supplemental run selection, validation summary, and blocked-export guidance. |
+| ui/database_replacements.py | SQL-aware logical-channel replacement editor with recommendation review, physical-completion confirmation, designated-spare approval, and real append-only audit history. |
 | live_il_reading.py | Compatibility facade for the Live IL presentation module. |
 | config/app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
 | app_info.py | Compatibility facade for application release metadata. |

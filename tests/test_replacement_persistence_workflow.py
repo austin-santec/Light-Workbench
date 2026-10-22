@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from application.replacement_persistence_workflow import (
+    ReplacementChangeRequest,
     ReplacementPersistenceWorkflow,
 )
 from domain.database_records import (
@@ -262,6 +263,116 @@ class ReplacementPersistenceWorkflowTests(unittest.TestCase):
                 replaced_by="AT",
                 replaced_at_utc=NOW + timedelta(seconds=3),
             )
+
+    def test_editor_model_resolves_recommendation_against_effective_map(self):
+        self.workflow.record_replacement(
+            assignment_id=self.assignment.assignment_id,
+            logical_channel=1,
+            previous_physical_port=1,
+            replacement_physical_port=4,
+            reason="Initial replacement",
+            replaced_by="AT",
+            replaced_at_utc=NOW + timedelta(seconds=1),
+        )
+        snapshot = self.workflow.load_assignment(self.assignment.assignment_id)
+
+        model = self.workflow.build_editor_model(
+            snapshot=snapshot,
+            related_run_id=self.run.run_id,
+            recommendations=[
+                {
+                    "logical_channel": 1,
+                    "current_physical_port": 1,
+                    "candidate_physical_port": 5,
+                    "category": "required",
+                    "improvement_db": 1.25,
+                }
+            ],
+            recommended_spares=[3],
+            measured_physical_ports=[5],
+            default_operator="AT",
+        )
+
+        recommendation = model.recommendations[0]
+        self.assertEqual(recommendation.logical_channel, 1)
+        self.assertEqual(recommendation.current_effective_physical_port, 4)
+        self.assertEqual(recommendation.proposed_replacement_physical_port, 5)
+        self.assertEqual(recommendation.category, "required")
+        self.assertEqual(recommendation.improvement_db, 1.25)
+        self.assertEqual(recommendation.default_reason, "Formal insertion-loss failure")
+        self.assertTrue(recommendation.has_measurement_evidence)
+        self.assertEqual(model.default_operator, "AT")
+        self.assertEqual(model.recommended_spares, (3,))
+
+    def test_atomic_changes_derive_audit_fields_and_persist_notes(self):
+        self.workflow.apply_changes(
+            assignment_id=self.assignment.assignment_id,
+            related_run_id=self.run.run_id,
+            replacements=(
+                ReplacementChangeRequest(
+                    logical_channel=1,
+                    replacement_physical_port=4,
+                    reason="Formal insertion-loss failure",
+                    replaced_by="JS",
+                    notes="Rerouted at the front panel",
+                ),
+            ),
+            spares_to_designate=(5,),
+            spare_operator="JS",
+            recorded_at_utc=NOW + timedelta(seconds=1),
+        )
+
+        snapshot = self.workflow.load_assignment(self.assignment.assignment_id)
+        record = snapshot.replacement_history[0]
+        self.assertEqual(record.assignment_id, self.assignment.assignment_id)
+        self.assertEqual(record.related_run_id, self.run.run_id)
+        self.assertEqual(record.previous_physical_port, 1)
+        self.assertEqual(record.notes, "Rerouted at the front panel")
+        self.assertEqual(record.replaced_at_utc, NOW + timedelta(seconds=1))
+        self.assertEqual(snapshot.effective_channel_map[1], 4)
+        self.assertEqual(snapshot.active_spares, (5,))
+
+    def test_failed_atomic_changes_leave_no_partial_replacement(self):
+        with self.assertRaisesRegex(ValueError, "already in use"):
+            self.workflow.apply_changes(
+                assignment_id=self.assignment.assignment_id,
+                related_run_id=self.run.run_id,
+                replacements=(
+                    ReplacementChangeRequest(1, 4, "First", "AT"),
+                    ReplacementChangeRequest(2, 4, "Conflict", "AT"),
+                ),
+                spare_operator="AT",
+                recorded_at_utc=NOW + timedelta(seconds=1),
+            )
+
+        snapshot = self.workflow.load_assignment(self.assignment.assignment_id)
+        self.assertEqual(snapshot.replacement_history, ())
+        self.assertEqual(snapshot.effective_channel_map, {1: 1, 2: 2})
+
+    def test_atomic_correction_or_reversal_appends_instead_of_deleting(self):
+        first = self.workflow.apply_changes(
+            assignment_id=self.assignment.assignment_id,
+            related_run_id=self.run.run_id,
+            replacements=(ReplacementChangeRequest(1, 4, "Initial", "AT"),),
+            spare_operator="AT",
+            recorded_at_utc=NOW + timedelta(seconds=1),
+        )
+        second = self.workflow.apply_changes(
+            assignment_id=self.assignment.assignment_id,
+            related_run_id=self.run.run_id,
+            replacements=(
+                ReplacementChangeRequest(1, 1, "Reversal to original port", "JS"),
+            ),
+            spare_operator="JS",
+            recorded_at_utc=NOW + timedelta(seconds=2),
+        )
+
+        self.assertEqual(len(first.replacement_history), 1)
+        self.assertEqual(len(second.replacement_history), 2)
+        self.assertEqual(second.replacement_history[0].replacement_physical_port, 4)
+        self.assertEqual(second.replacement_history[1].previous_physical_port, 4)
+        self.assertEqual(second.replacement_history[1].replacement_physical_port, 1)
+        self.assertEqual(second.effective_channel_map[1], 1)
 
 
 if __name__ == "__main__":

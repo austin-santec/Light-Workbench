@@ -84,6 +84,7 @@ REPLACEMENT_HEADERS = (
     "Replaced By",
     "Replaced (UTC)",
     "Related Run",
+    "Notes",
     "Outcome",
 )
 
@@ -269,6 +270,7 @@ def replacement_report_rows(report) -> list[list[str]]:
             row.replaced_by,
             _timestamp(row.replaced_at_utc),
             "" if row.related_run_number is None else str(row.related_run_number),
+            row.notes,
             row.outcome,
         ]
         for row in report.replacements

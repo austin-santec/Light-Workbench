@@ -333,6 +333,7 @@ class DatabaseReportingService:
                     replacement.replaced_by,
                     replacement.replaced_at_utc,
                     related_number,
+                    replacement.notes or "",
                     outcome,
                 )
         return sorted(

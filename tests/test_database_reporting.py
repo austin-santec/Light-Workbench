@@ -128,6 +128,7 @@ class DatabaseReportingTests(unittest.TestCase):
                 replaced_by="AT",
                 replaced_at_utc=run.run_started_at_utc + timedelta(seconds=5),
                 related_run_id=run.run_id,
+                notes="Operator replacement details",
             )
         )
         return run
@@ -214,6 +215,7 @@ class DatabaseReportingTests(unittest.TestCase):
         replacement = self.service.search().replacements[0]
 
         self.assertEqual(replacement.related_run_number, 1)
+        self.assertEqual(replacement.notes, "Operator replacement details")
         self.assertEqual(replacement.outcome, "Pass")
 
     def test_report_csv_uses_application_rows_and_quotes_values(self):

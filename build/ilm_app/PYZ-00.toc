@@ -1578,6 +1578,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\collapsible_group_box.py',
    'PYMODULE'),
+  ('ui.database_replacements',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\database_replacements.py',
+   'PYMODULE'),
   ('ui.database_reports',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\database_reports.py',

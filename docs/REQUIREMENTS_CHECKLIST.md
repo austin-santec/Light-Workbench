@@ -100,9 +100,9 @@ Each item already has useful behavior, but the noted work remains.
   - Works now: analysis uses both wavelengths and separates recommended/optional replacements.
   - Next: approve and display the complete ranking calculation.
 
-- [ ] **FUN-031 — Document a manually performed replacement and record the complete change.** `[MVP]`
-  - Works now: Current Port → Replacement Port, reason, operator, timestamp, and append-only replacement history are stored per unit. Repeated changes can be tracked as chains such as 14 → 41 → 43.
-  - Important boundary: Light Workbench intentionally does not execute, identify, or verify the hardware mapping. The requirement wording should be clarified to reflect this manual process.
+- [x] **FUN-031 — Document a manually performed replacement and record the complete change.** `[MVP]`
+  - Database runs now derive logical channel, current effective port, assignment, related run, unit/switch context, and UTC timestamp. The operator confirms the proposed port, reason, operator, optional details, and that the physical reroute was completed externally.
+  - Recommendations remain advisory, corrections/reversals append new rows, and the full chain such as logical 14: 14 → 41 → 43 remains visible. Light Workbench intentionally does not execute or verify the hardware mapping.
 
 - [ ] **FUN-034 — Show unassigned spares and their latest result.** `[MVP]`
   - Works now: designated spares and replacement suggestions are visible.

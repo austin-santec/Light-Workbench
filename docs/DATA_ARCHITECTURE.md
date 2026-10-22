@@ -75,13 +75,15 @@ continue to load as native SM 1310/1550 runs.
   `-02`, and later suffixes when a same-second export already exists.
 - XLSX: COC/report output only; it is not the primary application database.
 - Replacement analysis: calculated presentation data.
-- Manually recorded replacements and spares: persistent device data. Replacement
-  history is append-only: each manual replacement records the current port,
-  replacement port, reason, operator, and UTC timestamp. A later replacement
-  creates a linked event rather than editing the earlier event, so a chain such
-  as `14 -> 41 -> 43` remains available for audit. COC and normal UI consumers
-  receive a derived effective projection (`14 -> 43`). Void/correction events
-  preserve the original record and do not query or command the switch.
+- Manually recorded replacements and spares: persistent assignment data. For
+  database runs, the logical channel, current effective port, assignment,
+  related run, identity context, and UTC timestamp are derived automatically.
+  The operator supplies or confirms the proposed port, reason, operator,
+  optional details, and that the physical reroute was completed externally.
+  Replacement history is append-only, so `logical 14: 14 -> 41 -> 43` remains
+  available for audit while COC and normal UI consumers receive the effective
+  `14 -> 43` projection. Corrections/reversals append another SQL row. Legacy
+  void events remain readable only for file-backed compatibility.
 
 Accepted reading history is stored separately from the latest-reading
 projection. Run JSON schema version 6 contains `measurement_attempts`, an
@@ -218,10 +220,16 @@ replace the active session reference.
 - Preserve older run layouts while loading them.
 - Keep legacy per-row reference CSVs readable while writing new runs with a
   deduplicated run-level reference catalog.
-- Replacement records are unit-level documentation. The replacement workflow
+- Database replacement records are assignment-scoped documentation. Legacy
+  file-backed replacement records remain unit-level for compatibility. The replacement workflow
   does not use `CLOSe?`, change switch mappings, identify routed logical
   channels, or verify a manually performed hardware change. General
   `CLOSe?` behavior elsewhere remains a separate hardware concern.
+- Database recommendations and designated-spare suggestions are transient until
+  explicitly approved. One approval is persisted atomically, then the effective
+  map, full histories, and active spares are reloaded from SQL Server. Optional
+  operator details use `CHANNEL_REPLACEMENTS.notes`; no local routing fallback
+  is created if the database write fails.
 
 ## Rejected measurement evidence
 
