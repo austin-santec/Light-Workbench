@@ -104,6 +104,9 @@ class LimitProfileRepository:
                         else str(profile.warning_above_db)
                     ),
                     "fail_above_db": str(profile.fail_above_db),
+                    "minimum_replacement_improvement_db": str(
+                        profile.minimum_replacement_improvement_db
+                    ),
                 }
         temporary_path = None
         try:

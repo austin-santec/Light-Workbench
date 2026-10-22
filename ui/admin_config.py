@@ -92,6 +92,12 @@ class AdminConfigDialog(QDialog):
         self.fail_spin = self._spin()
         self.fail_spin.valueChanged.connect(self._mark_dirty)
         form.addRow("Fail above:", self.fail_spin)
+        self.minimum_improvement_spin = self._minimum_improvement_spin()
+        self.minimum_improvement_spin.valueChanged.connect(self._mark_dirty)
+        self.minimum_improvement_spin.setToolTip(
+            "A spare must improve the target channel's worse wavelength by at least this amount."
+        )
+        form.addRow("Minimum replacement improvement:", self.minimum_improvement_spin)
         self.warning_note = QLabel("Not applicable for OSX-100")
         self.warning_note.setWordWrap(True)
         form.addRow("", self.warning_note)
@@ -138,6 +144,15 @@ class AdminConfigDialog(QDialog):
         spin.setSuffix(" dB")
         return spin
 
+    @staticmethod
+    def _minimum_improvement_spin():
+        spin = QDoubleSpinBox()
+        spin.setRange(0, 100)
+        spin.setDecimals(4)
+        spin.setSingleStep(0.05)
+        spin.setSuffix(" dB")
+        return spin
+
     def _selected_key(self):
         return profile_key(self.model_combo.currentText(), self.mode_combo.currentData())
 
@@ -149,6 +164,9 @@ class AdminConfigDialog(QDialog):
         self.too_good_spin.setValue(profile.too_good_below_db)
         self.warning_spin.setValue(profile.warning_above_db or 0.0)
         self.fail_spin.setValue(profile.fail_above_db)
+        self.minimum_improvement_spin.setValue(
+            profile.minimum_replacement_improvement_db
+        )
         is_150 = self.model_combo.currentText() == "OSX-150"
         self.warning_spin.setEnabled(is_150)
         self.warning_note.setVisible(not is_150)
@@ -178,11 +196,19 @@ class AdminConfigDialog(QDialog):
         model = self.model_combo.currentText()
         mode = self.mode_combo.currentData()
         return LimitProfile(
-            model, self.profile_name_edit.text().strip(), self.revision_edit.text().strip(),
-            self.too_good_spin.value(), model == "OSX-150",
-            self.warning_spin.value() if model == "OSX-150" else None,
-            self.fail_spin.value(),
-            mode,
+            model=model,
+            profile_name=self.profile_name_edit.text().strip(),
+            revision=self.revision_edit.text().strip(),
+            too_good_below_db=self.too_good_spin.value(),
+            warning_enabled=model == "OSX-150",
+            warning_above_db=(
+                self.warning_spin.value() if model == "OSX-150" else None
+            ),
+            fail_above_db=self.fail_spin.value(),
+            wavelength_mode=mode,
+            minimum_replacement_improvement_db=(
+                self.minimum_improvement_spin.value()
+            ),
         ).validate()
 
     def _save_selected(self):

@@ -37,6 +37,18 @@ class ReplacementAnalysisTests(unittest.TestCase):
         self.assertFalse(result["applicable"])
         self.assertEqual(result["bottom_spares"], [])
 
+    def test_default_minimum_improvement_is_two_tenths_of_a_db(self):
+        result = analyze_replacements(
+            [MeasurementRecord(1, 1.0, 1.0)],
+            [ReplacementReading(2, 0.85, 0.85)],
+            designed_channel_count=1,
+            warning_limit=2.0,
+            bottom_spare_count=0,
+        )
+
+        self.assertEqual(result["minimum_improvement_db"], 0.2)
+        self.assertEqual(result["recommendations"], [])
+
     def test_replaces_worst_channels_then_chooses_remaining_spares(self):
         production = [
             MeasurementRecord(1, 2.4, 2.1, 1),

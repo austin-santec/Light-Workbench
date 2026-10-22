@@ -164,6 +164,18 @@ class DatabaseRunReadModelTests(unittest.TestCase):
         self.assertEqual(replacements["extra_ports"], [3])
         self.assertEqual(replacements["missing_channels"], [])
 
+    def test_replacement_analysis_uses_the_profile_minimum_improvement(self):
+        self.populate_completed_run()
+        snapshot = self.query.load(self.run.run_id)
+        criteria = dict(CRITERIA)
+        criteria["minimum_replacement_improvement_db"] = 0.7
+        profile = LimitProfile.from_mapping(criteria)
+
+        replacements = snapshot.replacement_analysis(profile)
+
+        self.assertEqual(replacements["minimum_improvement_db"], 0.7)
+        self.assertEqual(replacements["recommendations"], [])
+
     def test_prepared_temporary_reading_is_absent_from_all_queries(self):
         self.write(1, "0.6000", "0.5000", 1)
         pending = self.writer.prepare_measurement(

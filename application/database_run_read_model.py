@@ -15,6 +15,7 @@ from domain.measurement_attempts import MeasurementAttempt
 from domain.models import MeasurementRecord
 from domain.raw_export import format_raw_measurements
 from domain.replacements import ReplacementReading, analyze_replacements
+from domain.limit_profiles import DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB
 from domain.run_data import analyze_measurements_with_profile
 from domain.run_status import (
     COMPLETION_INCOMPLETE,
@@ -216,12 +217,18 @@ class DatabaseRunSnapshot:
         self,
         profile,
         *,
-        minimum_improvement: float = 0.05,
+        minimum_improvement: float | None = None,
         bottom_spare_count: int = 2,
     ) -> dict:
         count = self.run.front_panel_channel_count
         if count is None:
             raise ValueError("Front-panel channel count is required")
+        if minimum_improvement is None:
+            minimum_improvement = getattr(
+                profile,
+                "minimum_replacement_improvement_db",
+                DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB,
+            )
         production = tuple(
             record for record in self.measurements if record.channel <= count
         )

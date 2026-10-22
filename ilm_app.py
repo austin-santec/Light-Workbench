@@ -7857,16 +7857,14 @@ class MainWindow(QMainWindow):
         )
         layout.addRow("Front-panel channels:", front_panel_count_label)
 
-        minimum_improvement = QDoubleSpinBox()
-        minimum_improvement.setRange(0.0, 100.0)
-        minimum_improvement.setDecimals(4)
-        minimum_improvement.setSingleStep(0.01)
-        minimum_improvement.setValue(0.05)
-        minimum_improvement.setSuffix(" dB")
-        minimum_improvement.setToolTip(
-            "A spare must improve the target channel's worse wavelength by at least this amount."
+        minimum_improvement_label = QLabel(
+            "%.4f dB (Admin Config)"
+            % self.active_limit_profile.minimum_replacement_improvement_db
         )
-        layout.addRow("Minimum worthwhile improvement:", minimum_improvement)
+        minimum_improvement_label.setToolTip(
+            "This threshold is controlled by the administrator for the active model and wavelength mode."
+        )
+        layout.addRow("Minimum worthwhile improvement:", minimum_improvement_label)
 
         bottom_spare_count = QSpinBox()
         bottom_spare_count.setRange(0, 20)
@@ -7942,7 +7940,7 @@ class MainWindow(QMainWindow):
                     self.active_limit_profile.warning_above_db
                     if self.active_limit_profile.warning_enabled
                     else self.active_limit_profile.fail_above_db,
-                    minimum_improvement.value(),
+                    self.active_limit_profile.minimum_replacement_improvement_db,
                     bottom_spare_count.value(),
                     fail_limit=self.active_limit_profile.fail_above_db,
                     model=self.active_limit_profile.model,

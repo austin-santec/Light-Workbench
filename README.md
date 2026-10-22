@@ -477,7 +477,8 @@ is reported as not applicable.
 
 The analysis recommends a swap only when the extra is at or below the warning
 limit at both wavelengths and improves the target channel's worse wavelength by
-at least the selected minimum improvement (0.05 dB by default). It processes
+at least the administrator-configured minimum improvement (0.2 dB by default).
+It processes
 the worst production channels first, removes each selected extra from the
 candidate pool, adds displaced production ports back into the spare pool, and
 then designates the best remaining readings as the requested spares. The

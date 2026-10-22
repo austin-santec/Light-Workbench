@@ -19,6 +19,10 @@ class LimitProfileRepositoryTests(unittest.TestCase):
             repository.save_profiles(profiles)
             loaded = repository.load_profiles()
             self.assertEqual(loaded["OSX-150"].warning_above_db, 2.25)
+            self.assertEqual(
+                loaded["OSX-150"].minimum_replacement_improvement_db,
+                0.2,
+            )
             self.assertTrue(repository.path.is_file())
 
     def test_invalid_profile_is_rejected(self):
