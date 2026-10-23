@@ -789,11 +789,14 @@ class ShortcutButton(QPushButton):
         self.title_label = QLabel(title, self)
         self.title_label.setObjectName("button_title")
         self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setWordWrap(True)
+        self.title_label.setMinimumWidth(0)
         self.title_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         self.shortcut_label = QLabel("[Unassigned]", self)
         self.shortcut_label.setObjectName("button_shortcut")
         self.shortcut_label.setAlignment(Qt.AlignCenter)
+        self.shortcut_label.setMinimumWidth(0)
         self.shortcut_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         button_layout = QVBoxLayout(self)
@@ -1958,36 +1961,38 @@ class MainWindow(QMainWindow):
         controls_layout = QVBoxLayout(controls_box)
         controls_layout.setSpacing(8)
 
-        run_controls_layout = QHBoxLayout()
+        hardware_button_grid = QGridLayout()
+        hardware_button_grid.setHorizontalSpacing(8)
+        hardware_button_grid.setVerticalSpacing(8)
+        hardware_button_grid.setColumnStretch(0, 1)
+        hardware_button_grid.setColumnStretch(1, 1)
+
         self.start_hardware_button = QPushButton("Start Run")
         self.start_hardware_button.setObjectName("hardware_primary_control")
         self.start_hardware_button.setToolTip(
             "Start a real OP815 and supported Santec OSX-100/OSX-150 hardware run."
         )
         self.start_hardware_button.clicked.connect(self.start_hardware)
-        run_controls_layout.addWidget(self.start_hardware_button)
         self.stop_hardware_button = QPushButton("Stop run")
         self.stop_hardware_button.setObjectName("hardware_primary_control")
         self.stop_hardware_button.setToolTip("Stop the hardware run and keep completed readings.")
         self.stop_hardware_button.setEnabled(False)
         self.stop_hardware_button.clicked.connect(self.stop_hardware)
-        run_controls_layout.addWidget(self.stop_hardware_button)
-        controls_layout.addLayout(run_controls_layout)
+        hardware_button_grid.addWidget(self.start_hardware_button, 0, 0)
+        hardware_button_grid.addWidget(self.stop_hardware_button, 0, 1)
 
-        measurement_controls_layout = QHBoxLayout()
         self.continue_hardware_button = ShortcutButton("Read IL")
         self.continue_hardware_button.setToolTip("Read both wavelengths for the current channel.")
         self.continue_hardware_button.setObjectName("hardware_primary_control")
         self.continue_hardware_button.setEnabled(False)
         self.continue_hardware_button.clicked.connect(self.continue_hardware)
-        measurement_controls_layout.addWidget(self.continue_hardware_button)
         self.write_hardware_button = ShortcutButton("Write IL")
         self.write_hardware_button.setToolTip("Accept and save the current IL reading.")
         self.write_hardware_button.setObjectName("hardware_primary_control")
         self.write_hardware_button.setEnabled(False)
         self.write_hardware_button.clicked.connect(self.write_hardware)
-        measurement_controls_layout.addWidget(self.write_hardware_button)
-        controls_layout.addLayout(measurement_controls_layout)
+        hardware_button_grid.addWidget(self.continue_hardware_button, 1, 0)
+        hardware_button_grid.addWidget(self.write_hardware_button, 1, 1)
 
         self.retry_extra_port_button = QPushButton("Retry Current Port")
         self.retry_extra_port_button.clicked.connect(self.retry_extra_port)
@@ -1995,17 +2000,6 @@ class MainWindow(QMainWindow):
         self.no_more_extra_ports_button.clicked.connect(self.no_more_extra_ports)
         self.stop_extra_testing_button = QPushButton("Stop Extra Testing")
         self.stop_extra_testing_button.clicked.connect(self.stop_extra_testing)
-        extra_controls_layout = QVBoxLayout()
-        for button in (
-            self.retry_extra_port_button,
-            self.no_more_extra_ports_button,
-            self.stop_extra_testing_button,
-        ):
-            button.setVisible(False)
-            button.setEnabled(False)
-            extra_controls_layout.addWidget(button)
-        controls_layout.addLayout(extra_controls_layout)
-
         self.change_hardware_channel_button = QPushButton("Change Channel...")
         self.change_hardware_channel_button.setToolTip(
             "Change the channel being measured without stopping the run."
@@ -2019,17 +2013,8 @@ class MainWindow(QMainWindow):
         self.retest_button.setToolTip("Retest the selected completed channels.")
         self.retest_button.setEnabled(False)
         self.retest_button.clicked.connect(self.retest_selected)
-
-        # Keep channel navigation actions together beneath the primary
-        # measurement buttons.  Change Channel keeps the compact height of a
-        # normal control button while matching the primary button width. Keep
-        # Retest selected fixed as well so it does not stretch across the row.
-        channel_controls_layout = QHBoxLayout()
-        self.change_hardware_channel_button.setFixedWidth(125)
-        self.retest_button.setFixedWidth(125)
-        channel_controls_layout.addWidget(self.change_hardware_channel_button)
-        channel_controls_layout.addWidget(self.retest_button)
-        controls_layout.addLayout(channel_controls_layout)
+        hardware_button_grid.addWidget(self.change_hardware_channel_button, 2, 0)
+        hardware_button_grid.addWidget(self.retest_button, 2, 1)
         self.demo_channel_label = QLabel("No hardware run active")
         self.demo_channel_label.setWordWrap(True)
         # Retain the internal status target for existing run updates, but keep
@@ -2045,30 +2030,39 @@ class MainWindow(QMainWindow):
         )
         self.copy_raw_data_button.clicked.connect(self.copy_raw_data)
         self.copy_raw_data_button.setEnabled(False)
-        for button in (self.write_coc_button, self.copy_raw_data_button):
-            button.setFixedSize(125, 48)
-        output_controls_layout = QHBoxLayout()
-        output_controls_layout.addWidget(self.write_coc_button)
-        output_controls_layout.addWidget(self.copy_raw_data_button)
-        controls_layout.addLayout(output_controls_layout)
+        hardware_button_grid.addWidget(self.write_coc_button, 3, 0)
+        hardware_button_grid.addWidget(self.copy_raw_data_button, 3, 1)
+        controls_layout.addLayout(hardware_button_grid)
+
+        extra_controls_layout = QVBoxLayout()
+        extra_controls_layout.setSpacing(8)
         for button in (
+            self.retry_extra_port_button,
+            self.no_more_extra_ports_button,
+            self.stop_extra_testing_button,
+        ):
+            button.setVisible(False)
+            button.setEnabled(False)
+            button.setMinimumWidth(0)
+            button.setMinimumHeight(42)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            extra_controls_layout.addWidget(button)
+        controls_layout.addLayout(extra_controls_layout)
+
+        standard_hardware_buttons = (
             self.start_hardware_button,
+            self.stop_hardware_button,
             self.continue_hardware_button,
             self.write_hardware_button,
             self.change_hardware_channel_button,
-            self.stop_hardware_button,
             self.retest_button,
             self.write_coc_button,
             self.copy_raw_data_button,
-        ):
-            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-        for button in (
-            self.start_hardware_button,
-            self.stop_hardware_button,
-            self.continue_hardware_button,
-            self.write_hardware_button,
-        ):
-            button.setMinimumSize(125, 48)
+        )
+        for button in standard_hardware_buttons:
+            button.setMinimumWidth(0)
+            button.setMinimumHeight(48)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         controls_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.update_shortcuts()
 
@@ -2332,8 +2326,8 @@ class MainWindow(QMainWindow):
         controls_reference_layout = QHBoxLayout(controls_reference_row)
         controls_reference_layout.setContentsMargins(0, 0, 0, 0)
         controls_reference_layout.setSpacing(6)
-        controls_reference_layout.addWidget(controls_box, 1)
-        controls_reference_layout.addWidget(reference_box, 1)
+        controls_reference_layout.addWidget(controls_box, 3)
+        controls_reference_layout.addWidget(reference_box, 2)
         right_layout.addWidget(controls_reference_row)
         right_layout.addWidget(self.info_scroll_area, 1)
 
@@ -6095,7 +6089,7 @@ class MainWindow(QMainWindow):
         self.hardware_session.set_extra_port_phase(status, candidate, highest)
         active = status == ExtraPortPhaseStatus.IN_PROGRESS.value
         self.write_hardware_button.set_title(
-            "Write IL and Continue" if active else "Write IL"
+            "Write & Continue" if active else "Write IL"
         )
         for button in (
             self.retry_extra_port_button,

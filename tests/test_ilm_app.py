@@ -8,13 +8,21 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtGui import QCloseEvent
-from PyQt5.QtWidgets import QApplication, QDialog, QGroupBox, QMessageBox
+from PyQt5.QtWidgets import (
+    QApplication,
+    QDialog,
+    QGridLayout,
+    QGroupBox,
+    QMessageBox,
+    QSizePolicy,
+)
 from PyQt5.QtCore import QEventLoop, QObject, QSettings, QTimer, Qt, pyqtSignal
 from PyQt5.QtTest import QTest
 
 from application.coc_workflow import CocRunOption
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
 from domain.coc_preparation import CocSourceRun, prepare_coc
+from domain.extra_ports import ExtraPortPhaseStatus
 from domain.limit_profiles import default_limit_profiles
 from domain.run_status import COMPLETION_COMPLETE, RESULT_PASS
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
@@ -1799,20 +1807,39 @@ class MainWindowTests(unittest.TestCase):
             self.assertGreaterEqual(left_ratio, 0.45)
             self.assertLessEqual(left_ratio, 0.65)
             self.assertEqual(window.start_hardware_button.text(), "Start Run")
+            hardware_grid = window.hardware_controls_box.layout().itemAt(0).layout()
+            self.assertIsInstance(hardware_grid, QGridLayout)
+            self.assertEqual(hardware_grid.columnStretch(0), 1)
+            self.assertEqual(hardware_grid.columnStretch(1), 1)
             for button in (
                 window.start_hardware_button,
                 window.stop_hardware_button,
                 window.continue_hardware_button,
                 window.write_hardware_button,
             ):
-                self.assertEqual(button.minimumWidth(), 125)
+                self.assertEqual(button.minimumWidth(), 0)
                 self.assertEqual(button.minimumHeight(), 48)
+                self.assertEqual(
+                    button.sizePolicy().horizontalPolicy(),
+                    QSizePolicy.Expanding,
+                )
                 self.assertEqual(button.objectName(), "hardware_primary_control")
             for button in (window.write_coc_button, window.copy_raw_data_button):
-                self.assertEqual(button.minimumWidth(), 125)
-                self.assertEqual(button.maximumWidth(), 125)
+                self.assertEqual(button.minimumWidth(), 0)
+                self.assertGreater(button.maximumWidth(), button.minimumWidth())
                 self.assertEqual(button.minimumHeight(), 48)
-                self.assertEqual(button.maximumHeight(), 48)
+                self.assertEqual(
+                    button.sizePolicy().horizontalPolicy(),
+                    QSizePolicy.Expanding,
+                )
+            self.assertEqual(
+                window.controls_reference_row.layout().stretch(0),
+                3,
+            )
+            self.assertEqual(
+                window.controls_reference_row.layout().stretch(1),
+                2,
+            )
             self.assertIn(
                 "QPushButton#hardware_primary_control { padding: 11px 20px; font-size: 16px",
                 window.styleSheet(),
@@ -1840,6 +1867,35 @@ class MainWindowTests(unittest.TestCase):
                 settings.remove("workspace_splitter_state")
             else:
                 settings.setValue("workspace_splitter_state", saved_splitter_state)
+
+    def test_extra_port_write_button_uses_compact_dynamic_label(self):
+        window = MainWindow()
+        try:
+            window.hardware_extra_port_phase_changed(
+                ExtraPortPhaseStatus.IN_PROGRESS.value,
+                49,
+                {},
+            )
+            self.assertEqual(
+                window.write_hardware_button.title_label.text(),
+                "Write & Continue",
+            )
+            self.assertEqual(
+                window.write_hardware_button.accessibleName(),
+                "Write & Continue",
+            )
+            self.assertFalse(window.retry_extra_port_button.isHidden())
+            window.hardware_extra_port_phase_changed(
+                ExtraPortPhaseStatus.COMPLETED.value,
+                None,
+                {},
+            )
+            self.assertEqual(
+                window.write_hardware_button.title_label.text(),
+                "Write IL",
+            )
+        finally:
+            window.close()
 
     def test_hardware_setup_can_collapse_without_clearing_values(self):
         window = MainWindow()

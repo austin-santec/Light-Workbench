@@ -288,7 +288,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.35.4**; an existing executable keeps its prior
+current source version is **1.35.5**; an existing executable keeps its prior
 version until rebuilt.
 
 The desktop application opens maximized by default while retaining the normal
@@ -605,6 +605,12 @@ Only readings that were written to the run are included. Current/live readings,
 unfinished channels, metadata, analysis, replacements, and designated spares
 are excluded. The table's display filter does not affect the copied rows, and
 copying does not create or modify CSV, JSON, COC, or other output files.
+
+Hardware Controls uses a responsive two-column button layout. The controls
+panel receives more width than the adjacent Reference panel so action labels
+remain readable at normal window sizes. During extra physical-port testing,
+the Write IL button is labeled `Write & Continue` while it saves the reading
+and advances to the next port.
 
 The Hardware test setup includes a Part number field and a lookup button. The
 default lookup folder is
