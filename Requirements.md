@@ -42,7 +42,7 @@ This assessment rates **17 requirements implemented, 24 partially implemented, a
 | FUN-001 | Must / MVP | Require selection of OSX-100 or OSX-150 before testing. | Partial | The connected switch is identified and assigned an OSX-100 or OSX-150 limit profile, but there is no required operator family selector before connection/start. |
 | FUN-002 | Must / MVP | Allow sequential channel testing. | Implemented | Full configured pass tests logical channels sequentially. Single-channel, range, and manual-order workflows are also available. |
 | FUN-003 | Must / MVP | Allow one or more channels to be selected and retested before report finalization. | Partial | Completed table rows can be selected and retested. The application does not yet have an explicit report-finalized session state. |
-| FUN-004 | Must / MVP | Preserve full retest history and identify the active/final result. | Implemented | Run JSON stores an append-only accepted-attempt history with stable IDs, replacement links, timestamps, operator, reference snapshots, and the latest effective projection. The Run information box provides a read-only history viewer. |
+| FUN-004 | Must / MVP | Preserve full retest history and identify the active/final result. | Implemented | SQL Server stores append-only accepted attempts with stable IDs, replacement links, timestamps, operator, reference snapshots, and the latest effective projection. Across compatible runs, the newest valid measurement wins by UTC write time, attempt number, and measurement ID; the Run information box provides a read-only history viewer. |
 | FUN-005 | Must / MVP | Let the user specify measurement wavelengths. | Implemented | Hardware test setup provides SM 1310/1550 and MM 850/1300 selection. The current SM-source ILM supports explicitly labeled MM compatibility measurements; the profile architecture also represents future native-MM sources. Mode, OPM/source wavelength pairs, classification, references, readings, and attempts are persisted. |
 | FUN-006 | Must / MVP | Calculate overall channel disposition using applicable limits at both wavelengths. | Partial | Both 1310 and 1550 values are assessed with the active model profile, including optimization/too-good/failure classifications. Criteria are not yet wavelength- or channel-count-specific, and the complete required disposition model is unfinished. |
 | FUN-007 | Should / R1 | Support abort, pause, resume, and safe restart, including an arbitrary channel. | Partial | Stop and later continuation preserve written rows, and continuation/manual modes can choose a channel. There is no formal pause state or guided interrupted-session recovery protocol. |
@@ -118,7 +118,7 @@ The workbook's `Open Decisions` sheet still identifies these unresolved inputs:
 1. Approve OSX-100 and OSX-150 limits, including wavelength/channel-count applicability.
 2. Confirm the OSX-150 optimization band and approval policy.
 3. Approve the spare-ranking method.
-4. Define how a final result is chosen when retests exist.
+4. Final-result selection is defined: the newest valid measurement wins by UTC write time, attempt number, and measurement ID; no older passing result may override a newer failure.
 5. Define reference age and mandatory re-reference triggers.
 6. Confirm supported OSX transports and command documentation.
 7. Define the report-template mapping approach.

@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.32.0**. The single
+The current source release is **Light Workbench 1.34.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -168,7 +168,7 @@ preflight rather than falling back to a developer checkout.
 | red_light_test.py | Compatibility facade for the Red Light presentation module. |
 | ui/live_il_reading.py | Meter-only Live IL Reading dialog. It connects only to the OP815, calculates both wavelength losses from editable references, supports non-persistent reconnect repeatability testing and timed live updates, and never controls the switch or persists data. |
 | ui/power_measurement_diagnostics.py | Non-recording raw-power diagnostic dialog showing absolute readings and exact IL math, with optional independent switch routing and opt-in trace export. |
-| ui/coc_export_dialog.py | Prepare COC modal for front-panel count, explicit base/supplemental run selection, validation summary, and blocked-export guidance. |
+| ui/coc_export_dialog.py | Prepare COC modal for front-panel count, automatic compatible-history aggregation, validation summary, and blocked-export guidance. |
 | ui/database_replacements.py | SQL-aware logical-channel replacement editor with recommendation review, physical-completion confirmation, designated-spare approval, and real append-only audit history. |
 | live_il_reading.py | Compatibility facade for the Live IL presentation module. |
 | config/app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
@@ -369,10 +369,10 @@ for direct pasting into an existing Excel table. It ignores the table filter,
 excludes pending/live readings and metadata, and does not create or modify run
 files.
 11. COC export uses a validated preparation workflow over persisted run data.
-The selected base run's OSX part number supplies the read-only front-panel
-channel count; the operator chooses one base run and may choose one compatible
-replacement/retest run. Supplemental complete pairs
-override the base by logical channel only when any changed physical port is
+The selected context run's OSX part number supplies the read-only front-panel
+channel count; all compatible persisted runs are evaluated automatically. The
+newest valid complete pair for each logical channel is used, and a retest
+replaces an older value only when any changed physical port is
 supported by a completed unit replacement record. Every required channel must
 be present, finite, nonnegative, and below the selected model's fail limit after
 display rounding; there is no incomplete or failing override. OSX-100 uses a
@@ -589,9 +589,9 @@ for that run's 1310 nm and 1550 nm values, matched by logical channel. Selecting
 run's analysis, filtering, or saved output.
 
 COC export metadata includes `Part number`, `COC output file`, `COC output
-path`, `COC exported at`, `COC template`, front-panel channel count, base and
-supplemental run numbers, source runs, and supplemental channel/physical-port
-overrides. The current XLSX mapping is
+path`, `COC exported at`, `COC template`, front-panel channel count, context
+run number, all contributing source runs, and retest/replacement channel and
+physical-port overrides. The current XLSX mapping is
 `OSX Template!D11:D55` and `E11:E55` for channels 1-45,
 `D67:D69` and `E67:E69` for channels 46-48, `B4` for the merged part-number
 cell, `D4` for the merged Main Board serial cell, `F4` for the date, and `G4`

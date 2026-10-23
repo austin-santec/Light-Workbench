@@ -13,7 +13,7 @@ The declarative scenario files are in `sample_data/scenarios/`:
 | Scenario | Purpose | Contents |
 | --- | --- | --- |
 | `SAMPLE-OSX150-OPT-ENGINEERING` | Engineering/replacement demonstration | Two complete excluded engineering runs. Run 1 has all 36 channels; Run 2 retests logical channels 9 and 20 after documented replacements to physical ports 43 and 41. |
-| `SAMPLE-OSX150-COC-DEMO` | COC and combined-run demonstration | The same two-run pattern using a separate synthetic unit. Both runs are production-shaped but explicitly excluded from production analysis so they cannot become production data accidentally. |
+| `SAMPLE-OSX150-COC-DEMO` | COC and combined-run demonstration | A multi-run pattern using a separate synthetic unit. The current scenario uses two runs; both are production-shaped but explicitly excluded from production analysis so they cannot become production data accidentally. |
 
 Both scenarios include deterministic references, limit snapshots, hardware
 identity, channel maps, designated spares, replacement history, and generated
@@ -21,7 +21,7 @@ two-wavelength measurements. The sample unit serials, switch serials, and
 scenario IDs all begin with `SAMPLE-` to make their purpose clear.
 
 The engineering scenario is useful for run loading, retest history, status
-display, replacement analysis, reporting, and combined-run COC creation. The
+display, replacement analysis, reporting, and multi-run COC creation. The
 COC demonstration keeps a production-shaped purpose so it can also demonstrate
 production-analysis filtering, but its explicit analysis exclusion keeps it
 out of normal production reporting. Run purpose does not block COC creation;

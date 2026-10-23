@@ -28,6 +28,15 @@ def _timestamp(value) -> str:
     return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def _measurement_recency_key(record):
+    """Order accepted attempts by persisted write time, then stable IDs."""
+    return (
+        record.written_at_utc,
+        int(record.attempt_number),
+        int(record.measurement_id),
+    )
+
+
 def _measurement_context(run: RunRecord) -> tuple[str, tuple[int, int], tuple[int, int]]:
     hardware = run.measurement_hardware
     classification = str(hardware.get("measurement_classification") or "native")
@@ -63,6 +72,10 @@ def _domain_measurement(
         measurement_classification=classification,
         source_wavelengths_nm=source_wavelengths,
         source_ids=source_ids,
+        written_at_utc=record.written_at_utc,
+        attempt_number=record.attempt_number,
+        measurement_id=record.measurement_id,
+        run_id=record.run_id,
     )
 
 
@@ -177,6 +190,8 @@ class DatabaseRunSnapshot:
         planned_channels: Sequence[int] | None = None,
         replacement_analysis: Mapping[str, object] | None = None,
         composite_result=None,
+        effective_result=None,
+        effective_run_numbers: Sequence[int] = (),
         compatible_run_numbers: Sequence[int] = (),
     ):
         terminal_status = None
@@ -193,6 +208,8 @@ class DatabaseRunSnapshot:
             front_panel_channel_count=self.run.front_panel_channel_count,
             replacement_analysis=replacement_analysis,
             composite_result=composite_result,
+            effective_result=effective_result,
+            effective_run_numbers=effective_run_numbers,
             compatible_run_numbers=compatible_run_numbers,
             completed_at_utc=(
                 _timestamp(self.run.run_ended_at_utc)
@@ -211,6 +228,8 @@ class DatabaseRunSnapshot:
             metadata=self.metadata,
             criteria=dict(self.run.limit_snapshot),
             run_purpose=self.run.run_purpose,
+            run_id=self.run.run_id,
+            assignment_id=self.run.assignment_id,
         )
 
     def replacement_analysis(
@@ -270,7 +289,7 @@ def build_database_run_snapshot(
     current_by_channel = {}
     for record in history_rows:
         prior = current_by_channel.get(record.logical_channel)
-        if prior is None or record.attempt_number > prior.attempt_number:
+        if prior is None or _measurement_recency_key(record) > _measurement_recency_key(prior):
             current_by_channel[record.logical_channel] = record
     current = tuple(
         _domain_measurement(run, current_by_channel[channel])

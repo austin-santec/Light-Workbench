@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-Light Workbench 1.32.0 includes always-on, local engineering support logs. Their
+Light Workbench 1.34.0 includes always-on, local engineering support logs. Their
 purpose is to help engineering reconstruct operator workflows, hardware
 communication, two-wavelength measurements, insertion-loss calculations,
 connection ownership, persistence, exports, and failures.
@@ -79,8 +79,11 @@ with exactly one `export.coc_attempt_completed` event containing:
   optimization confirmation, template selection, workbook export, or metadata
   persistence stage where the attempt ended.
 - `reason_code` and bounded validation evidence such as missing channels,
-  validation issue codes, failing channel/wavelength values, selected runs,
-  front-panel count, and template capacity.
+  validation issue codes, failing channel/wavelength values, all considered
+  and contributing run numbers, excluded-run reasons, front-panel count, and
+  template capacity. Successful or partially successful attempts also include
+  bounded per-channel provenance so support can see which run supplied each
+  COC measurement and confirm that the newest valid measurement won.
 
 Validation blocks and operator cancellations are separate from technical
 failures. If the workbook is created but provenance metadata cannot be saved,

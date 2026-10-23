@@ -180,6 +180,8 @@ def assess_run_status(
     front_panel_channel_count: int | None = None,
     replacement_analysis: Mapping[str, object] | None = None,
     composite_result=None,
+    effective_result=None,
+    effective_run_numbers: Sequence[int] = (),
     compatible_run_numbers: Sequence[int] = (),
     completion_reason: str = "",
     completed_at_utc: str = "",
@@ -189,7 +191,9 @@ def assess_run_status(
 
     ``planned_channels`` is intentionally optional: old files without a saved
     plan receive ``unknown`` completion rather than an unsafe inferred state.
-    ``composite_result`` is expected to be the existing validated COC result.
+    ``composite_result`` is the legacy pairwise compatibility input. New
+    callers should provide ``effective_result`` from the shared multi-run
+    projection so a newer failure cannot be hidden by an older passing run.
     """
     records = tuple(records or ())
     completed_channels = {int(record.channel) for record in records}
@@ -238,7 +242,53 @@ def assess_run_status(
         front_panel_channel_count
         and all(channel in completed_channels for channel in range(1, int(front_panel_channel_count) + 1))
     )
-    if review_required:
+    projection = effective_result
+    projection_runs = tuple(dict.fromkeys(int(value) for value in effective_run_numbers))
+    if projection is not None:
+        projection_invalid = bool(
+            getattr(projection, "invalid_readings", ())
+            or getattr(projection, "validation_issues", ())
+        )
+        projection_missing = tuple(getattr(projection, "missing_channels", ()))
+        projection_failures = tuple(getattr(projection, "failures", ()))
+        projection_optimizations = tuple(
+            getattr(projection, "optimization_channels", ())
+        )
+        if projection_invalid or review_required:
+            result = RESULT_REVIEW
+            detail = "The current effective measurement projection requires review."
+        elif projection_missing:
+            result = RESULT_NOT_EVALUATED
+            detail = "The current effective run history is missing required channels."
+        elif projection_failures:
+            recommendations = tuple(
+                getattr(projection, "optimization_recommendations", ())
+            )
+            result = (
+                RESULT_FAIL_RECOVERABLE
+                if recommendations
+                else RESULT_FAIL_UNRECOVERABLE
+            )
+            detail = (
+                "The newest effective measurement for one or more channels fails."
+            )
+        elif projection_optimizations:
+            recommendations = tuple(
+                getattr(projection, "optimization_recommendations", ())
+            )
+            result = (
+                RESULT_PASS_OPTIMIZATION
+                if recommendations
+                else RESULT_PASS_REVIEW
+            )
+            detail = "The effective measurement history passes but has optimization-level readings."
+        elif len(projection_runs) > 1:
+            result = RESULT_COMPOSITE if standalone_complete else RESULT_SUPPLEMENTAL
+            detail = "The current result uses the newest measurements from combined compatible run history."
+        else:
+            result = RESULT_PASS
+            detail = "All required front-panel readings are within the applicable fail limit."
+    elif review_required:
         result = RESULT_REVIEW
         detail = "One or more accepted readings is invalid or non-finite."
     elif not standalone_complete:

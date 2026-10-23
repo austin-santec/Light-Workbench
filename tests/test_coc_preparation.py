@@ -1,5 +1,6 @@
 import math
 import unittest
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from domain.coc_preparation import (
@@ -40,6 +41,76 @@ def source(run_number, measurements, criteria=None, **metadata):
 
 
 class CocPreparationTests(unittest.TestCase):
+    def test_three_or_more_compatible_runs_contribute_without_manual_selection(self):
+        result = prepare_coc(
+            source(1, [MeasurementRecord(1, 1.0, 1.1, 1)]),
+            3,
+            source_runs=(
+                source(2, [MeasurementRecord(2, 1.2, 1.3, 2)]),
+                source(3, [MeasurementRecord(3, 1.4, 1.5, 3)]),
+            ),
+        )
+
+        self.assertTrue(result.eligible)
+        self.assertEqual(result.considered_run_numbers, (1, 2, 3))
+        self.assertEqual(result.source_run_numbers, (1, 2, 3))
+        self.assertEqual(
+            [channel.source_run_number for channel in result.channels],
+            [1, 2, 3],
+        )
+
+    def test_newer_failing_measurement_supersedes_older_passing_measurement(self):
+        start = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+        older = MeasurementRecord(
+            1,
+            1.0,
+            1.1,
+            1,
+            written_at_utc=start,
+            attempt_number=1,
+            measurement_id=10,
+        )
+        newer_failure = MeasurementRecord(
+            1,
+            2.6,
+            1.1,
+            1,
+            written_at_utc=start + timedelta(minutes=1),
+            attempt_number=1,
+            measurement_id=11,
+        )
+
+        failed = prepare_coc(
+            source(1, [older]),
+            1,
+            source_runs=(source(2, [newer_failure]),),
+        )
+
+        self.assertFalse(failed.eligible)
+        self.assertEqual(failed.channels[0].source_run_number, 2)
+        self.assertEqual(failed.failures[0].source_run_number, 2)
+
+        newest_pass = MeasurementRecord(
+            1,
+            1.7,
+            1.1,
+            1,
+            written_at_utc=start + timedelta(minutes=2),
+            attempt_number=1,
+            measurement_id=12,
+        )
+        recovered = prepare_coc(
+            source(1, [older]),
+            1,
+            source_runs=(
+                source(2, [newer_failure]),
+                source(3, [newest_pass]),
+            ),
+        )
+
+        self.assertTrue(recovered.eligible)
+        self.assertEqual(recovered.channels[0].source_run_number, 3)
+
     def test_base_run_only_preserves_logical_order_and_criteria(self):
         result = prepare_coc(
             source(

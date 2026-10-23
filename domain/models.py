@@ -6,6 +6,7 @@ serialization migration happens incrementally.
 """
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from enum import Enum
 from collections.abc import Mapping
 
@@ -121,6 +122,12 @@ class MeasurementRecord:
     opm_wavelengths_nm: tuple[int, int] = (1310, 1550)
     source_wavelengths_nm: tuple[int, int] = (1310, 1550)
     source_ids: tuple[int, int] = (0, 1)
+    # Database provenance is optional so legacy CSV readers and existing
+    # callers can continue to construct this model without a persistence ID.
+    written_at_utc: datetime | None = None
+    attempt_number: int = 1
+    measurement_id: int | None = None
+    run_id: int | None = None
 
     def __post_init__(self):
         from domain.wavelengths import wavelength_profile
@@ -165,6 +172,10 @@ class MeasurementRecord:
         measurement_classification: str = "native",
         source_wavelengths_nm=(1310, 1550),
         source_ids=(0, 1),
+        written_at_utc: datetime | None = None,
+        attempt_number: int = 1,
+        measurement_id: int | None = None,
+        run_id: int | None = None,
     ) -> "MeasurementRecord":
         from domain.wavelengths import wavelength_profile
 
@@ -187,6 +198,10 @@ class MeasurementRecord:
             opm_wavelengths_nm=profile.opm_wavelengths_nm,
             source_wavelengths_nm=tuple(source_wavelengths_nm),
             source_ids=tuple(source_ids),
+            written_at_utc=written_at_utc,
+            attempt_number=attempt_number,
+            measurement_id=measurement_id,
+            run_id=run_id,
         )
 
     def loss_for(self, wavelength_nm: int) -> float:

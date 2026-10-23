@@ -4726,6 +4726,8 @@ class MainWindow(QMainWindow):
             metadata=self._database_metadata(context),
             criteria=dict(context.run.limit_snapshot),
             run_purpose=context.run.run_purpose,
+            run_id=context.run.run_id,
+            assignment_id=context.run.assignment_id,
         )
 
     def _apply_database_run_context(self, context, *, update_setup=True):
@@ -7194,7 +7196,7 @@ class MainWindow(QMainWindow):
         )
 
     def _status_composite_candidate(self):
-        """Find a validated existing-run combination without changing data."""
+        """Build the latest-measurement projection across compatible run history."""
         if self.run_data is None or not self.run_data.measurements:
             return None, ()
         front_panel_count = self._status_front_panel_count()
@@ -7207,6 +7209,7 @@ class MainWindow(QMainWindow):
             options = self._coc_run_options()
         except (OSError, RuntimeError, ValueError, TypeError, KeyError):
             return None, ()
+        others = []
         for option in options:
             other = option.source
             same_source = (
@@ -7217,22 +7220,24 @@ class MainWindow(QMainWindow):
                 and current.source_path is not None
                 and other.source_path.resolve() == current.source_path.resolve()
             )
-            if same_source:
-                continue
-            for base, supplemental in ((current, other), (other, current)):
-                try:
-                    result = self.coc_workflow.prepare(
-                        base,
-                        front_panel_count,
-                        supplemental_run=supplemental,
-                        completed_replacements=self.completed_replacements,
-                        designated_spares=self.designated_spares,
-                    )
-                except (OSError, ValueError, TypeError, KeyError):
-                    continue
-                if result.eligible:
-                    return result, (int(other.run_number),)
-        return None, ()
+            if not same_source:
+                others.append(other)
+        try:
+            result = self.coc_workflow.prepare(
+                current,
+                front_panel_count,
+                source_runs=tuple(others),
+                completed_replacements=self.completed_replacements,
+                designated_spares=self.designated_spares,
+            )
+        except (OSError, ValueError, TypeError, KeyError):
+            return None, ()
+        other_numbers = tuple(
+            number
+            for number in result.considered_run_numbers
+            if number != current.run_number
+        )
+        return result, other_numbers
 
     def _calculate_run_status(self, *, include_composite=True):
         if self.run_data is None:
@@ -7259,6 +7264,12 @@ class MainWindow(QMainWindow):
             front_panel_channel_count=self._status_front_panel_count(),
             replacement_analysis=self.replacement_analysis,
             composite_result=composite_result,
+            effective_result=composite_result,
+            effective_run_numbers=(
+                tuple(composite_result.source_run_numbers)
+                if composite_result is not None
+                else ()
+            ),
             compatible_run_numbers=compatible_runs,
             completion_reason=self._run_completion_reason
             or str(persisted_status.get("completion_reason") or ""),
@@ -8095,7 +8106,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _resolve_coc_front_panel_count(part_number):
-        """Resolve a COC count from the selected base run's part number."""
+        """Resolve a COC count from the selected context run's part number."""
         return parse_osx_part_number(part_number).front_panel_channel_count
 
     def _confirm_coc_optimization(self, result):
@@ -8258,9 +8269,35 @@ class MainWindow(QMainWindow):
             for failure in result.failures[:50]
         ]
         issues = list(result.invalid_readings) + list(result.validation_issues)
+        channel_sources = "; ".join(
+            "channel=%d,run=%d,measurement=%s,attempt=%d,physical_port=%d,"
+            "written_at=%s"
+            % (
+                channel.record.channel,
+                channel.source_run_number,
+                channel.measurement_id
+                if channel.measurement_id is not None
+                else "legacy",
+                channel.attempt_number,
+                channel.physical_port,
+                channel.written_at_utc.isoformat()
+                if channel.written_at_utc is not None
+                else "legacy",
+            )
+            for channel in result.channels[:48]
+        )
         return {
             "run_number": result.base_run_number,
-            "supplemental_run_number": result.supplemental_run_number,
+            "source_run_numbers": ",".join(
+                str(value) for value in result.source_run_numbers
+            ),
+            "considered_run_numbers": ",".join(
+                str(value) for value in result.considered_run_numbers
+            ),
+            "excluded_run_numbers": ",".join(
+                str(item.get("run_number")) for item in result.excluded_runs
+            ),
+            "channel_sources": self._bounded_coc_text(channel_sources),
             "front_panel_channel_count": result.front_panel_channel_count,
             "template_capacity": result.template_capacity,
             "measurement_count": len(result.measurements),
@@ -8360,7 +8397,7 @@ class MainWindow(QMainWindow):
             return self.coc_workflow.prepare(
                 base,
                 count,
-                supplemental_run=supplemental,
+                source_runs=supplemental,
                 completed_replacements=self.completed_replacements,
                 designated_spares=self.designated_spares,
             )
@@ -8587,7 +8624,15 @@ class MainWindow(QMainWindow):
                 template_path=template,
                 front_panel_channel_count=result.front_panel_channel_count,
                 template_capacity=result.template_capacity,
-                supplemental_run_number=result.supplemental_run_number,
+                source_run_numbers=",".join(
+                    str(value) for value in result.source_run_numbers
+                ),
+                considered_run_numbers=",".join(
+                    str(value) for value in result.considered_run_numbers
+                ),
+                excluded_run_numbers=",".join(
+                    str(item.get("run_number")) for item in result.excluded_runs
+                ),
                 switch_model=coc_model,
                 wavelength_mode=coc_mode,
                 status="started",
@@ -8613,11 +8658,11 @@ class MainWindow(QMainWindow):
                 )
                 for channel in result.overridden_channels
             ) or "None"
-            source_runs = ["Run %d" % result.base_run_number]
-            if result.supplemental_run_number is not None:
-                source_runs.append("Run %d" % result.supplemental_run_number)
+            source_runs = [
+                "Run %d" % run_number
+                for run_number in result.source_run_numbers
+            ] or ["Run %d" % result.base_run_number]
             metadata = dict(base_run.metadata)
-            supplemental_source = getattr(dialog, "supplemental_run", None)
             metadata.update(
                 {
                     "Part number": part_number,
@@ -8643,22 +8688,8 @@ class MainWindow(QMainWindow):
                         or base_run.metadata.get("run_purpose")
                         or "not recorded"
                     ),
-                    "COC supplemental run": (
-                        "Run %d" % result.supplemental_run_number
-                        if result.supplemental_run_number is not None
-                        else "None"
-                    ),
-                    "COC supplemental run purpose": (
-                        str(
-                            supplemental_source.run_purpose
-                            or supplemental_source.metadata.get("run_purpose")
-                            or "not recorded"
-                        )
-                        if supplemental_source is not None
-                        else "None"
-                    ),
                     "COC source runs": ", ".join(source_runs),
-                    "COC supplemental overrides": override_text,
+                    "COC retest/replacement overrides": override_text,
                 }
             )
             if base_run.source_path is not None:

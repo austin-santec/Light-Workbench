@@ -91,10 +91,11 @@ unsupported or actual-wavelength mismatch blocks the diagnostic sample. Raw
 index/count convention differences are retained as trace warnings.
 
 Final COC output is prepared from persisted run data rather than the visible
-table. The application derives the front-panel count from the selected base
-run's part number; the operator selects a base run and optionally one
-compatible replacement/retest run. Export is blocked for missing, invalid, or
-formally failing values; the generated workbook uses the appropriate bundled
+table. The application derives the front-panel count from the selected context
+run's part number and automatically considers all compatible run history. The
+newest valid measurement for each logical channel wins, so an older passing
+value cannot be selected over a newer failure. Export is blocked for missing,
+invalid, or formally failing values; the generated workbook uses the appropriate bundled
 model/mode-specific 45- or 48-channel template and removes rows beyond the
 selected count. OSX-100 supports SM and MM templates; OSX-150 supports SM
 templates only.

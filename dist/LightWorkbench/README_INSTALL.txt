@@ -84,7 +84,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.32.0; an existing executable keeps its prior version until rebuilt. The main
+1.34.0; an existing executable keeps its prior version until rebuilt. The main
 window opens maximized by default and can be restored with the normal Windows
 title-bar control.
 
@@ -233,12 +233,12 @@ from another numbered run for the same unit. Choose No comparison to hide those
 columns again. Comparison data is display-only and does not change analysis or
 saved run files.
 
-Write COC... derives the front-panel channel count from the selected base run's
-part number and lets the operator choose a persisted base run, with an optional
-replacement/retest run. It requires every front-panel channel and applies the
+Write COC... derives the front-panel channel count from the selected context
+run's part number and automatically evaluates all compatible persisted run
+history. It requires every front-panel channel and applies the
 selected model's fail limit: OSX-100 uses 0.8000 dB, while OSX-150 uses
-2.5000 dB. Supplemental readings
-replace complete wavelength pairs and changed physical ports must match the
+2.5000 dB. Retest readings replace complete wavelength pairs according to
+persisted recency, and changed physical ports must match the
 unit's recorded replacements. A passing result above 2.2500 dB produces an
 optimization warning only when a measured replacement candidate is available.
 

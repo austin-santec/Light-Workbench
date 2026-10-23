@@ -127,9 +127,11 @@ The separate result status describes the accepted readings: `pass`,
 `supplemental_run`, `not_evaluated`, or `review_required`. A composite or
 supplemental status is shown only when the existing validated COC preparation
 rules find a compatible persisted run and a passing combination. This
-assessment never creates a COC, changes a measurement, or changes switch
-mapping data. It is recalculated when readings, replacements, criteria, or
-compatible runs change.
+assessment uses the same latest-measurement projection as COC preparation. It
+never creates a COC, changes a measurement, or changes switch mapping data. It
+is recalculated when readings, replacements, criteria, or compatible runs
+change. A newer failing retest therefore supersedes an older passing reading
+in the displayed result.
 
 New run JSON files add a `run_status` object containing the completion state,
 reason, planned/completed counts, and terminal UTC timestamp. The same
@@ -140,14 +142,16 @@ rather than inferred from the current table filter.
 
 ## Validated COC view
 
-A COC can use one persisted base run and one explicitly selected persisted
-replacement/retest run. This creates a temporary report view, not another run.
-The supplemental run replaces a complete configured wavelength pair for a
-logical channel; individual wavelengths are never mixed. Changed physical ports must agree with
-the unit's completed replacement records. Source measurements, references,
-replacement records, and hardware state remain unchanged.
+A COC can use any number of compatible persisted runs. This creates a
+temporary report view, not another run. For each logical channel, the newest
+valid complete wavelength pair wins; individual wavelengths are never mixed.
+Database recency is written UTC time, attempt number, then measurement ID.
+Legacy file records without timestamps use deterministic run/attempt order.
+Changed physical ports must agree with the unit's completed replacement
+records. Source measurements, references, replacement records, and hardware
+state remain unchanged.
 
-The three-digit channel field in the selected base run's supported OSX-100 or
+The three-digit channel field in the selected context run's supported OSX-100 or
 OSX-150 part number defines the confirmed front-panel count and required
 logical channels `1..N`. The operator does not enter this value manually.
 Every required channel must be present and valid, and each loss rounded to the
@@ -156,9 +160,10 @@ fail limit. OSX-100 uses 0.8000 dB; OSX-150 uses 2.5000 dB. Readings above the
 front-panel count may support replacement analysis but are excluded from the
 workbook.
 
-The base run metadata records the COC output path, front-panel count, selected
-source runs, and each supplemental logical-channel/physical-port override.
-This provenance does not change the base run's accepted measurement list.
+The context run metadata records the COC output path, front-panel count, all
+compatible runs considered, contributing runs, excluded-run reasons, and each
+effective logical-channel/physical-port source. This provenance does not
+change any source run's accepted measurement list.
 Each approved model/mode uses separate templates for capacities 1-45 and
 46-48; the exporter removes unused rows and updates merged ranges and print
 area on the copied workbook only. Output files use the local-time name format

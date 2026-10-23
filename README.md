@@ -288,7 +288,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.32.0**; an existing executable keeps its prior
+current source version is **1.34.0**; an existing executable keeps its prior
 version until rebuilt.
 
 The desktop application opens maximized by default while retaining the normal
@@ -529,8 +529,10 @@ pasting into the Unit Editor notes.
 
 `Write COC...` opens a preparation dialog instead of immediately exporting the
 active table. The dialog derives the front-panel channel count from the
-selected base run's part number, displays it read-only, and lets the operator
-choose one persisted base run and optionally one replacement/retest run.
+selected context run's part number, displays it read-only, and evaluates all
+compatible persisted run history automatically. The newest valid measurement
+for each logical channel wins; the operator cannot cherry-pick an older passing
+measurement or limit the operation to two runs.
 COC preparation starts only when the operator explicitly clicks the Hardware
 Controls button or selects File > Write COC...; completing, stopping, or
 failing a hardware run does not automatically ask whether to create a COC.
@@ -543,8 +545,9 @@ logs with a `coc_attempt_id`; if the workbook was created but provenance
 metadata could not be saved, the operator is told where the partially saved
 workbook is located.
 Saved readings remain available for a later explicit export.
-Supplemental readings replace complete configured wavelength pairs by logical
-channel; the source run and reported physical port remain traceable. A changed
+Retest readings replace complete configured wavelength pairs by logical
+channel according to persisted recency. The source run, measurement ID,
+attempt, timestamp, and reported physical port remain traceable. A changed
 physical port must match a completed Current Port -> Replacement Port record.
 
 The report is blocked if a required front-panel channel is missing, invalid,
@@ -570,12 +573,13 @@ below the final required channel are removed, affected merged ranges are
 repaired, and the print area ends at the completed report.
 
 The first output is named `COC <OSX-100 or OSX-150> <Main Board serial>_YYMMDD-HHMMSS.xlsx`
-and is saved in the selected base run folder. Existing files receive a numeric suffix instead of being
+and is saved in the selected context run folder for file-backed runs. Existing files receive a numeric suffix instead of being
 overwritten. The original template is never modified. The COC export uses
 `openpyxl`, so Microsoft Excel is not required on the target computer.
-Template graphics are preserved when present. Base/supplemental run numbers,
-front-panel count, and supplemental channel/physical-port overrides are stored
-as COC provenance in the base run metadata.
+Template graphics are preserved when present. The compatible runs considered,
+contributing run numbers, front-panel count, excluded-run reasons, and
+per-channel source/physical-port provenance are stored as COC provenance in
+the context run metadata where file-backed metadata is available.
 
 The three-digit channel field in a supported OSX-100/OSX-150 part number is the
 front-panel count. A Full configured pass may measure additional physical

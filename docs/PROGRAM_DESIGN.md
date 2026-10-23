@@ -156,11 +156,14 @@ from the physical channel count reported by the optical switch. Replacement
 analysis and COC preparation consume this derived value and do not expose a
 manual count override.
 
-`domain/coc_preparation.py` owns the report-publication boundary. It merges one
-explicit base run with at most one explicit replacement/retest run, preserves
-whole two-wavelength samples and provenance, validates physical-port changes
-against completed replacements, requires every front-panel channel, applies
-the model-specific fail limit, and derives non-blocking optimization
+`domain/coc_preparation.py` owns the report-publication boundary. It projects
+all compatible persisted runs into one effective measurement set, selecting
+the newest valid reading for each logical channel by written UTC time, attempt
+number, and measurement ID. Legacy file records use deterministic run/attempt
+order when timestamps are unavailable. The projection preserves whole
+two-wavelength samples and provenance, validates physical-port changes against
+completed replacements, requires every front-panel channel, applies the
+model-specific fail limit, and derives non-blocking optimization
 recommendations when the selected profile enables them. It validates the
 approved COC combinations: OSX-100 SM (1310/1550), OSX-100 MM (850/1300),
 and OSX-150 SM (1310/1550). OSX-150 MM remains unsupported. It has no Qt,
@@ -182,9 +185,10 @@ COC workflow.
 
 `application/coc_workflow.py` loads candidate runs through repository
 interfaces and hydrates JSON-only physical-port and criteria details. The
-`ui/coc_export_dialog.py` dialog owns only source selection and validation
-presentation. Neither layer edits source measurements or creates a synthetic
-combined run.
+`ui/coc_export_dialog.py` dialog selects only a context run and presents the
+automatically calculated all-history projection; it does not expose a manual
+supplemental-run picker. Neither layer edits source measurements or creates a
+synthetic combined run.
 
 `infrastructure/run_repository.py` is the application-facing boundary for
 file-backed CSV/JSON run storage and numbered-run lookup. The established
@@ -195,7 +199,7 @@ implementation is selected.
 `domain/run_status.py` owns the derived two-part run assessment. Completion is
 based on accepted readings compared with the saved hardware plan, while result
 quality is based on the active criteria, front-panel coverage, replacement
-analysis, and the existing validated COC preparation service. The main window
+analysis, and the shared latest-measurement COC projection. The main window
 renders the assessment beside the table filters and persists only additive
 completion metadata. Cross-run analysis is read-only and never creates a COC
 or changes source run data.

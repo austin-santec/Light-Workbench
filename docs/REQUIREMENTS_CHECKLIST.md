@@ -6,7 +6,7 @@ See [`Requirements.md`](../Requirements.md) for the full wording, evidence, and 
 
 **Last reviewed:** 2026-10-08
 
-**Software baseline:** Light Workbench 1.32.0
+**Software baseline:** Light Workbench 1.34.0
 
 **RevB total:** 46 requirement rows
 
@@ -154,7 +154,6 @@ Each item already has useful behavior, but the noted work remains.
 
 ## Not implemented
 
-- [ ] **FUN-004 — Preserve every retest attempt and choose the active/final result.** `[MVP]`
 - [ ] **FUN-022 — Define criteria by family, channel-count range, and wavelength.** `[MVP]`
 - [ ] **FUN-032 — Force a new two-wavelength test after a mapping change.** `[MVP]`
 - [ ] **FUN-036 — Link and retain pre- and post-optimization measurements.** `[R1]`
@@ -164,7 +163,8 @@ Each item already has useful behavior, but the noted work remains.
 - [ ] Approve OSX-100 and OSX-150 limits by wavelength and channel-count range.
 - [ ] Confirm the OSX-150 optimization band and who may approve exceptions.
 - [ ] Approve the spare-ranking formula.
-- [ ] Decide how the final result is selected when multiple attempts exist.
+- [x] Decide how the final result is selected when multiple attempts exist.
+  - The newest valid measurement wins by UTC write time, attempt number, and measurement ID; no older passing measurement may be selected over a newer failure.
 - [ ] Define reference age and mandatory re-reference triggers.
 - [ ] Confirm supported OSX transports and command documentation.
 - [ ] Choose the report-template mapping method.
@@ -177,6 +177,7 @@ Each item already has useful behavior, but the noted work remains.
 1. [ ] Resolve the open acceptance decisions.
 2. [ ] Add family, wavelength, channel-count criteria, and final dispositions.
 3. [ ] Add full attempt history, final-result selection, traceability, and crash recovery.
+   - Latest-result selection and multi-run COC provenance are implemented; complete invalid-sample retention and crash recovery remain open.
 4. [ ] Complete reading validity, route verification, timing/retries, and reconnect behavior.
 5. [ ] Add authoritative mapping/spare status, forced retest, and the final-map debug export.
 6. [ ] Complete OSX-100 reporting, raw-session output, naming, and finalization validation.
