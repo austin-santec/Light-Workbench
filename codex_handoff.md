@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.35.0**. The single
+The current source release is **Light Workbench 1.35.1**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -58,7 +58,13 @@ older records.
 The database-focused branch has completed its SQL Server-primary cutover
 through Milestone 10. Development targets
 `localhost\SQLExpress`, database `LWBTestDB`, with Windows Authentication. The
-forward-only migration runner and initial eight-table/two-view schema are in
+per-user endpoint file is `%LOCALAPPDATA%\LightWorkbench\config\database.ini`.
+The application creates it with documented local defaults on first database
+initialization when missing, never replaces an existing file, and blocks
+database use with actionable feedback if an existing file is malformed or
+invalid. The tracked `config/database.ini.example` file contains no
+credentials.
+The forward-only migration runner and initial eight-table/two-view schema are in
 `infrastructure/database/`; migration 0003 adds the nullable positive
 `IL_RUNS.station_number` field. Guarded reset and backup/restore tools operate only
 on `LWBTestDB_Integration`. Backup verification restores to a temporary

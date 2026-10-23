@@ -6,7 +6,7 @@ See [`Requirements.md`](../Requirements.md) for the full wording, evidence, and 
 
 **Last reviewed:** 2026-10-08
 
-**Software baseline:** Light Workbench 1.35.0
+**Software baseline:** Light Workbench 1.35.1
 
 **RevB total:** 46 requirement rows
 

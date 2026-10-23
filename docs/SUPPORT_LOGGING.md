@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-Light Workbench 1.35.0 includes always-on, local engineering support logs. Their
+Light Workbench 1.35.1 includes always-on, local engineering support logs. Their
 purpose is to help engineering reconstruct operator workflows, hardware
 communication, two-wavelength measurements, insertion-loss calculations,
 connection ownership, persistence, exports, and failures.
@@ -113,6 +113,10 @@ Depending on the event, logs may contain:
   diagnostic-only, or failed.
 - Run/unit save requests and results, atomic file replacement, measurement
   counts, export results, and sanitized destinations.
+- Database configuration lifecycle events, including whether the per-user
+  `database.ini` was created or loaded, its sanitized path, endpoint metadata,
+  and validation failures. Credentials and complete connection strings are
+  never logged.
 - Warning bypasses such as continuing without metadata or with both references
   at zero.
 - Post-run replacement-analysis offers record whether the operator accepted or

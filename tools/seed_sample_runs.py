@@ -40,7 +40,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.list:
             _print_scenarios(scenarios)
             return 0
-        settings = DatabaseSettingsRepository(Path(args.config)).load()
+        settings_repository = DatabaseSettingsRepository(Path(args.config))
+        settings_repository.ensure_exists()
+        settings = settings_repository.load()
         _print_target(settings)
         if not _safe_database_target(settings):
             raise SampleScenarioError(

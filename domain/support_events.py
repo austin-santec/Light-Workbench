@@ -211,6 +211,7 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "database_server",
         "database_name",
         "database_driver",
+        "configuration_path",
         "database_error_category",
         "database_schema_version",
         "database_expected_schema_version",

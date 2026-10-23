@@ -127,6 +127,9 @@ class MainWindowTests(unittest.TestCase):
             "ilm_app.bundled_asset_path", return_value=None
         ), patch("ilm_app.MainWindow", return_value=window), patch(
             "ilm_app.sys.argv", ["ilm_app.py"]
+        ), patch(
+            "infrastructure.database.runtime.build_database_primary_workflow",
+            return_value=MagicMock(),
         ):
             result = app_main()
 

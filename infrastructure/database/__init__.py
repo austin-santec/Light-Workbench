@@ -1,6 +1,7 @@
 """SQL Server infrastructure for the database-backed Light Workbench branch."""
 
 from infrastructure.database.connection import (
+    DatabaseConfigurationError,
     DatabaseConnectionError,
     DatabaseConnectionFactory,
     DatabaseErrorCategory,
@@ -41,6 +42,7 @@ __all__ = [
     "DEFAULT_MIGRATIONS_PATH",
     "DatabaseMaintenanceError",
     "DatabaseConnectionError",
+    "DatabaseConfigurationError",
     "DatabaseConnectionFactory",
     "DatabaseErrorCategory",
     "DatabasePreflightResult",

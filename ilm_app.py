@@ -84,6 +84,7 @@ from application.coc_workflow import CocRunOption, CocWorkflow
 from application.database_primary_workflow import DatabaseRunContext
 from application.run_lifecycle_workflow import DatabaseRunUnavailableError
 from application.reference_session import ReferenceSession
+from infrastructure.database.connection import DatabaseConnectionError
 from domain.measurement import (
     calculate_insertion_loss,
     format_dark_reference_error,
@@ -9204,7 +9205,18 @@ def main():
             set_support_logging_service(None)
     from infrastructure.database.runtime import build_database_primary_workflow
 
-    database_workflow = build_database_primary_workflow(support_logger)
+    try:
+        database_workflow = build_database_primary_workflow(support_logger)
+    except DatabaseConnectionError as error:
+        QMessageBox.critical(
+            None,
+            "Database configuration unavailable",
+            "%s\n\nCorrect the database configuration and restart Light Workbench."
+            % error.operator_message,
+        )
+        support_logger.shutdown()
+        set_support_logging_service(None)
+        return 1
     window = MainWindow(
         sys.argv[1] if len(sys.argv) > 1 else None,
         support_logger=support_logger,

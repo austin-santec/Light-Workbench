@@ -35,9 +35,16 @@ runtime is 32-bit Python, the selected SQL Server ODBC driver and Python
 database adapter must support that runtime.
 
 Runtime endpoint settings are kept in the per-user non-secret file
-`%LOCALAPPDATA%\LightWorkbench\config\database.ini`. Light Workbench uses the
-signed-in Windows identity and does not store SQL usernames or passwords. The
-configuration includes bounded connection and command timeouts. Connections
+`%LOCALAPPDATA%\LightWorkbench\config\database.ini`. On first database
+initialization, Light Workbench creates this file with the local development
+defaults if it is missing. Creation is create-only; an existing file is never
+replaced by startup, an upgrade, or a rebuild. A malformed or invalid existing
+file blocks database use and reports the path and validation problem rather
+than silently falling back to hidden defaults. A tracked, credential-free
+example is available at `config/database.ini.example`.
+
+Light Workbench uses the signed-in Windows identity and does not store SQL
+usernames or passwords. The configuration includes bounded connection and command timeouts. Connections
 and cursors are short-lived and closed deterministically; write operations use
 explicit commit/rollback transaction scopes.
 

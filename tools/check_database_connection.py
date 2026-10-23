@@ -6,6 +6,7 @@ import argparse
 
 from application.database_diagnostics import DatabaseDiagnosticsService
 from config.app_config import DEFAULT_PATHS
+from infrastructure.database.connection import DatabaseConnectionError
 from infrastructure.database.settings_repository import DatabaseSettingsRepository
 
 
@@ -20,9 +21,11 @@ def main(argv=None) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        settings = DatabaseSettingsRepository(args.config).load()
+        settings_repository = DatabaseSettingsRepository(args.config)
+        settings_repository.ensure_exists()
+        settings = settings_repository.load()
         result = DatabaseDiagnosticsService().check(settings)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, DatabaseConnectionError) as exc:
         print(f"Database configuration is invalid: {exc}")
         return 2
     print(result.operator_message)

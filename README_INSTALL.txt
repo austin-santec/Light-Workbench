@@ -23,6 +23,25 @@ cannot be continued as database runs. Support logs, diagnostic exports, and COC
 workbooks remain local files. Database-backed COC export asks the operator to
 choose an output folder.
 
+DATABASE CONFIGURATION
+----------------------
+
+The database endpoint is stored in the per-user file:
+
+  %LOCALAPPDATA%\LightWorkbench\config\database.ini
+
+If the file does not exist, Light Workbench creates it automatically with
+the local development defaults. Existing files are preserved during startup,
+upgrades, and rebuilds. The file contains the SQL Server instance, database,
+ODBC driver, encryption policy, certificate policy, and bounded timeouts. It
+does not contain a username or password; Windows Authentication uses the
+signed-in Windows account.
+
+If the file is malformed or contains an invalid setting, database use is
+blocked and the application identifies the file and the setting that must be
+corrected. A credential-free example is included as
+config\database.ini.example in the source repository.
+
 
 1. WHAT IS REQUIRED
 -------------------
@@ -84,7 +103,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.35.0; an existing executable keeps its prior version until rebuilt. The main
+1.35.1; an existing executable keeps its prior version until rebuilt. The main
 window opens maximized by default and can be restored with the normal Windows
 title-bar control.
 

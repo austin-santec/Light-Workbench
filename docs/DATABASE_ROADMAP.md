@@ -81,7 +81,9 @@ using 32-bit Python, `pyodbc`, Windows Authentication, and ODBC Driver 18.
 
 ## Milestone 2 - Connection and configuration boundary
 
-Status: complete. Non-secret per-user SQL Server settings, a bounded
+Status: complete. Non-secret per-user SQL Server settings, automatic create-only
+initialization of the per-user `database.ini`, preservation of existing files,
+invalid-file validation, a credential-free example configuration, a bounded
 Windows-authenticated connection factory, short transaction contexts,
 read-only migration compatibility preflight, classified operator diagnostics,
 and credential-free support events are implemented. Database use is enabled by
@@ -97,6 +99,12 @@ Milestone 9.
 - Add startup/explicit connection diagnostics and schema compatibility checks.
 - Classify authentication, server unavailable, timeout, permission, and schema
   errors for operator feedback and local support logs.
+- Create `%LOCALAPPDATA%\LightWorkbench\config\database.ini` on first database
+  initialization when missing, without replacing existing configuration.
+- Reject malformed or invalid existing configuration with actionable feedback;
+  do not silently fall back to hidden defaults.
+- Keep the example file `config/database.ini.example` free of credentials and
+  outside the runtime configuration path.
 
 ### Tests
 
@@ -127,7 +135,10 @@ python -m tools.check_database_connection
 ```
 
 The diagnostic validates connectivity and migration history but never applies
-migrations automatically.
+migrations automatically. If the configured file is missing, the supported
+database bootstrap creates it first using the documented defaults. An explicit
+`--config` path is also handled through the same repository and validation
+rules.
 
 ## Milestone 3 - Repository contracts
 

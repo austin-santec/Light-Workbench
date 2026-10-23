@@ -34,6 +34,13 @@ class DatabaseConnectionError(RuntimeError):
         self.technical_detail = detail
 
 
+class DatabaseConfigurationError(DatabaseConnectionError):
+    """A database INI file is malformed or contains invalid settings."""
+
+    def __init__(self, message: str, detail: str = ""):
+        super().__init__(DatabaseErrorCategory.CONFIGURATION, message, detail)
+
+
 def _safe_odbc_value(value: str, label: str) -> str:
     if not value.strip() or any(character in value for character in ";{}"):
         raise ValueError(f"Invalid {label}")
@@ -176,6 +183,7 @@ class DatabaseConnectionFactory:
 
 
 __all__ = [
+    "DatabaseConfigurationError",
     "DatabaseConnectionError",
     "DatabaseConnectionFactory",
     "DatabaseErrorCategory",
