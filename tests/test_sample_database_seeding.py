@@ -28,11 +28,13 @@ class SampleDatabaseSeedingTests(unittest.TestCase):
 
     def test_approved_scenarios_are_valid_and_deterministic(self):
         scenarios = tuple(load_scenario(path) for path in sorted(SCENARIO_ROOT.glob("*.json")))
-        self.assertEqual(len(scenarios), 2)
+        self.assertEqual(len(scenarios), 3)
+        self.assertIn("SAMPLE-OSX150-3RUN-COMPOSITE", {item.scenario_id for item in scenarios})
         for scenario in scenarios:
             self.assertTrue(scenario.scenario_id.startswith("SAMPLE-"))
             self.assertEqual(scenario.run_uuid(scenario.runs[0]), scenario.run_uuid(scenario.runs[0]))
             self.assertGreater(scenario_summary(scenario)["measurements"], 0)
+            self.assertEqual(scenario.station_number, 99)
 
     def test_seed_writes_two_runs_and_replacement_history(self):
         scenario = load_scenario(SCENARIO_ROOT / "osx150_two_run_optimization_engineering.json")
@@ -87,6 +89,39 @@ class SampleDatabaseSeedingTests(unittest.TestCase):
         self.assertTrue(prepared.eligible)
         self.assertEqual(len(prepared.channels), 36)
         self.assertEqual(prepared.overridden_channels[0].physical_port, 43)
+
+    def test_three_run_composite_requires_all_runs(self):
+        scenario = load_scenario(
+            SCENARIO_ROOT / "osx150_three_run_composite.json"
+        )
+        self.assertEqual(scenario.unit.main_board_serial, "S-00001")
+        self.assertEqual(scenario.switch.switch_serial, "S-00002")
+        self.assertEqual(scenario.ilm_serial, "S-00003")
+        self.assertEqual(scenario.station_number, 99)
+        self.assertTrue(scenario.coc_combination_test)
+
+        workflow = self._workflow()
+        result = SampleDatabaseSeeder(workflow).seed(scenario)
+
+        self.assertEqual(result.action, "seeded")
+        self.assertEqual(len(result.run_ids), 3)
+        self.assertEqual(result.measurement_count, 48)
+        contexts = [
+            workflow.load_for_unit(scenario.unit.main_board_serial, number)
+            for number in (1, 2, 3)
+        ]
+        self.assertEqual(
+            [len(context.snapshot.measurements) for context in contexts],
+            [16, 16, 16],
+        )
+        self.assertEqual(
+            [context.run.station_number for context in contexts],
+            [99, 99, 99],
+        )
+        self.assertEqual(
+            [context.snapshot.measurements[0].opm_wavelengths_nm for context in contexts],
+            [(1310, 1550)] * 3,
+        )
 
     def test_engineering_sample_runs_can_form_a_combined_coc(self):
         scenario = load_scenario(

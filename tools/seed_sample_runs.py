@@ -140,6 +140,7 @@ def _print_scenarios(scenarios) -> None:
             f"(model={summary['model']}, runs={summary['runs']}, "
             f"measurements={summary['measurements']}, "
             f"replacements={summary['replacements']}, spares={summary['spares']})"
+            f" station={summary['station_number']}"
         )
 
 
@@ -156,7 +157,8 @@ def _print_dry_run(scenarios) -> None:
         print(
             f"  {summary['scenario_id']}: unit=1, switch=1, assignment=1, "
             f"runs={summary['runs']}, measurements={summary['measurements']}, "
-            f"replacements={summary['replacements']}, spares={summary['spares']}"
+            f"replacements={summary['replacements']}, spares={summary['spares']}, "
+            f"station={summary['station_number']}"
         )
     print("Writes planned: create-only sample records; no deletes or refreshes.")
 

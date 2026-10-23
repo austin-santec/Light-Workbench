@@ -14,11 +14,13 @@ The declarative scenario files are in `sample_data/scenarios/`:
 | --- | --- | --- |
 | `SAMPLE-OSX150-OPT-ENGINEERING` | Engineering/replacement demonstration | Two complete excluded engineering runs. Run 1 has all 36 channels; Run 2 retests logical channels 9 and 20 after documented replacements to physical ports 43 and 41. |
 | `SAMPLE-OSX150-COC-DEMO` | COC and combined-run demonstration | A multi-run pattern using a separate synthetic unit. The current scenario uses two runs; both are production-shaped but explicitly excluded from production analysis so they cannot become production data accidentally. |
+| `SAMPLE-OSX150-3RUN-COMPOSITE` | Three-run COC aggregation demonstration | Test unit `S-00001` with Runs 1–3 containing channels 1–16, 17–32, and 33–48. Only all three runs together are COC-eligible. Seeded runs use station 99. |
 
-Both scenarios include deterministic references, limit snapshots, hardware
+All scenarios include deterministic references, limit snapshots, hardware
 identity, channel maps, designated spares, replacement history, and generated
-two-wavelength measurements. The sample unit serials, switch serials, and
-scenario IDs all begin with `SAMPLE-` to make their purpose clear.
+two-wavelength measurements. Existing scenarios use `SAMPLE-` identities; the
+three-run composite uses the shorter test identifiers `S-00001` through
+`S-00003`.
 
 The engineering scenario is useful for run loading, retest history, status
 display, replacement analysis, reporting, and multi-run COC creation. The
@@ -27,6 +29,12 @@ production-analysis filtering, but its explicit analysis exclusion keeps it
 out of normal production reporting. Run purpose does not block COC creation;
 measurement eligibility and compatibility rules do.
 
+The three-run composite scenario is intentionally stopped/incomplete at the
+individual-run level. Every one-run and two-run subset is missing front-panel
+channels, while the complete three-run history is eligible. All sample
+scenarios default to station 99; this is sample-data behavior and does not
+change the normal production station default.
+
 ## Running the tool
 
 The tool is dry-run by default:
@@ -34,6 +42,7 @@ The tool is dry-run by default:
 ```powershell
 python tools/seed_sample_runs.py --list
 python tools/seed_sample_runs.py --scenario SAMPLE-OSX150-OPT-ENGINEERING
+python tools/seed_sample_runs.py --scenario SAMPLE-OSX150-3RUN-COMPOSITE
 python tools/seed_sample_runs.py --all --inspect-existing
 ```
 
@@ -46,6 +55,7 @@ After reviewing the target and plan, apply one scenario or both:
 
 ```powershell
 python tools/seed_sample_runs.py --scenario SAMPLE-OSX150-OPT-ENGINEERING --apply
+python tools/seed_sample_runs.py --scenario SAMPLE-OSX150-3RUN-COMPOSITE --apply
 python tools/seed_sample_runs.py --all --apply
 ```
 
@@ -71,7 +81,9 @@ database. It does not accept credentials on the command line.
 ## Adding another sample scenario
 
 Copy an existing JSON file and give it a new `scenario_id`, unit serial, and
-switch serial beginning with `SAMPLE-`. Keep the following structure:
+switch serial beginning with `SAMPLE-` or using the reserved `S-#####` test
+format. Sample runs default to station 99; set `station_number` only when a
+different sample station is specifically needed. Keep the following structure:
 
 1. Define one unit, one switch, and a complete initial logical-to-physical map.
 2. Define one or more consecutive runs with UTC timestamps, a valid reference
@@ -89,7 +101,8 @@ switch serial beginning with `SAMPLE-`. Keep the following structure:
 
 The loader validates the scenario before writing. It checks model identity,
 channel-map coverage, switch capacity, UTC timestamps, references, limits,
-duplicate channels, replacement fields, and the `SAMPLE-` safety boundary.
+duplicate channels, replacement fields, hardware identity, and the sample
+serial safety boundary.
 
 ## Verification and limitations
 

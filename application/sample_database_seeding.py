@@ -10,13 +10,16 @@ from __future__ import annotations
 
 import json
 import random
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from itertools import combinations
 from pathlib import Path
 from typing import Mapping
 from uuid import UUID, uuid5
 
+from domain.coc_preparation import prepare_coc
 from domain.database_records import SwitchSpec, UnitSpec
 from domain.limit_profiles import LimitProfile
 from domain.reference import ReferenceSnapshot
@@ -25,6 +28,8 @@ from domain.run_purpose import normalize_run_purpose
 
 SAMPLE_UUID_NAMESPACE = UUID("2f3e4d2a-92d0-4a4d-9e0b-4b3e1c0e5f1b")
 SCENARIO_MARKER_PREFIX = "Light Workbench sample scenario: "
+DEFAULT_SAMPLE_STATION_NUMBER = 99
+TEST_SERIAL_PATTERN = re.compile(r"S-\d{5}\Z")
 
 
 class SampleScenarioError(ValueError):
@@ -61,6 +66,11 @@ class SampleScenario:
     runs: tuple[SampleRun, ...]
     application_version: str
     tag: str
+    station_number: int = DEFAULT_SAMPLE_STATION_NUMBER
+    ilm_model: str = "OP815"
+    ilm_serial: str = "SAMPLE-OP815"
+    ilm_firmware: str = "sample"
+    coc_combination_test: bool = False
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, object]) -> "SampleScenario":
@@ -77,9 +87,9 @@ class SampleScenario:
             raise SampleScenarioError("Scenario IDs must start with SAMPLE-.")
         unit_serial = str(unit_values.get("main_board_serial", "")).strip()
         switch_serial = str(switch_values.get("switch_serial", "")).strip()
-        if not unit_serial.startswith("SAMPLE-") or not switch_serial.startswith("SAMPLE-"):
+        if not _is_sample_serial(unit_serial) or not _is_sample_serial(switch_serial):
             raise SampleScenarioError(
-                "Sample unit and switch serials must start with SAMPLE-."
+                "Sample unit and switch serials must start with SAMPLE- or use S-#####."
             )
         try:
             unit = UnitSpec(
@@ -137,6 +147,13 @@ class SampleScenario:
             runs=runs,
             application_version=str(values.get("application_version") or "sample-data"),
             tag=SCENARIO_MARKER_PREFIX + scenario_id,
+            station_number=int(
+                values.get("station_number", DEFAULT_SAMPLE_STATION_NUMBER)
+            ),
+            ilm_model=str(values.get("ilm_model") or "OP815").strip(),
+            ilm_serial=str(values.get("ilm_serial") or "SAMPLE-OP815").strip(),
+            ilm_firmware=str(values.get("ilm_firmware") or "sample").strip(),
+            coc_combination_test=bool(values.get("coc_combination_test", False)),
         )
         scenario.validate()
         return scenario
@@ -152,6 +169,12 @@ class SampleScenario:
             raise SampleScenarioError("Sample spare ports must be unique.")
         if any(port < 1 or port > self.switch.physical_channel_count for port in self.spares):
             raise SampleScenarioError("A sample spare port is outside switch capacity.")
+        if self.station_number <= 0:
+            raise SampleScenarioError("Sample station number must be positive.")
+        if not self.ilm_model or not _is_sample_serial(self.ilm_serial):
+            raise SampleScenarioError(
+                "Sample ILM identity must include a model and a SAMPLE- or S-##### serial."
+            )
         for replacement in self.replacements:
             required = {
                 "logical_channel",
@@ -262,6 +285,7 @@ def scenario_summary(scenario: SampleScenario) -> dict[str, object]:
         "measurements": sum(len(scenario.measurement_rows(run)) for run in scenario.runs),
         "replacements": len(scenario.replacements),
         "spares": len(scenario.spares),
+        "station_number": scenario.station_number,
     }
 
 
@@ -325,14 +349,23 @@ class SampleDatabaseSeeder:
                 operating_band="O band",
                 application_version=scenario.application_version,
                 measurement_hardware={
-                    "ilm": {"model": "OP815", "serial": "SAMPLE-OP815"},
-                    "switch": {"model": scenario.switch.switch_model, "serial": scenario.switch.switch_serial},
+                    "ilm": {
+                        "model": scenario.ilm_model,
+                        "serial": scenario.ilm_serial,
+                        "firmware": scenario.ilm_firmware,
+                    },
+                    "switch": {
+                        "model": scenario.switch.switch_model,
+                        "serial": scenario.switch.switch_serial,
+                        "firmware": scenario.switch.firmware_version,
+                    },
                     "sample_scenario": scenario.scenario_id,
                 },
                 limit_snapshot=run.limit_snapshot,
                 part_number_snapshot=scenario.unit.part_number,
                 front_panel_channel_count=scenario.unit.front_panel_channel_count,
                 run_purpose=run.purpose,
+                station_number=scenario.station_number,
                 analysis_status=run.analysis_status,
                 analysis_exclusion_reason=run.analysis_exclusion_reason,
                 notes=scenario.tag,
@@ -420,8 +453,21 @@ class SampleDatabaseSeeder:
                 actual.completion_status != expected.completion_status
                 or actual.run_purpose != expected.purpose
                 or actual.analysis_status != expected.analysis_status
+                or actual.station_number != scenario.station_number
             ):
                 raise SampleScenarioError(f"Sample Run {expected.number} has the wrong status or purpose.")
+            hardware = dict(actual.measurement_hardware)
+            ilm = dict(hardware.get("ilm") or {})
+            switch = dict(hardware.get("switch") or {})
+            if (
+                ilm.get("model") != scenario.ilm_model
+                or ilm.get("serial") != scenario.ilm_serial
+                or switch.get("model") != scenario.switch.switch_model
+                or switch.get("serial") != scenario.switch.switch_serial
+            ):
+                raise SampleScenarioError(
+                    f"Sample Run {expected.number} has inconsistent hardware metadata."
+                )
             for replacement in scenario.replacements:
                 if int(replacement.get("related_run_number", 0)) == expected.number:
                     current_map[int(replacement["logical_channel"])] = int(
@@ -444,6 +490,59 @@ class SampleDatabaseSeeder:
             raise SampleScenarioError("Verification found the wrong replacement history count.")
         if tuple(snapshot[3]) != tuple(sorted(scenario.spares)):
             raise SampleScenarioError("Verification found the wrong active spare ports.")
+        if scenario.coc_combination_test:
+            self._verify_coc_combinations(scenario, runs)
+
+    def _verify_coc_combinations(self, scenario: SampleScenario, runs) -> None:
+        """Verify every run subset against the production COC preparation service."""
+        sources = []
+        for run in sorted(runs, key=lambda item: item.run_number):
+            source = self.workflow.queries.load(run.run_id).coc_source()
+            source = replace(
+                source,
+                metadata={
+                    **source.metadata,
+                    "Main board serial": scenario.unit.main_board_serial,
+                    "Switch serial": scenario.switch.switch_serial,
+                    "Front panel channel count": str(
+                        scenario.unit.front_panel_channel_count
+                    ),
+                },
+            )
+            sources.append(source)
+
+        expected_channels = set(
+            range(1, scenario.unit.front_panel_channel_count + 1)
+        )
+        for size in range(1, len(sources) + 1):
+            for subset in combinations(sources, size):
+                result = prepare_coc(
+                    subset[0],
+                    scenario.unit.front_panel_channel_count,
+                    source_runs=subset[1:],
+                    completed_replacements=(),
+                    designated_spares=scenario.spares,
+                )
+                available = {
+                    int(record.channel)
+                    for source in subset
+                    for record in source.measurements
+                }
+                expected_eligible = available == expected_channels
+                if result.eligible != expected_eligible:
+                    numbers = ", ".join(str(item.run_number) for item in subset)
+                    raise SampleScenarioError(
+                        f"COC subset verification failed for Runs {numbers}: "
+                        f"expected eligible={expected_eligible}, got {result.eligible}."
+                    )
+                if not expected_eligible:
+                    missing = tuple(sorted(expected_channels - available))
+                    if result.missing_channels != missing:
+                        numbers = ", ".join(str(item.run_number) for item in subset)
+                        raise SampleScenarioError(
+                            f"COC subset verification found the wrong missing channels "
+                            f"for Runs {numbers}."
+                        )
 
     def _existing_state(self, scenario: SampleScenario) -> str:
         unit = self.repositories.get_by_main_board_serial(scenario.unit.main_board_serial)
@@ -509,6 +608,10 @@ def _parse_run(values: Mapping[str, object]) -> SampleRun:
     )
 
 
+def _is_sample_serial(value: str) -> bool:
+    return value.startswith("SAMPLE-") or bool(TEST_SERIAL_PATTERN.fullmatch(value))
+
+
 def _parse_utc(value: object) -> datetime:
     text = str(value).replace("Z", "+00:00")
     parsed = datetime.fromisoformat(text)
@@ -518,6 +621,7 @@ def _parse_utc(value: object) -> datetime:
 
 
 __all__ = [
+    "DEFAULT_SAMPLE_STATION_NUMBER",
     "SampleDatabaseSeeder",
     "SampleScenario",
     "SampleScenarioError",
