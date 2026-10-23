@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QSize, QSettings, QTimer, Qt
 from PyQt5.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
+    QSplitter,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -24,6 +28,9 @@ from PyQt5.QtWidgets import (
 )
 
 from application.replacement_persistence_workflow import (
+    CORRECTION_REASONS,
+    NORMAL_REPLACEMENT_REASONS,
+    REPLACEMENT_REASON_PLACEHOLDER,
     ReplacementChangeRequest,
     ReplacementEditorModel,
 )
@@ -34,9 +41,26 @@ QDialog#database_replacement_dialog {
     background: #eceff1;
     color: #202124;
 }
-QDialog#database_replacement_dialog QLabel,
-QDialog#database_replacement_dialog QCheckBox {
+QDialog#database_replacement_dialog QLabel {
     color: #202124;
+}
+QDialog#database_replacement_dialog QGroupBox {
+    border: 1px solid #c7cdd1;
+    border-radius: 4px;
+    margin-top: 8px;
+    padding: 10px 6px 6px 6px;
+    color: #202124;
+}
+QDialog#database_replacement_dialog QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+}
+QDialog#database_replacement_dialog QSplitter::handle {
+    background: #c7cdd1;
+}
+QDialog#database_replacement_dialog QSplitter::handle:hover {
+    background: #9aa4ad;
 }
 QTabWidget#database_replacement_tabs::pane {
     background: #f7f8f9;
@@ -96,9 +120,26 @@ QDialog#database_replacement_dialog {
     background: #202124;
     color: #e8eaed;
 }
-QDialog#database_replacement_dialog QLabel,
-QDialog#database_replacement_dialog QCheckBox {
+QDialog#database_replacement_dialog QLabel {
     color: #e8eaed;
+}
+QDialog#database_replacement_dialog QGroupBox {
+    border: 1px solid #4a4f57;
+    border-radius: 4px;
+    margin-top: 8px;
+    padding: 10px 6px 6px 6px;
+    color: #e8eaed;
+}
+QDialog#database_replacement_dialog QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+}
+QDialog#database_replacement_dialog QSplitter::handle {
+    background: #4a4f57;
+}
+QDialog#database_replacement_dialog QSplitter::handle:hover {
+    background: #737b86;
 }
 QTabWidget#database_replacement_tabs::pane {
     background: #25272b;
@@ -171,6 +212,7 @@ class DatabaseReplacementDialog(QDialog):
         self.spare_operator = model.default_operator
         self._pending: list[ReplacementChangeRequest] = []
         self._selected_recommendation = None
+        self._settings = QSettings("Light Workbench", "LightWorkbench")
 
         self.setWindowTitle("Manage Port Replacements")
         self.setObjectName("database_replacement_dialog")
@@ -199,31 +241,194 @@ class DatabaseReplacementDialog(QDialog):
         self.tabs.addTab(self._build_history_tab(), "Audit History")
         layout.addWidget(self.tabs, 1)
 
-        self.physical_completion_check = QCheckBox(
-            "I confirm that each queued physical port replacement was completed "
-            "outside Light Workbench. Light Workbench did not change or verify the mapping."
-        )
-        layout.addWidget(self.physical_completion_check)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept_changes)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self.apply_theme(bool(getattr(parent, "dark_mode_enabled", False)))
+        self._restore_ui_state()
+
+    def _restore_ui_state(self) -> None:
+        """Restore the replacement editor's size and splitter positions."""
+        geometry = self._settings.value("database_replacement_dialog_geometry")
+        if not geometry or not self.restoreGeometry(geometry):
+            saved_size = self._settings.value("database_replacement_dialog_size")
+            if isinstance(saved_size, QSize) and saved_size.isValid():
+                self.resize(saved_size)
+            else:
+                screen = self.screen() or QApplication.primaryScreen()
+                available = screen.availableGeometry() if screen else None
+                if available:
+                    width = min(1200, max(980, available.width() - 80))
+                    height = min(820, max(720, available.height() - 80))
+                    self.resize(width, height)
+                else:
+                    self.resize(1200, 820)
+        splitter_states = (
+            ("database_replacement_record_splitter_state", self.record_splitter),
+            ("database_replacement_upper_splitter_state", self.record_upper_splitter),
+            ("database_replacement_lower_splitter_state", self.record_lower_splitter),
+        )
+        saved_states = tuple(
+            (splitter, self._settings.value(key)) for key, splitter in splitter_states
+        )
+        QTimer.singleShot(
+            0,
+            lambda: self._restore_splitter_states_or_apply_defaults(saved_states),
+        )
+
+    def _restore_splitter_states_or_apply_defaults(self, saved_states) -> None:
+        """Apply splitter settings after Qt has assigned the dialog's size."""
+        for splitter, state in saved_states:
+            if state:
+                splitter.restoreState(state)
+        states_by_name = {
+            splitter.objectName(): state for splitter, state in saved_states
+        }
+        if (
+            not states_by_name.get("database_replacement_record_splitter")
+            and self.record_splitter.height() > 0
+        ):
+            height = self.record_splitter.height()
+            self.record_splitter.setSizes([round(height * 0.55), round(height * 0.45)])
+        if (
+            not states_by_name.get("database_replacement_upper_splitter")
+            and self.record_upper_splitter.width() > 0
+        ):
+            width = self.record_upper_splitter.width()
+            self.record_upper_splitter.setSizes([round(width * 0.65), round(width * 0.35)])
+        if (
+            not states_by_name.get("database_replacement_lower_splitter")
+            and self.record_lower_splitter.width() > 0
+        ):
+            width = self.record_lower_splitter.width()
+            self.record_lower_splitter.setSizes([round(width * 0.60), round(width * 0.40)])
+
+    def _save_ui_state(self) -> None:
+        """Persist only the replacement dialog's presentation state."""
+        self._settings.setValue(
+            "database_replacement_dialog_geometry", self.saveGeometry()
+        )
+        self._settings.setValue("database_replacement_dialog_size", self.size())
+        for key, splitter in (
+            ("database_replacement_record_splitter_state", self.record_splitter),
+            ("database_replacement_upper_splitter_state", self.record_upper_splitter),
+            ("database_replacement_lower_splitter_state", self.record_lower_splitter),
+        ):
+            self._settings.setValue(key, splitter.saveState())
+        self._settings.sync()
+
+    def closeEvent(self, event) -> None:
+        self._save_ui_state()
+        super().closeEvent(event)
 
     def _build_record_tab(self) -> QWidget:
         page = QWidget()
         page.setObjectName("database_replacement_tab_page")
         layout = QVBoxLayout(page)
 
-        layout.addWidget(QLabel("Replacement-analysis recommendations (advisory):"))
+        self.record_splitter = QSplitter(Qt.Vertical)
+        self.record_splitter.setObjectName("database_replacement_record_splitter")
+        self.record_splitter.setChildrenCollapsible(False)
+
+        upper_splitter = QSplitter(Qt.Horizontal)
+        upper_splitter.setObjectName("database_replacement_upper_splitter")
+        upper_splitter.setChildrenCollapsible(False)
+        upper_splitter.addWidget(self._build_recommendation_panel())
+        upper_splitter.addWidget(self._build_details_panel())
+        upper_splitter.setStretchFactor(0, 13)
+        upper_splitter.setStretchFactor(1, 7)
+        upper_splitter.setSizes([650, 350])
+        self.record_upper_splitter = upper_splitter
+
+        lower_splitter = QSplitter(Qt.Horizontal)
+        lower_splitter.setObjectName("database_replacement_lower_splitter")
+        lower_splitter.setChildrenCollapsible(False)
+        lower_splitter.addWidget(self._build_pending_panel())
+        lower_splitter.addWidget(self._build_mapping_panel())
+        lower_splitter.setStretchFactor(0, 3)
+        lower_splitter.setStretchFactor(1, 2)
+        lower_splitter.setSizes([600, 400])
+        self.record_lower_splitter = lower_splitter
+
+        self.record_splitter.addWidget(upper_splitter)
+        self.record_splitter.addWidget(lower_splitter)
+        self.record_splitter.setStretchFactor(0, 11)
+        self.record_splitter.setStretchFactor(1, 9)
+        self.record_splitter.setSizes([430, 350])
+        layout.addWidget(self.record_splitter, 1)
+        self.begin_manual_replacement()
+        return page
+
+    @staticmethod
+    def _configure_table(table: QTableWidget, *, minimum_height: int = 180) -> None:
+        """Apply shared table behavior without changing table contents."""
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.setMinimumHeight(minimum_height)
+        table.verticalHeader().setDefaultSectionSize(28)
+        table.horizontalHeader().setMinimumSectionSize(55)
+
+    @staticmethod
+    def _candidate_il_text(recommendation) -> str:
+        values = []
+        for value in (
+            recommendation.candidate_loss_1310_db,
+            recommendation.candidate_loss_1550_db,
+        ):
+            if value is not None:
+                values.append(f"{value:.4f}")
+        return " / ".join(values) + (" dB" if values else "Not available")
+
+    @classmethod
+    def _candidate_il_tooltip(cls, recommendation) -> str:
+        candidate_text = cls._candidate_il_text(recommendation)
+        worst = recommendation.candidate_worst_loss_db
+        worst_text = "Not available" if worst is None else f"{worst:.4f} dB"
+        return (
+            f"Candidate physical port: "
+            f"{recommendation.proposed_replacement_physical_port}\n"
+            f"1310 nm / 1550 nm: {candidate_text}\n"
+            f"Worst case: {worst_text}\n\n"
+            "This is the accepted measurement for the candidate port, "
+            "not a guaranteed result after physical rerouting."
+        )
+
+    def _set_reason_mode(self, correction: bool) -> None:
+        self._correction_mode = correction
+        self.mode_label.setText(
+            "Mode: Mapping correction" if correction else "Mode: Replacement"
+        )
+        reasons = CORRECTION_REASONS if correction else NORMAL_REPLACEMENT_REASONS
+        self.reason_combo.blockSignals(True)
+        self.reason_combo.clear()
+        self.reason_combo.addItem(REPLACEMENT_REASON_PLACEHOLDER, None)
+        for reason in reasons:
+            self.reason_combo.addItem(reason, reason)
+        self.reason_combo.setCurrentIndex(0)
+        self.reason_combo.blockSignals(False)
+
+    def _build_recommendation_panel(self) -> QGroupBox:
+        panel = QGroupBox("Replacement recommendations (advisory)")
+        panel.setObjectName("database_replacement_recommendations_panel")
+        panel.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        layout = QVBoxLayout(panel)
+
         self.recommendation_table = QTableWidget(0, 6)
         self.recommendation_table.setObjectName("database_replacement_table")
         self.recommendation_table.setHorizontalHeaderLabels(
-            ["Logical", "Current Port", "Proposed Port", "Category", "Improvement", "Evidence"]
+            [
+                "Logical",
+                "Current Port",
+                "Proposed Port",
+                "Category",
+                "Improvement",
+                "Candidate IL",
+            ]
         )
-        self.recommendation_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.recommendation_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.recommendation_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._configure_table(self.recommendation_table, minimum_height=220)
         for recommendation in self.model.recommendations:
             row = self.recommendation_table.rowCount()
             self.recommendation_table.insertRow(row)
@@ -237,16 +442,19 @@ class DatabaseReplacementDialog(QDialog):
                     if recommendation.improvement_db is None
                     else f"{recommendation.improvement_db:.4f} dB"
                 ),
-                (
-                    "Accepted measurement"
-                    if recommendation.has_measurement_evidence
-                    else "No accepted measurement"
-                ),
+                self._candidate_il_text(recommendation),
             )
             for column, value in enumerate(values):
                 self.recommendation_table.setItem(row, column, QTableWidgetItem(str(value)))
-        self.recommendation_table.horizontalHeader().setStretchLastSection(True)
+            candidate_item = self.recommendation_table.item(row, 5)
+            candidate_item.setToolTip(self._candidate_il_tooltip(recommendation))
         layout.addWidget(self.recommendation_table)
+        header = self.recommendation_table.horizontalHeader()
+        for column in range(5):
+            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.Stretch)
+        header_item = self.recommendation_table.horizontalHeaderItem(5)
+        header_item.setToolTip("Accepted candidate-port measurement at 1310 / 1550 nm.")
 
         action_row = QHBoxLayout()
         use_recommendation = QPushButton("Use Selected Recommendation")
@@ -255,13 +463,23 @@ class DatabaseReplacementDialog(QDialog):
         manual = QPushButton("Add Manual Replacement")
         manual.clicked.connect(self.begin_manual_replacement)
         action_row.addWidget(manual)
-        correction = QPushButton("Record Correction/Reversal...")
-        correction.clicked.connect(self.begin_correction)
-        action_row.addWidget(correction)
         action_row.addStretch()
         layout.addLayout(action_row)
+        return panel
+
+    def _build_details_panel(self) -> QGroupBox:
+        panel = QGroupBox("Replacement details")
+        panel.setObjectName("database_replacement_details_panel")
+        panel.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        layout = QVBoxLayout(panel)
+
+        self.mode_label = QLabel()
+        self.mode_label.setObjectName("database_replacement_mode_label")
+        layout.addWidget(self.mode_label)
 
         form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+
         self.logical_channel_combo = QComboBox()
         for route in self.model.channel_map:
             self.logical_channel_combo.addItem(str(route.logical_channel), route.logical_channel)
@@ -271,56 +489,86 @@ class DatabaseReplacementDialog(QDialog):
         self.proposed_port_spin = QSpinBox()
         self.proposed_port_spin.setRange(1, 4096)
         self.proposed_port_spin.valueChanged.connect(self._refresh_evidence)
-        self.category_edit = QLineEdit()
-        self.category_edit.setReadOnly(True)
-        self.improvement_edit = QLineEdit()
-        self.improvement_edit.setReadOnly(True)
-        self.reason_edit = QLineEdit()
+        self.category_edit = QLabel()
+        self.category_edit.setObjectName("database_replacement_category_value")
+        self.improvement_edit = QLabel()
+        self.improvement_edit.setObjectName("database_replacement_improvement_value")
+        self.candidate_il_label = QLabel()
+        self.candidate_il_label.setObjectName("database_replacement_candidate_il_value")
+        self.candidate_il_label.setWordWrap(True)
+        self.reason_combo = QComboBox()
         self.operator_edit = QLineEdit(self.model.default_operator)
         self.details_edit = QLineEdit()
-        self.evidence_label = QLabel()
+        self.candidate_warning_label = QLabel()
+        self.candidate_warning_label.setObjectName(
+            "database_replacement_candidate_warning"
+        )
+        for widget, width in (
+            (self.logical_channel_combo, 90),
+            (self.current_port_edit, 90),
+            (self.proposed_port_spin, 90),
+            (self.operator_edit, 100),
+        ):
+            widget.setFixedWidth(width)
         form.addRow("Logical channel:", self.logical_channel_combo)
-        form.addRow("Current effective physical port:", self.current_port_edit)
-        form.addRow("Proposed replacement physical port:", self.proposed_port_spin)
-        form.addRow("Recommendation category:", self.category_edit)
-        form.addRow("Measured improvement:", self.improvement_edit)
-        form.addRow("Measurement evidence:", self.evidence_label)
-        form.addRow("Reason:", self.reason_edit)
+        form.addRow("Current port:", self.current_port_edit)
+        form.addRow("Replacement port:", self.proposed_port_spin)
         form.addRow("Operator:", self.operator_edit)
-        form.addRow("Optional details:", self.details_edit)
-        layout.addLayout(form)
+        form.addRow("Category:", self.category_edit)
+        form.addRow("Improvement:", self.improvement_edit)
+        form.addRow("Candidate IL:", self.candidate_il_label)
+        form.addRow("Reason:", self.reason_combo)
+        form.addRow("Additional details:", self.details_edit)
+        layout.addLayout(form, 1)
 
-        queue_row = QHBoxLayout()
+        layout.addWidget(self.candidate_warning_label)
+
         queue_button = QPushButton("Queue Replacement for Save")
         queue_button.clicked.connect(self.queue_replacement)
-        queue_row.addWidget(queue_button)
-        remove_button = QPushButton("Remove Selected Queued Replacement")
-        remove_button.clicked.connect(self.remove_queued_replacement)
-        queue_row.addWidget(remove_button)
-        queue_row.addStretch()
-        layout.addLayout(queue_row)
+        layout.addWidget(queue_button)
+        return panel
+
+    def _build_pending_panel(self) -> QGroupBox:
+        panel = QGroupBox("Queued replacements")
+        panel.setObjectName("database_replacement_pending_panel")
+        panel.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        layout = QVBoxLayout(panel)
+        layout.addWidget(QLabel("Append-only records; nothing is saved until Save."))
 
         self.pending_table = QTableWidget(0, 7)
         self.pending_table.setObjectName("database_replacement_table")
         self.pending_table.setHorizontalHeaderLabels(
             ["Logical", "Current", "Proposed", "Category", "Improvement", "Reason", "Operator"]
         )
-        self.pending_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.pending_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.pending_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.pending_table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(QLabel("Queued append-only records (nothing is saved until Save):"))
-        layout.addWidget(self.pending_table)
+        self._configure_table(self.pending_table, minimum_height=180)
+        pending_header = self.pending_table.horizontalHeader()
+        for column in range(5):
+            pending_header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        pending_header.setSectionResizeMode(5, QHeaderView.Stretch)
+        pending_header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        self.pending_empty_label = QLabel("No replacements have been queued.")
+        self.pending_empty_label.setAlignment(Qt.AlignCenter)
+        self.pending_empty_label.setObjectName("database_replacement_empty_state")
+        layout.addWidget(self.pending_empty_label, 1)
+        layout.addWidget(self.pending_table, 1)
+        self.pending_table.hide()
 
-        layout.addWidget(QLabel("Current effective assignment mapping:"))
+        remove_button = QPushButton("Remove Selected Queued Replacement")
+        remove_button.clicked.connect(self.remove_queued_replacement)
+        layout.addWidget(remove_button)
+        return panel
+
+    def _build_mapping_panel(self) -> QGroupBox:
+        panel = QGroupBox("Current effective assignment mapping")
+        panel.setObjectName("database_replacement_mapping_panel")
+        panel.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        layout = QVBoxLayout(panel)
         self.active_mapping_table = QTableWidget(0, 3)
         self.active_mapping_table.setObjectName("database_replacement_table")
         self.active_mapping_table.setHorizontalHeaderLabels(
             ["Logical Channel", "Initial Port", "Current Effective Port"]
         )
-        self.active_mapping_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.active_mapping_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.active_mapping_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._configure_table(self.active_mapping_table, minimum_height=180)
         for route in self.model.channel_map:
             row = self.active_mapping_table.rowCount()
             self.active_mapping_table.insertRow(row)
@@ -328,10 +576,14 @@ class DatabaseReplacementDialog(QDialog):
                 (route.logical_channel, route.initial_physical_port, route.effective_physical_port)
             ):
                 self.active_mapping_table.setItem(row, column, QTableWidgetItem(str(value)))
-        self.active_mapping_table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.active_mapping_table)
-        self.begin_manual_replacement()
-        return page
+        mapping_header = self.active_mapping_table.horizontalHeader()
+        for column in range(3):
+            mapping_header.setSectionResizeMode(column, QHeaderView.Stretch)
+        correction = QPushButton("Correct Selected Mapping...")
+        correction.clicked.connect(self.begin_correction)
+        layout.addWidget(correction)
+        return panel
 
     def _build_spares_tab(self) -> QWidget:
         page = QWidget()
@@ -417,12 +669,15 @@ class DatabaseReplacementDialog(QDialog):
 
     def begin_manual_replacement(self) -> None:
         self._selected_recommendation = None
+        self._set_reason_mode(False)
         self.category_edit.clear()
         self.improvement_edit.clear()
-        self.reason_edit.clear()
+        self.candidate_il_label.clear()
+        self.candidate_warning_label.clear()
         self.details_edit.clear()
         self.operator_edit.setText(self.model.default_operator)
         self._logical_channel_changed()
+        self._refresh_evidence()
 
     def use_selected_recommendation(self) -> None:
         row = self.recommendation_table.currentRow()
@@ -435,6 +690,7 @@ class DatabaseReplacementDialog(QDialog):
             return
         recommendation = self.model.recommendations[row]
         self._selected_recommendation = recommendation
+        self._set_reason_mode(False)
         index = self.logical_channel_combo.findData(recommendation.logical_channel)
         self.logical_channel_combo.setCurrentIndex(index)
         self.current_port_edit.setText(str(recommendation.current_effective_physical_port))
@@ -445,7 +701,8 @@ class DatabaseReplacementDialog(QDialog):
             if recommendation.improvement_db is None
             else f"{recommendation.improvement_db:.4f} dB"
         )
-        self.reason_edit.setText(recommendation.default_reason)
+        self.candidate_il_label.setText(self._candidate_il_text(recommendation))
+        self.candidate_il_label.setToolTip(self._candidate_il_tooltip(recommendation))
         self.operator_edit.setText(self.model.default_operator)
         self.details_edit.clear()
         self._refresh_evidence()
@@ -458,11 +715,18 @@ class DatabaseReplacementDialog(QDialog):
             )
             return
         logical_channel = int(self.active_mapping_table.item(row, 0).text())
-        self.begin_manual_replacement()
+        self._selected_recommendation = None
+        self._set_reason_mode(True)
+        self.category_edit.clear()
+        self.improvement_edit.clear()
+        self.candidate_il_label.clear()
+        self.candidate_warning_label.clear()
+        self.details_edit.clear()
+        self.operator_edit.setText(self.model.default_operator)
         self.logical_channel_combo.setCurrentIndex(
             self.logical_channel_combo.findData(logical_channel)
         )
-        self.reason_edit.setPlaceholderText("Required correction or reversal reason")
+        self._refresh_evidence()
 
     def _logical_channel_changed(self, _index=None) -> None:
         logical_channel = self.logical_channel_combo.currentData()
@@ -473,22 +737,38 @@ class DatabaseReplacementDialog(QDialog):
 
     def _refresh_evidence(self, _value=None) -> None:
         port = self.proposed_port_spin.value()
-        if port in set(self.model.measured_physical_ports):
-            self.evidence_label.setText(
-                "Accepted measurement data is available for this physical port."
-            )
-            self.evidence_label.setStyleSheet("")
+        candidate = next(
+            (
+                recommendation
+                for recommendation in self.model.recommendations
+                if recommendation.proposed_replacement_physical_port == port
+            ),
+            None,
+        )
+        if candidate is not None:
+            self.candidate_il_label.setText(self._candidate_il_text(candidate))
+            self.candidate_il_label.setToolTip(self._candidate_il_tooltip(candidate))
         else:
-            self.evidence_label.setText(
-                "Warning: no accepted measurement evidence is available for this physical port."
+            self.candidate_il_label.setText("Not available")
+            self.candidate_il_label.setToolTip(
+                "No accepted candidate-port measurement is available."
             )
-            self.evidence_label.setStyleSheet("color: #d98200;")
+        if port in set(self.model.measured_physical_ports):
+            self.candidate_warning_label.clear()
+            self.candidate_warning_label.setStyleSheet("")
+        else:
+            self.candidate_warning_label.setText(
+                "Warning: no accepted measurement is available for this candidate port."
+            )
+            self.candidate_warning_label.setStyleSheet("color: #d98200;")
 
     def queue_replacement(self) -> None:
         logical_channel = int(self.logical_channel_combo.currentData())
         current_port = self.model.current_effective_port(logical_channel)
         proposed_port = self.proposed_port_spin.value()
-        reason = self.reason_edit.text().strip()
+        reason = self.reason_combo.currentData()
+        if reason is not None:
+            reason = str(reason).strip()
         operator = self.operator_edit.text().strip()
         if proposed_port == current_port:
             QMessageBox.warning(
@@ -498,7 +778,11 @@ class DatabaseReplacementDialog(QDialog):
             )
             return
         if not reason:
-            QMessageBox.warning(self, "Reason required", "Enter the replacement reason.")
+            QMessageBox.warning(
+                self,
+                "Reason required",
+                "Select a reason before queueing the replacement.",
+            )
             return
         if not operator:
             QMessageBox.warning(
@@ -524,6 +808,8 @@ class DatabaseReplacementDialog(QDialog):
         ):
             self.pending_table.setItem(row, column, QTableWidgetItem(str(value)))
         self.pending_table.selectRow(row)
+        self.pending_empty_label.hide()
+        self.pending_table.show()
         self.begin_manual_replacement()
 
     def remove_queued_replacement(self) -> None:
@@ -531,6 +817,9 @@ class DatabaseReplacementDialog(QDialog):
         if row >= 0:
             self.pending_table.removeRow(row)
             self._pending.pop(row)
+            if self.pending_table.rowCount() == 0:
+                self.pending_table.hide()
+                self.pending_empty_label.show()
 
     def _spare_changes(self) -> tuple[tuple[int, ...], tuple[int, ...]]:
         existing = set(self.model.existing_spares)
@@ -542,14 +831,6 @@ class DatabaseReplacementDialog(QDialog):
         return tuple(sorted(selected - existing)), tuple(sorted(existing - selected))
 
     def accept_changes(self) -> None:
-        if self._pending and not self.physical_completion_check.isChecked():
-            QMessageBox.warning(
-                self,
-                "Physical completion confirmation required",
-                "Confirm that the queued physical replacements were completed outside "
-                "Light Workbench before saving.",
-            )
-            return
         designate, undesignate = self._spare_changes()
         self.replacement_requests = tuple(self._pending)
         self.spares_to_designate = designate

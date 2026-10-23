@@ -284,6 +284,9 @@ class ReplacementPersistenceWorkflowTests(unittest.TestCase):
                     "logical_channel": 1,
                     "current_physical_port": 1,
                     "candidate_physical_port": 5,
+                    "candidate_loss_1310_db": 1.05,
+                    "candidate_loss_1550_db": 1.15,
+                    "candidate_worst_loss_db": 1.15,
                     "category": "required",
                     "improvement_db": 1.25,
                 }
@@ -299,8 +302,11 @@ class ReplacementPersistenceWorkflowTests(unittest.TestCase):
         self.assertEqual(recommendation.proposed_replacement_physical_port, 5)
         self.assertEqual(recommendation.category, "required")
         self.assertEqual(recommendation.improvement_db, 1.25)
-        self.assertEqual(recommendation.default_reason, "Formal insertion-loss failure")
+        self.assertEqual(recommendation.default_reason, "")
         self.assertTrue(recommendation.has_measurement_evidence)
+        self.assertEqual(recommendation.candidate_loss_1310_db, 1.05)
+        self.assertEqual(recommendation.candidate_loss_1550_db, 1.15)
+        self.assertEqual(recommendation.candidate_worst_loss_db, 1.15)
         self.assertEqual(model.default_operator, "AT")
         self.assertEqual(model.recommended_spares, (3,))
 

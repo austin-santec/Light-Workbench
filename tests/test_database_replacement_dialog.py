@@ -1,12 +1,12 @@
 import os
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QApplication, QDialog, QMessageBox
+from PyQt5.QtWidgets import QApplication, QDialog, QSplitter
 
 from application.replacement_persistence_workflow import (
     ReplacementEditorModel,
@@ -45,7 +45,7 @@ class DatabaseReplacementDialogTests(unittest.TestCase):
             recommendations=(
                 ReplacementRecommendation(
                     1, 4, 6, "required", 1.2,
-                    "Formal insertion-loss failure", True,
+                    "", True, 1.08, 1.12, 1.12,
                 ),
             ),
         )
@@ -91,6 +91,48 @@ class DatabaseReplacementDialogTests(unittest.TestCase):
         self.assertIn("QWidget#database_replacement_tab_page", dialog.styleSheet())
         dialog.close()
 
+    def test_record_tab_uses_resizable_panels_and_compact_controls(self):
+        dialog = DatabaseReplacementDialog(self.model())
+
+        self.assertIsInstance(dialog.record_splitter, QSplitter)
+        self.assertIs(dialog.record_splitter.widget(0), dialog.record_upper_splitter)
+        self.assertIs(dialog.record_splitter.widget(1), dialog.record_lower_splitter)
+        self.assertEqual(dialog.record_upper_splitter.count(), 2)
+        self.assertEqual(dialog.record_lower_splitter.count(), 2)
+        self.assertEqual(dialog.logical_channel_combo.maximumWidth(), 90)
+        self.assertEqual(dialog.current_port_edit.maximumWidth(), 90)
+        self.assertEqual(dialog.proposed_port_spin.maximumWidth(), 90)
+        self.assertTrue(dialog.pending_empty_label.text())
+        self.assertFalse(dialog.pending_table.isVisibleTo(dialog))
+        dialog.close()
+
+    def test_record_tab_persists_geometry_and_splitter_state(self):
+        dialog = DatabaseReplacementDialog(self.model())
+        dialog._settings = MagicMock()
+
+        dialog._save_ui_state()
+
+        self.assertTrue(
+            any(
+                call.args[0] == "database_replacement_dialog_geometry"
+                for call in dialog._settings.setValue.call_args_list
+            )
+        )
+        self.assertTrue(
+            any(
+                call.args[0] == "database_replacement_dialog_size"
+                for call in dialog._settings.setValue.call_args_list
+            )
+        )
+        self.assertTrue(
+            any(
+                call.args[0] == "database_replacement_record_splitter_state"
+                for call in dialog._settings.setValue.call_args_list
+            )
+        )
+        dialog._settings.sync.assert_called_once_with()
+        dialog.close()
+
     def test_recommendation_populates_known_fields_and_editable_operator(self):
         dialog = DatabaseReplacementDialog(self.model())
         dialog.recommendation_table.selectRow(0)
@@ -101,10 +143,63 @@ class DatabaseReplacementDialogTests(unittest.TestCase):
         self.assertEqual(dialog.proposed_port_spin.value(), 6)
         self.assertEqual(dialog.category_edit.text(), "Required")
         self.assertEqual(dialog.improvement_edit.text(), "1.2000 dB")
-        self.assertEqual(dialog.reason_edit.text(), "Formal insertion-loss failure")
+        self.assertEqual(dialog.reason_combo.currentData(), None)
+        self.assertEqual(dialog.candidate_il_label.text(), "1.0800 / 1.1200 dB")
+        self.assertIn("Candidate physical port: 6", dialog.candidate_il_label.toolTip())
         self.assertEqual(dialog.operator_edit.text(), "AT")
         dialog.operator_edit.setText("JS")
         self.assertEqual(dialog.operator_edit.text(), "JS")
+        dialog.close()
+
+    def test_queued_panel_switches_between_empty_state_and_table(self):
+        dialog = DatabaseReplacementDialog(self.model())
+        dialog.proposed_port_spin.setValue(6)
+        dialog.reason_combo.setCurrentIndex(
+            dialog.reason_combo.findText("Unknown cause of high loss")
+        )
+        dialog.queue_replacement()
+
+        self.assertTrue(dialog.pending_empty_label.isHidden())
+        self.assertFalse(dialog.pending_table.isHidden())
+        dialog.pending_table.selectRow(0)
+        dialog.remove_queued_replacement()
+        self.assertFalse(dialog.pending_empty_label.isHidden())
+        self.assertTrue(dialog.pending_table.isHidden())
+        dialog.close()
+
+    def test_reason_choices_and_append_only_correction_mode(self):
+        dialog = DatabaseReplacementDialog(self.model())
+        self.assertFalse(hasattr(dialog, "physical_completion_check"))
+        self.assertEqual(
+            [dialog.reason_combo.itemText(index) for index in range(dialog.reason_combo.count())],
+            [
+                "Select reason...",
+                "Dirty/scratched fiber",
+                "Issue with terminated boot",
+                "Splicing issue",
+                "Break in fiber",
+                "Unknown cause of high loss",
+            ],
+        )
+        dialog.active_mapping_table.selectRow(0)
+        dialog.begin_correction()
+        self.assertEqual(dialog.mode_label.text(), "Mode: Mapping correction")
+        self.assertEqual(
+            [dialog.reason_combo.itemText(index) for index in range(dialog.reason_combo.count())],
+            [
+                "Select reason...",
+                "Correction of previous mapping record",
+                "Reversal to previous physical port",
+                "Replacement changed again",
+                "Other correction",
+            ],
+        )
+        dialog.reason_combo.setCurrentIndex(
+            dialog.reason_combo.findText("Reversal to previous physical port")
+        )
+        with patch("ui.database_replacements.QMessageBox.warning"):
+            dialog.queue_replacement()
+        self.assertEqual(dialog._pending[0].reason, "Reversal to previous physical port")
         dialog.close()
 
     def test_manual_replacement_derives_latest_effective_port_and_saves_details(self):
@@ -113,11 +208,12 @@ class DatabaseReplacementDialogTests(unittest.TestCase):
             dialog.logical_channel_combo.findData(1)
         )
         dialog.proposed_port_spin.setValue(6)
-        dialog.reason_edit.setText("Correction")
+        dialog.reason_combo.setCurrentIndex(
+            dialog.reason_combo.findText("Splicing issue")
+        )
         dialog.operator_edit.setText("JS")
         dialog.details_edit.setText("Operator-supplied details")
         dialog.queue_replacement()
-        dialog.physical_completion_check.setChecked(True)
         dialog.accept_changes()
 
         self.assertEqual(dialog.result(), QDialog.Accepted)
@@ -128,20 +224,18 @@ class DatabaseReplacementDialogTests(unittest.TestCase):
         self.assertEqual(request.replaced_by, "JS")
         dialog.close()
 
-    def test_confirmation_required_and_spares_are_not_silently_removed(self):
+    def test_save_does_not_require_physical_completion_confirmation(self):
         dialog = DatabaseReplacementDialog(self.model())
         dialog.proposed_port_spin.setValue(6)
-        dialog.reason_edit.setText("Manual")
+        dialog.reason_combo.setCurrentIndex(
+            dialog.reason_combo.findText("Dirty/scratched fiber")
+        )
         dialog.queue_replacement()
-        with patch.object(QMessageBox, "warning") as warning:
-            dialog.accept_changes()
-        warning.assert_called_once()
-        self.assertNotEqual(dialog.result(), QDialog.Accepted)
+        dialog.accept_changes()
+        self.assertEqual(dialog.result(), QDialog.Accepted)
 
         self.assertEqual(dialog.spare_table.item(0, 0).checkState(), Qt.Checked)
         self.assertEqual(dialog.spare_table.item(1, 0).checkState(), Qt.Checked)
-        dialog.physical_completion_check.setChecked(True)
-        dialog.accept_changes()
         self.assertEqual(dialog.spares_to_designate, (6,))
         self.assertEqual(dialog.spares_to_undesignate, ())
         dialog.close()

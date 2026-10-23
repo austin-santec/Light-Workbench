@@ -18,6 +18,22 @@ from domain.database_records import (
 )
 
 
+REPLACEMENT_REASON_PLACEHOLDER = "Select reason..."
+NORMAL_REPLACEMENT_REASONS = (
+    "Dirty/scratched fiber",
+    "Issue with terminated boot",
+    "Splicing issue",
+    "Break in fiber",
+    "Unknown cause of high loss",
+)
+CORRECTION_REASONS = (
+    "Correction of previous mapping record",
+    "Reversal to previous physical port",
+    "Replacement changed again",
+    "Other correction",
+)
+
+
 @dataclass(frozen=True)
 class AssignmentRoutingSnapshot:
     """Current routes plus complete append-only documentation history."""
@@ -49,6 +65,9 @@ class ReplacementRecommendation:
     improvement_db: float | None
     default_reason: str
     has_measurement_evidence: bool
+    candidate_loss_1310_db: float | None = None
+    candidate_loss_1550_db: float | None = None
+    candidate_worst_loss_db: float | None = None
 
 
 @dataclass(frozen=True)
@@ -138,12 +157,23 @@ class ReplacementPersistenceWorkflow:
                     improvement_db=(
                         None if improvement is None else float(improvement)
                     ),
-                    default_reason=(
-                        "Formal insertion-loss failure"
-                        if category == "required"
-                        else "Insertion-loss optimization"
-                    ),
+                    default_reason="",
                     has_measurement_evidence=proposed in measured_set,
+                    candidate_loss_1310_db=(
+                        None
+                        if item.get("candidate_loss_1310_db") is None
+                        else float(item["candidate_loss_1310_db"])
+                    ),
+                    candidate_loss_1550_db=(
+                        None
+                        if item.get("candidate_loss_1550_db") is None
+                        else float(item["candidate_loss_1550_db"])
+                    ),
+                    candidate_worst_loss_db=(
+                        None
+                        if item.get("candidate_worst_loss_db") is None
+                        else float(item["candidate_worst_loss_db"])
+                    ),
                 )
             )
         return ReplacementEditorModel(
@@ -324,6 +354,9 @@ class ReplacementPersistenceWorkflow:
 
 
 __all__ = [
+    "CORRECTION_REASONS",
+    "NORMAL_REPLACEMENT_REASONS",
+    "REPLACEMENT_REASON_PLACEHOLDER",
     "AssignmentRoutingSnapshot",
     "ReplacementChangeRequest",
     "ReplacementEditorModel",
