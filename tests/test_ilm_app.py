@@ -24,7 +24,12 @@ from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
 from domain.coc_preparation import CocSourceRun, prepare_coc
 from domain.extra_ports import ExtraPortPhaseStatus
 from domain.limit_profiles import default_limit_profiles
-from domain.run_status import COMPLETION_COMPLETE, RESULT_PASS
+from domain.run_status import (
+    COMPLETION_COMPLETE,
+    RESULT_FAIL_RECOVERABLE,
+    RESULT_PASS,
+    RunStatusAssessment,
+)
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
 from domain.measurement_attempts import new_measurement_attempt
 from ilm_app import (
@@ -255,6 +260,36 @@ class MainWindowTests(unittest.TestCase):
             "COC creation is available.",
             window.result_status_label.toolTip(),
         )
+        window.close()
+
+    def test_recovery_available_status_is_yellow(self):
+        window = MainWindow()
+        assessment = RunStatusAssessment(
+            completion_status=COMPLETION_COMPLETE,
+            result_status=RESULT_FAIL_RECOVERABLE,
+            planned_channel_count=48,
+            completed_channel_count=48,
+        )
+
+        with patch.object(
+            window,
+            "_calculate_run_status",
+            return_value=assessment,
+        ):
+            for dark_mode_enabled, expected_color in (
+                (True, "#ffd166"),
+                (False, "#946200"),
+            ):
+                window.dark_mode_enabled = dark_mode_enabled
+                window.refresh_run_status()
+                self.assertEqual(
+                    window.result_status_label.text(),
+                    "Result: Fail \u00b7 recovery available",
+                )
+                self.assertIn(
+                    expected_color,
+                    window.result_status_label.styleSheet(),
+                )
         window.close()
 
     def test_run_purpose_defaults_to_production_and_warns_for_nonproduction(self):

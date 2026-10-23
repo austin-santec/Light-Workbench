@@ -7340,7 +7340,7 @@ class MainWindow(QMainWindow):
             RESULT_PASS_REVIEW: ("#ffd166", "#946200"),
             RESULT_COMPOSITE: ("#72d19a", "#28704a"),
             RESULT_SUPPLEMENTAL: ("#8ecbff", "#14649a"),
-            RESULT_FAIL_RECOVERABLE: ("#ff8f86", "#a33b2f"),
+            RESULT_FAIL_RECOVERABLE: ("#ffd166", "#946200"),
             RESULT_FAIL_UNRECOVERABLE: ("#ff8f86", "#a33b2f"),
             RESULT_REVIEW: ("#ff8f86", "#a33b2f"),
         }
