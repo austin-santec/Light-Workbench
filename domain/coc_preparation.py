@@ -8,7 +8,10 @@ import math
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from .limit_profiles import normalize_switch_model
+from .limit_profiles import (
+    DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB,
+    normalize_switch_model,
+)
 from .models import MeasurementRecord
 from .part_numbers import infer_front_panel_channel_count
 from .replacements import ReplacementReading, analyze_replacements
@@ -134,7 +137,7 @@ def prepare_coc(
     completed_replacements: Sequence[Mapping[str, object]] = (),
     designated_spares: Sequence[int] = (),
 ) -> CocPreparationResult:
-    """Prepare a COC from the newest valid reading in compatible run history."""
+    """Prepare a COC and advisory recovery options from compatible run history."""
     count = int(front_panel_channel_count)
     if not 1 <= count <= COC_MAX_CHANNELS:
         raise ValueError("Front-panel channel count must be between 1 and 48.")
@@ -289,18 +292,16 @@ def prepare_coc(
         if _is_optimization_reading(channel.record, warning_limit, fail_limit)
     )
     recommendations = ()
-    if (
-        warning_limit is not None
-        and not missing
-        and not invalid
-        and not failures
-        and not validation_issues
-    ):
+    if not missing and not invalid and not validation_issues:
         recommendations = _optimization_recommendations(
             prepared,
             accepted_sources,
             count,
             designated_spares,
+            warning_limit=(warning_limit if warning_limit is not None else fail_limit),
+            fail_limit=fail_limit,
+            minimum_improvement=_effective_minimum_replacement_improvement(base_run),
+            model=_run_model(base_run),
         )
 
     return CocPreparationResult(
@@ -431,6 +432,14 @@ def _effective_warning_limit(source_run: CocSourceRun) -> float | None:
         return None
     value = criteria.get("warning_above_db")
     return None if value in (None, "") else float(value)
+
+
+def _effective_minimum_replacement_improvement(source_run: CocSourceRun) -> float:
+    criteria = dict(source_run.criteria or {})
+    value = criteria.get("minimum_replacement_improvement_db")
+    if value in (None, ""):
+        return DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB
+    return float(value)
 
 
 def _compatibility_issues(
@@ -728,6 +737,11 @@ def _optimization_recommendations(
     source_runs: Sequence[CocSourceRun],
     channel_count: int,
     designated_spares: Sequence[int],
+    *,
+    warning_limit: float,
+    fail_limit: float,
+    minimum_improvement: float,
+    model: str,
 ) -> tuple[Mapping[str, object], ...]:
     assigned_ports = {channel.physical_port for channel in prepared}
     readings_by_port: dict[int, ReplacementReading] = {}
@@ -784,9 +798,15 @@ def _optimization_recommendations(
         production,
         extras,
         channel_count,
-        COC_OPTIMIZATION_LIMIT_DB,
-        fail_limit=COC_FORMAL_LIMIT_DB,
-        model="OSX-150",
+        warning_limit,
+        minimum_improvement=minimum_improvement,
+        fail_limit=fail_limit,
+        model=model,
+        wavelengths=(
+            prepared[0].record.opm_wavelengths_nm
+            if prepared
+            else (1310, 1550)
+        ),
     )
     return tuple(result.get("recommendations", ()))
 

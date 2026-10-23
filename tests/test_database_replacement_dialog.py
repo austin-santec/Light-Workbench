@@ -64,6 +64,33 @@ class DatabaseReplacementDialogTests(unittest.TestCase):
         self.assertEqual(dialog.result(), 0)
         dialog.close()
 
+    def test_tabs_and_content_follow_light_and_dark_theme(self):
+        dialog = DatabaseReplacementDialog(self.model())
+
+        self.assertEqual(dialog.objectName(), "database_replacement_dialog")
+        self.assertEqual(dialog.tabs.objectName(), "database_replacement_tabs")
+        self.assertEqual(
+            dialog.tabs.tabBar().objectName(),
+            "database_replacement_tab_bar",
+        )
+        self.assertEqual(dialog.tabs.count(), 3)
+        self.assertIn("#ffffff", dialog.styleSheet())
+        for table in (
+            dialog.recommendation_table,
+            dialog.pending_table,
+            dialog.active_mapping_table,
+            dialog.spare_table,
+            dialog.history_table,
+        ):
+            self.assertEqual(table.objectName(), "database_replacement_table")
+
+        dialog.apply_theme(True)
+
+        self.assertIn("#25272b", dialog.styleSheet())
+        self.assertIn("#3a3e45", dialog.styleSheet())
+        self.assertIn("QWidget#database_replacement_tab_page", dialog.styleSheet())
+        dialog.close()
+
     def test_recommendation_populates_known_fields_and_editable_operator(self):
         dialog = DatabaseReplacementDialog(self.model())
         dialog.recommendation_table.selectRow(0)

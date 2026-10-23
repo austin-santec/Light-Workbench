@@ -12,7 +12,12 @@ from application.sample_database_seeding import (
 )
 from domain.coc_preparation import prepare_coc
 from domain.limit_profiles import LimitProfile
-from domain.run_status import RESULT_COMPOSITE, RESULT_SUPPLEMENTAL
+from domain.replacements import ReplacementReading, analyze_replacements
+from domain.run_status import (
+    RESULT_COMPOSITE,
+    RESULT_FAIL_RECOVERABLE,
+    RESULT_SUPPLEMENTAL,
+)
 from infrastructure.database.memory_repositories import InMemoryRepositories
 
 
@@ -28,7 +33,7 @@ class SampleDatabaseSeedingTests(unittest.TestCase):
 
     def test_approved_scenarios_are_valid_and_deterministic(self):
         scenarios = tuple(load_scenario(path) for path in sorted(SCENARIO_ROOT.glob("*.json")))
-        self.assertEqual(len(scenarios), 3)
+        self.assertEqual(len(scenarios), 4)
         self.assertIn("SAMPLE-OSX150-3RUN-COMPOSITE", {item.scenario_id for item in scenarios})
         for scenario in scenarios:
             self.assertTrue(scenario.scenario_id.startswith("SAMPLE-"))
@@ -122,6 +127,80 @@ class SampleDatabaseSeedingTests(unittest.TestCase):
             [context.snapshot.measurements[0].opm_wavelengths_nm for context in contexts],
             [(1310, 1550)] * 3,
         )
+
+    def test_extra_port_scenario_is_ready_for_replacement_analysis(self):
+        scenario = load_scenario(
+            SCENARIO_ROOT / "osx150_extra_port_replacement_analysis.json"
+        )
+        self.assertEqual(scenario.unit.main_board_serial, "S-00004")
+        self.assertEqual(scenario.switch.switch_serial, "S-00005")
+        self.assertEqual(scenario.ilm_serial, "S-00006")
+        self.assertEqual(scenario.unit.front_panel_channel_count, 48)
+        self.assertEqual(scenario.switch.physical_channel_count, 56)
+        self.assertEqual(scenario.replacements, ())
+        self.assertEqual(scenario.spares, ())
+
+        workflow = self._workflow()
+        result = SampleDatabaseSeeder(workflow).seed(scenario)
+        context = workflow.load_for_unit(scenario.unit.main_board_serial, 1)
+
+        self.assertEqual(result.measurement_count, 56)
+        self.assertEqual(result.replacement_count, 0)
+        self.assertEqual(result.spare_count, 0)
+        self.assertEqual(context.run.completion_status, "complete")
+        measurements = context.snapshot.measurements
+        self.assertEqual(len(measurements), 56)
+        failures = {
+            record.channel
+            for record in measurements
+            if record.channel <= 48 and max(record.ordered_losses) > 2.5
+        }
+        self.assertEqual(failures, {20, 21, 22, 23})
+        extras = [record for record in measurements if record.channel > 48]
+        self.assertEqual(
+            [(record.channel, record.physical_port) for record in extras],
+            [(port, port) for port in range(49, 57)],
+        )
+        self.assertTrue(
+            all(max(record.ordered_losses) <= 2.25 for record in extras)
+        )
+
+        analysis = analyze_replacements(
+            [record for record in measurements if record.channel <= 48],
+            [
+                ReplacementReading(
+                    record.physical_port,
+                    record.ordered_losses[0],
+                    record.ordered_losses[1],
+                )
+                for record in extras
+            ],
+            48,
+            2.25,
+            0.2,
+            fail_limit=2.5,
+            model="OSX-150",
+            too_good_limit=0.5,
+        )
+        self.assertEqual(
+            {item["logical_channel"] for item in analysis["recommendations"]},
+            {20, 21, 22, 23},
+        )
+        self.assertTrue(
+            all(
+                49 <= item["candidate_physical_port"] <= 56
+                for item in analysis["recommendations"]
+            )
+        )
+        projection = prepare_coc(context.snapshot.coc_source(), 48)
+        status = context.snapshot.status(
+            profile=LimitProfile.from_mapping(scenario.runs[0].limit_snapshot),
+            planned_channels=range(1, 49),
+            effective_result=projection,
+            effective_run_numbers=projection.source_run_numbers,
+        )
+        self.assertFalse(projection.eligible)
+        self.assertEqual(status.result_status, RESULT_FAIL_RECOVERABLE)
 
     def test_engineering_sample_runs_can_form_a_combined_coc(self):
         scenario = load_scenario(

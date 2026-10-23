@@ -15,6 +15,7 @@ The declarative scenario files are in `sample_data/scenarios/`:
 | `SAMPLE-OSX150-OPT-ENGINEERING` | Engineering/replacement demonstration | Two complete excluded engineering runs. Run 1 has all 36 channels; Run 2 retests logical channels 9 and 20 after documented replacements to physical ports 43 and 41. |
 | `SAMPLE-OSX150-COC-DEMO` | COC and combined-run demonstration | A multi-run pattern using a separate synthetic unit. The current scenario uses two runs; both are production-shaped but explicitly excluded from production analysis so they cannot become production data accidentally. |
 | `SAMPLE-OSX150-3RUN-COMPOSITE` | Three-run COC aggregation demonstration | Test unit `S-00001` with Runs 1–3 containing channels 1–16, 17–32, and 33–48. Only all three runs together are COC-eligible. Seeded runs use station 99. |
+| `SAMPLE-OSX150-EXTRA-PORT-ANALYSIS` | Extra-port replacement-analysis demonstration | Test unit `S-00004` has one completed 56-reading run: front-panel channels 1–48, failures on 20–23, and passing extra physical ports 49–56. It contains no saved analysis, replacements, or designated spares. |
 
 All scenarios include deterministic references, limit snapshots, hardware
 identity, channel maps, designated spares, replacement history, and generated
@@ -28,6 +29,12 @@ COC demonstration keeps a production-shaped purpose so it can also demonstrate
 production-analysis filtering, but its explicit analysis exclusion keeps it
 out of normal production reporting. Run purpose does not block COC creation;
 measurement eligibility and compatibility rules do.
+
+The extra-port analysis scenario intentionally remains COC-ineligible because
+its four front-panel failures have not been replaced and retested. Its
+`Fail · recovery available` result is derived from valid measured extra ports;
+it does not mean that a replacement was recorded or that the COC can be
+created.
 
 The three-run composite scenario is intentionally stopped/incomplete at the
 individual-run level. Every one-run and two-run subset is missing front-panel
@@ -46,6 +53,7 @@ The tool is dry-run by default:
 python tools/seed_sample_runs.py --list
 python tools/seed_sample_runs.py --scenario SAMPLE-OSX150-OPT-ENGINEERING
 python tools/seed_sample_runs.py --scenario SAMPLE-OSX150-3RUN-COMPOSITE
+python tools/seed_sample_runs.py --scenario SAMPLE-OSX150-EXTRA-PORT-ANALYSIS
 python tools/seed_sample_runs.py --all --inspect-existing
 ```
 
@@ -59,6 +67,7 @@ After reviewing the target and plan, apply one scenario or both:
 ```powershell
 python tools/seed_sample_runs.py --scenario SAMPLE-OSX150-OPT-ENGINEERING --apply
 python tools/seed_sample_runs.py --scenario SAMPLE-OSX150-3RUN-COMPOSITE --apply
+python tools/seed_sample_runs.py --scenario SAMPLE-OSX150-EXTRA-PORT-ANALYSIS --apply
 python tools/seed_sample_runs.py --all --apply
 ```
 

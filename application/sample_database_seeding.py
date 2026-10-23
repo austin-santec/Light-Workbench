@@ -242,6 +242,27 @@ class SampleScenario:
             normalized.append(item)
         return tuple(normalized)
 
+    def measurement_physical_port(
+        self,
+        row: Mapping[str, object],
+        current_channel_map: Mapping[int, int],
+    ) -> int:
+        """Resolve front-panel routes and direct extra-port measurements."""
+        logical_channel = int(row["logical_channel"])
+        if "physical_port" in row:
+            return int(row["physical_port"])
+        if logical_channel in current_channel_map:
+            return int(current_channel_map[logical_channel])
+        if (
+            self.unit.front_panel_channel_count
+            < logical_channel
+            <= self.switch.physical_channel_count
+        ):
+            return logical_channel
+        raise SampleScenarioError(
+            f"Measurement channel {logical_channel} has no physical-port mapping."
+        )
+
     def run_uuid(self, run: SampleRun) -> UUID:
         return uuid5(SAMPLE_UUID_NAMESPACE, f"{self.scenario_id}|run|{run.number}")
 
@@ -395,10 +416,14 @@ class SampleDatabaseSeeder:
                 current_map[logical] = int(replacement["replacement_physical_port"])
             for row in scenario.measurement_rows(run):
                 logical = int(row["logical_channel"])
+                physical_port = scenario.measurement_physical_port(
+                    row,
+                    current_map,
+                )
                 pending = self.workflow.measurements.prepare_measurement(
                     run_id=record.run_id,
                     logical_channel=logical,
-                    physical_port=int(row.get("physical_port", current_map[logical])),
+                    physical_port=physical_port,
                     wavelength_1_nm=int(row["wavelength_1_nm"]),
                     wavelength_1_il_db=Decimal(str(row["wavelength_1_il_db"])),
                     wavelength_2_nm=int(row["wavelength_2_nm"]),
@@ -482,7 +507,8 @@ class SampleDatabaseSeeder:
                 match = next((item for item in measurements if item.logical_channel == logical), None)
                 if match is None or match.attempt_number != int(row.get("attempt_number", 1)):
                     raise SampleScenarioError(f"Sample Run {expected.number} is missing channel {logical}.")
-                if match.physical_port != int(row.get("physical_port", current_map[logical])):
+                expected_port = scenario.measurement_physical_port(row, current_map)
+                if match.physical_port != expected_port:
                     raise SampleScenarioError(f"Sample Run {expected.number} has an unexpected physical port.")
         snapshot = self.repositories.routing_snapshot_for_assignment(assignment.assignment_id)
         replacement_records = snapshot[1]
@@ -576,8 +602,34 @@ class SampleDatabaseSeeder:
         channels = {int(item["logical_channel"]) for item in rows}
         if len(channels) != len(rows):
             raise SampleScenarioError(f"Run {run.number} contains duplicate logical channels.")
-        if any(channel not in scenario.initial_channel_map for channel in channels):
-            raise SampleScenarioError(f"Run {run.number} contains an unknown logical channel.")
+        for row in rows:
+            logical = int(row["logical_channel"])
+            is_front_panel = logical in scenario.initial_channel_map
+            is_extra_port = (
+                scenario.unit.front_panel_channel_count
+                < logical
+                <= scenario.switch.physical_channel_count
+            )
+            if not is_front_panel and not is_extra_port:
+                raise SampleScenarioError(
+                    f"Run {run.number} contains unknown channel {logical}."
+                )
+            physical_port = int(
+                row.get(
+                    "physical_port",
+                    scenario.initial_channel_map.get(logical, logical),
+                )
+            )
+            if physical_port < 1 or physical_port > scenario.switch.physical_channel_count:
+                raise SampleScenarioError(
+                    f"Run {run.number} contains physical port {physical_port} "
+                    "outside switch capacity."
+                )
+            if is_extra_port and physical_port != logical:
+                raise SampleScenarioError(
+                    f"Run {run.number} extra channel {logical} must represent "
+                    "the same physical port."
+                )
         return run
 
 

@@ -467,6 +467,48 @@ class CocPreparationTests(unittest.TestCase):
         self.assertEqual(result.optimization_channels, (1,))
         self.assertEqual(result.optimization_recommendations, ())
 
+    def test_formal_failures_can_have_measured_recovery_recommendations(self):
+        result = prepare_coc(
+            source(
+                1,
+                [
+                    MeasurementRecord(1, 2.7, 2.6, 1),
+                    MeasurementRecord(2, 1.0, 1.1, 2),
+                    MeasurementRecord(3, 0.9, 1.0, 3),
+                ],
+            ),
+            2,
+        )
+
+        self.assertFalse(result.eligible)
+        self.assertEqual({failure.channel for failure in result.failures}, {1})
+        self.assertEqual(
+            {item["logical_channel"] for item in result.optimization_recommendations},
+            {1},
+        )
+        self.assertEqual(
+            result.optimization_recommendations[0]["candidate_physical_port"],
+            3,
+        )
+
+    def test_recovery_recommendations_use_saved_minimum_improvement(self):
+        criteria = dict(CRITERIA)
+        criteria["minimum_replacement_improvement_db"] = 0.7
+        result = prepare_coc(
+            source(
+                1,
+                [
+                    MeasurementRecord(1, 2.7, 2.6, 1),
+                    MeasurementRecord(2, 2.1, 2.0, 2),
+                ],
+                criteria=criteria,
+            ),
+            1,
+        )
+
+        self.assertFalse(result.eligible)
+        self.assertEqual(result.optimization_recommendations, ())
+
     def test_channels_above_front_panel_count_are_excluded(self):
         result = prepare_coc(
             source(

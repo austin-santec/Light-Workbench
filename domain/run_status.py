@@ -276,7 +276,10 @@ def assess_run_status(
                 else RESULT_FAIL_UNRECOVERABLE
             )
             detail = (
-                "The newest effective measurement for one or more channels fails."
+                "The newest effective measurement for one or more channels fails; "
+                "measured extra ports provide a possible recovery path."
+                if recommendations
+                else "The newest effective measurement for one or more channels fails."
             )
         elif projection_optimizations:
             recommendations = tuple(

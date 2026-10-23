@@ -29,6 +29,136 @@ from application.replacement_persistence_workflow import (
 )
 
 
+REPLACEMENT_LIGHT_STYLESHEET = """
+QDialog#database_replacement_dialog {
+    background: #eceff1;
+    color: #202124;
+}
+QDialog#database_replacement_dialog QLabel,
+QDialog#database_replacement_dialog QCheckBox {
+    color: #202124;
+}
+QTabWidget#database_replacement_tabs::pane {
+    background: #f7f8f9;
+    border: 1px solid #c7cdd1;
+}
+QWidget#database_replacement_tab_page {
+    background: #f7f8f9;
+    color: #202124;
+}
+QTabBar#database_replacement_tab_bar::tab {
+    background: #e1e5e8;
+    color: #3f464d;
+    border: 1px solid #c7cdd1;
+    padding: 6px 12px;
+}
+QTabBar#database_replacement_tab_bar::tab:selected {
+    background: #ffffff;
+    color: #202124;
+}
+QDialog#database_replacement_dialog QLineEdit,
+QDialog#database_replacement_dialog QComboBox,
+QDialog#database_replacement_dialog QSpinBox {
+    background: #ffffff;
+    color: #202124;
+    border: 1px solid #c7cdd1;
+    selection-background-color: #ffd9dd;
+    selection-color: #202124;
+}
+QDialog#database_replacement_dialog QLineEdit:disabled,
+QDialog#database_replacement_dialog QComboBox:disabled,
+QDialog#database_replacement_dialog QSpinBox:disabled {
+    background: #edf0f2;
+    color: #626970;
+}
+QTableWidget#database_replacement_table {
+    background: #ffffff;
+    alternate-background-color: #f3f5f6;
+    color: #202124;
+    border: 1px solid #c7cdd1;
+    gridline-color: #dbe1e4;
+    selection-background-color: #ffd9dd;
+    selection-color: #202124;
+}
+QTableWidget#database_replacement_table QHeaderView::section,
+QTableWidget#database_replacement_table QTableCornerButton::section {
+    background: #e4eeee;
+    color: #202124;
+    border: 1px solid #c7cdd1;
+    padding: 6px;
+    font-weight: 600;
+}
+"""
+
+
+REPLACEMENT_DARK_STYLESHEET = """
+QDialog#database_replacement_dialog {
+    background: #202124;
+    color: #e8eaed;
+}
+QDialog#database_replacement_dialog QLabel,
+QDialog#database_replacement_dialog QCheckBox {
+    color: #e8eaed;
+}
+QTabWidget#database_replacement_tabs::pane {
+    background: #25272b;
+    border: 1px solid #4a4f57;
+}
+QWidget#database_replacement_tab_page {
+    background: #25272b;
+    color: #e8eaed;
+}
+QTabBar#database_replacement_tab_bar::tab {
+    background: #2b2e33;
+    color: #b3bbc5;
+    border: 1px solid #4a4f57;
+    padding: 6px 12px;
+}
+QTabBar#database_replacement_tab_bar::tab:selected {
+    background: #3a3e45;
+    color: #ffffff;
+}
+QDialog#database_replacement_dialog QLineEdit,
+QDialog#database_replacement_dialog QComboBox,
+QDialog#database_replacement_dialog QSpinBox {
+    background: #373a40;
+    color: #e8eaed;
+    border: 1px solid #5a6069;
+    selection-background-color: #e60013;
+    selection-color: #ffffff;
+}
+QDialog#database_replacement_dialog QLineEdit:disabled,
+QDialog#database_replacement_dialog QComboBox:disabled,
+QDialog#database_replacement_dialog QSpinBox:disabled {
+    background: #2b2e33;
+    color: #9299a3;
+}
+QDialog#database_replacement_dialog QComboBox QAbstractItemView {
+    background: #373a40;
+    color: #e8eaed;
+    selection-background-color: #e60013;
+    selection-color: #ffffff;
+}
+QTableWidget#database_replacement_table {
+    background: #25272b;
+    alternate-background-color: #2b2e33;
+    color: #e8eaed;
+    border: 1px solid #4a4f57;
+    gridline-color: #454a52;
+    selection-background-color: #8b000b;
+    selection-color: #ffffff;
+}
+QTableWidget#database_replacement_table QHeaderView::section,
+QTableWidget#database_replacement_table QTableCornerButton::section {
+    background: #3a3e45;
+    color: #f0f2f4;
+    border: 1px solid #4a4f57;
+    padding: 6px;
+    font-weight: 600;
+}
+"""
+
+
 class DatabaseReplacementDialog(QDialog):
     """Collect explicit operator approvals without touching switch hardware."""
 
@@ -43,6 +173,7 @@ class DatabaseReplacementDialog(QDialog):
         self._selected_recommendation = None
 
         self.setWindowTitle("Manage Port Replacements")
+        self.setObjectName("database_replacement_dialog")
         self.setMinimumSize(980, 720)
         layout = QVBoxLayout(self)
         layout.addWidget(
@@ -60,11 +191,13 @@ class DatabaseReplacementDialog(QDialog):
             )
         )
 
-        tabs = QTabWidget()
-        tabs.addTab(self._build_record_tab(), "Record Replacements")
-        tabs.addTab(self._build_spares_tab(), "Designated Spares")
-        tabs.addTab(self._build_history_tab(), "Audit History")
-        layout.addWidget(tabs, 1)
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("database_replacement_tabs")
+        self.tabs.tabBar().setObjectName("database_replacement_tab_bar")
+        self.tabs.addTab(self._build_record_tab(), "Record Replacements")
+        self.tabs.addTab(self._build_spares_tab(), "Designated Spares")
+        self.tabs.addTab(self._build_history_tab(), "Audit History")
+        layout.addWidget(self.tabs, 1)
 
         self.physical_completion_check = QCheckBox(
             "I confirm that each queued physical port replacement was completed "
@@ -75,13 +208,16 @@ class DatabaseReplacementDialog(QDialog):
         buttons.accepted.connect(self.accept_changes)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self.apply_theme(bool(getattr(parent, "dark_mode_enabled", False)))
 
     def _build_record_tab(self) -> QWidget:
         page = QWidget()
+        page.setObjectName("database_replacement_tab_page")
         layout = QVBoxLayout(page)
 
         layout.addWidget(QLabel("Replacement-analysis recommendations (advisory):"))
         self.recommendation_table = QTableWidget(0, 6)
+        self.recommendation_table.setObjectName("database_replacement_table")
         self.recommendation_table.setHorizontalHeaderLabels(
             ["Logical", "Current Port", "Proposed Port", "Category", "Improvement", "Evidence"]
         )
@@ -165,6 +301,7 @@ class DatabaseReplacementDialog(QDialog):
         layout.addLayout(queue_row)
 
         self.pending_table = QTableWidget(0, 7)
+        self.pending_table.setObjectName("database_replacement_table")
         self.pending_table.setHorizontalHeaderLabels(
             ["Logical", "Current", "Proposed", "Category", "Improvement", "Reason", "Operator"]
         )
@@ -177,6 +314,7 @@ class DatabaseReplacementDialog(QDialog):
 
         layout.addWidget(QLabel("Current effective assignment mapping:"))
         self.active_mapping_table = QTableWidget(0, 3)
+        self.active_mapping_table.setObjectName("database_replacement_table")
         self.active_mapping_table.setHorizontalHeaderLabels(
             ["Logical Channel", "Initial Port", "Current Effective Port"]
         )
@@ -197,6 +335,7 @@ class DatabaseReplacementDialog(QDialog):
 
     def _build_spares_tab(self) -> QWidget:
         page = QWidget()
+        page.setObjectName("database_replacement_tab_page")
         layout = QVBoxLayout(page)
         layout.addWidget(
             QLabel(
@@ -205,6 +344,7 @@ class DatabaseReplacementDialog(QDialog):
             )
         )
         self.spare_table = QTableWidget(0, 3)
+        self.spare_table.setObjectName("database_replacement_table")
         self.spare_table.setHorizontalHeaderLabels(["Keep/Designate", "Physical Port", "Source"])
         existing = set(self.model.existing_spares)
         recommended = set(self.model.recommended_spares)
@@ -230,6 +370,7 @@ class DatabaseReplacementDialog(QDialog):
 
     def _build_history_tab(self) -> QWidget:
         page = QWidget()
+        page.setObjectName("database_replacement_tab_page")
         layout = QVBoxLayout(page)
         layout.addWidget(
             QLabel(
@@ -238,6 +379,7 @@ class DatabaseReplacementDialog(QDialog):
             )
         )
         self.history_table = QTableWidget(0, 9)
+        self.history_table.setObjectName("database_replacement_table")
         self.history_table.setHorizontalHeaderLabels(
             [
                 "ID", "Logical", "Previous", "Replacement", "Reason", "Operator",
@@ -264,6 +406,14 @@ class DatabaseReplacementDialog(QDialog):
         self.history_table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.history_table)
         return page
+
+    def apply_theme(self, dark_mode: bool) -> None:
+        """Keep the independently rendered tab pages readable in either theme."""
+        self.setStyleSheet(
+            REPLACEMENT_DARK_STYLESHEET
+            if dark_mode
+            else REPLACEMENT_LIGHT_STYLESHEET
+        )
 
     def begin_manual_replacement(self) -> None:
         self._selected_recommendation = None

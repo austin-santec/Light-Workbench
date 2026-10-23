@@ -1,0 +1,101 @@
+{
+  "scenario_id": "SAMPLE-OSX150-EXTRA-PORT-ANALYSIS",
+  "description": "OSX-150 SM replacement-analysis demonstration with four failing front-panel channels and eight passing extra physical ports; synthetic only.",
+  "application_version": "1.35.6-sample",
+  "station_number": 99,
+  "ilm_model": "OP815",
+  "ilm_serial": "S-00006",
+  "ilm_firmware": "03.01.02",
+  "unit": {
+    "main_board_serial": "S-00004",
+    "part_number": "OSX-150-1A-048-09-FA-00B-3H",
+    "front_panel_channel_count": 48,
+    "unit_model": "OSX-150",
+    "notes": "Synthetic replacement-analysis demonstration; station 99; engineering sample only."
+  },
+  "switch": {
+    "switch_serial": "S-00005",
+    "switch_model": "OSX-150",
+    "physical_channel_count": 56,
+    "firmware_version": "03.01.23",
+    "notes": "Synthetic 56-port OSX-150 switch with a 48-channel front panel."
+  },
+  "assignment": {
+    "installed_at_utc": "2026-10-23T19:50:00Z",
+    "installed_by": "AT",
+    "initial_channel_map": {
+      "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6,
+      "7": 7, "8": 8, "9": 9, "10": 10, "11": 11, "12": 12,
+      "13": 13, "14": 14, "15": 15, "16": 16, "17": 17, "18": 18,
+      "19": 19, "20": 20, "21": 21, "22": 22, "23": 23, "24": 24,
+      "25": 25, "26": 26, "27": 27, "28": 28, "29": 29, "30": 30,
+      "31": 31, "32": 32, "33": 33, "34": 34, "35": 35, "36": 36,
+      "37": 37, "38": 38, "39": 39, "40": 40, "41": 41, "42": 42,
+      "43": 43, "44": 44, "45": 45, "46": 46, "47": 47, "48": 48
+    }
+  },
+  "spares": [],
+  "replacements": [],
+  "runs": [
+    {
+      "run_number": 1,
+      "run_purpose": "engineering",
+      "completion_status": "complete",
+      "analysis_status": "excluded",
+      "analysis_exclusion_reason": "Synthetic engineering sample for replacement-analysis demonstrations.",
+      "started_at_utc": "2026-10-23T20:00:00Z",
+      "ended_at_utc": "2026-10-23T20:30:00Z",
+      "reference_snapshot": {
+        "snapshot_id": "sample-ref-s-00004-sm",
+        "method": "calculated",
+        "established_at": "2026-10-23T19:59:00Z",
+        "reference_1310_dbm": 0.0,
+        "reference_1550_dbm": 0.0,
+        "wavelength_mode": "SM",
+        "opm_wavelengths_nm": [1310, 1550],
+        "source_wavelengths_nm": [1310, 1550],
+        "source_ids": [0, 1],
+        "source_profile_id": "op815-sm",
+        "source_profile_origin": "sample_seed",
+        "measurement_classification": "native"
+      },
+      "limit_snapshot": {
+        "model": "OSX-150",
+        "wavelength_mode": "SM",
+        "profile_name": "OSX-150 SM standard",
+        "revision": "1",
+        "too_good_below_db": 0.5,
+        "warning_enabled": true,
+        "warning_above_db": 2.25,
+        "fail_above_db": 2.5,
+        "minimum_replacement_improvement_db": 0.2
+      },
+      "generated_measurements": {
+        "seed": 99004,
+        "channels": [
+          1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+          13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+          25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+          37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+          49, 50, 51, 52, 53, 54, 55, 56
+        ],
+        "wavelength_1": {"base": 1.2, "spread": 0.08},
+        "wavelength_2": {"base": 1.1, "spread": 0.08},
+        "overrides": {
+          "20": {"wavelength_1_il_db": 2.72, "wavelength_2_il_db": 2.61},
+          "21": {"wavelength_1_il_db": 2.68, "wavelength_2_il_db": 2.76},
+          "22": {"wavelength_1_il_db": 2.83, "wavelength_2_il_db": 2.67},
+          "23": {"wavelength_1_il_db": 2.64, "wavelength_2_il_db": 2.71},
+          "49": {"wavelength_1_il_db": 0.88, "wavelength_2_il_db": 0.91},
+          "50": {"wavelength_1_il_db": 0.94, "wavelength_2_il_db": 0.89},
+          "51": {"wavelength_1_il_db": 1.01, "wavelength_2_il_db": 0.97},
+          "52": {"wavelength_1_il_db": 1.08, "wavelength_2_il_db": 1.03},
+          "53": {"wavelength_1_il_db": 1.12, "wavelength_2_il_db": 1.09},
+          "54": {"wavelength_1_il_db": 1.17, "wavelength_2_il_db": 1.14},
+          "55": {"wavelength_1_il_db": 1.22, "wavelength_2_il_db": 1.18},
+          "56": {"wavelength_1_il_db": 1.27, "wavelength_2_il_db": 1.23}
+        }
+      }
+    }
+  ]
+}
