@@ -215,6 +215,40 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(window.result_status_label.text(), "Result: Pass")
         window.close()
 
+    def test_composite_pass_is_green_and_advertises_coc_availability(self):
+        window = MainWindow()
+        profile = default_limit_profiles().for_model_mode("OSX-150", "SM")
+        window.run_data = RunData(
+            Path("saved.csv"),
+            [MeasurementRecord(1, 1.0, 1.1, 1)],
+            {
+                "Part number": "OSX-150-1A-002-09-FA-00B-1H",
+                "Run number": "1",
+                "Planned channel count": "1",
+            },
+            criteria_snapshot=profile.as_dict(),
+        )
+        window._run_terminal_status = COMPLETION_COMPLETE
+
+        class Composite:
+            eligible = True
+            source_run_numbers = (1, 2)
+
+        window._status_composite_candidate = lambda: (Composite(), (2,))
+        window.refresh_analysis()
+
+        expected_color = "#72d19a" if window.dark_mode_enabled else "#28704a"
+        self.assertEqual(
+            window.result_status_label.text(),
+            "Result: Composite pass available",
+        )
+        self.assertIn(expected_color, window.result_status_label.styleSheet())
+        self.assertIn(
+            "COC creation is available.",
+            window.result_status_label.toolTip(),
+        )
+        window.close()
+
     def test_run_purpose_defaults_to_production_and_warns_for_nonproduction(self):
         window = MainWindow()
         self.assertEqual(window.hardware_run_purpose.currentData(), "production")
@@ -1152,6 +1186,35 @@ class MainWindowTests(unittest.TestCase):
         # A channel being measured remains visible in every filtered view.
         window.hardware_operator_required(6, 54)
         self.assertEqual(visible_channels(), [4, 6])
+        window.close()
+
+    def test_channel_status_uses_concise_pass_and_verification_labels(self):
+        window = MainWindow()
+        window.run_data = RunData(
+            Path("test-run"),
+            [
+                MeasurementRecord(1, 1.0, 1.0),
+                MeasurementRecord(2, 0.4, 0.4),
+            ],
+            {},
+        )
+
+        window.refresh_table()
+        self.assertEqual(window.table.item(0, 3).text(), "Pass")
+        self.assertEqual(
+            window.table.item(1, 3).text(), "Too good, please verify"
+        )
+
+        window.current_loss_1310 = 1.0
+        window.current_loss_1550 = 1.0
+        window.refresh_current_reading()
+        self.assertEqual(window.reading_status_label.text(), "Pass")
+        window.current_loss_1310 = 0.4
+        window.current_loss_1550 = 0.4
+        window.refresh_current_reading()
+        self.assertEqual(
+            window.reading_status_label.text(), "Too good, please verify"
+        )
         window.close()
 
     def test_previous_run_comparison_can_be_shown_and_cleared(self):

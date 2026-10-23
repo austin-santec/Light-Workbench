@@ -125,9 +125,15 @@ The separate result status describes the accepted readings: `pass`,
 `pass_optimization_available`, `pass_review_recommended`,
 `fail_recoverable`, `fail_unrecoverable`, `composite_pass_available`,
 `supplemental_run`, `not_evaluated`, or `review_required`. A composite or
-supplemental status is shown only when the existing validated COC preparation
-rules find a compatible persisted run and a passing combination. This
-assessment uses the same latest-measurement projection as COC preparation. It
+supplemental value remains available for compatibility with older persisted
+data, but a current valid passing multi-run projection is displayed as
+`composite_pass_available`, including when the loaded run is partial. The
+status detail identifies the loaded run's supplemental role and contributing
+run numbers. The green composite status also indicates that COC creation is
+available, but it does not create a COC automatically. A composite status is
+shown only when the existing validated COC preparation rules find a compatible
+persisted run and a passing combination. This assessment uses the same
+latest-measurement projection as COC preparation. It
 never creates a COC, changes a measurement, or changes switch mapping data. It
 is recalculated when readings, replacements, criteria, or compatible runs
 change. A newer failing retest therefore supersedes an older passing reading

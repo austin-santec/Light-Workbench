@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-Light Workbench 1.35.1 includes always-on, local engineering support logs. Their
+Light Workbench 1.35.2 includes always-on, local engineering support logs. Their
 purpose is to help engineering reconstruct operator workflows, hardware
 communication, two-wavelength measurements, insertion-loss calculations,
 connection ownership, persistence, exports, and failures.

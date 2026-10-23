@@ -104,6 +104,8 @@ class RunStatusAssessment:
             "Completion: %s" % self.completion_display,
             "Result: %s" % self.result_label,
         ]
+        if self.result_status == RESULT_COMPOSITE:
+            lines.append("COC creation is available.")
         if self.completion_reason:
             lines.append("Reason: %s" % self.completion_reason)
         if self.missing_channels:
@@ -142,6 +144,10 @@ def _format_channels(channels: Sequence[int]) -> str:
     if len(channels) > 48:
         values.append("…")
     return ", ".join(values)
+
+
+def _format_run_numbers(run_numbers: Sequence[int]) -> str:
+    return ", ".join(str(int(value)) for value in run_numbers)
 
 
 def planned_channels_from_metadata(metadata: Mapping[str, object]) -> tuple[int, ...] | None:
@@ -283,8 +289,17 @@ def assess_run_status(
             )
             detail = "The effective measurement history passes but has optimization-level readings."
         elif len(projection_runs) > 1:
-            result = RESULT_COMPOSITE if standalone_complete else RESULT_SUPPLEMENTAL
-            detail = "The current result uses the newest measurements from combined compatible run history."
+            result = RESULT_COMPOSITE
+            if standalone_complete:
+                detail = (
+                    "The current result uses the newest measurements from "
+                    "combined compatible run history."
+                )
+            else:
+                detail = (
+                    "This partial run contributes to a composite pass using "
+                    "Runs %s." % _format_run_numbers(projection_runs)
+                )
         else:
             result = RESULT_PASS
             detail = "All required front-panel readings are within the applicable fail limit."
@@ -293,8 +308,21 @@ def assess_run_status(
         detail = "One or more accepted readings is invalid or non-finite."
     elif not standalone_complete:
         if composite_result is not None and getattr(composite_result, "eligible", False):
-            result = RESULT_SUPPLEMENTAL
-            detail = "This run supplies accepted readings for a validated combined result."
+            result = RESULT_COMPOSITE
+            run_numbers = tuple(
+                dict.fromkeys(int(value) for value in (compatible_run_numbers or ()))
+            )
+            if run_numbers:
+                detail = (
+                    "This partial run contributes to a validated composite pass "
+                    "with Run%s %s."
+                    % (
+                        "s" if len(run_numbers) != 1 else "",
+                        _format_run_numbers(run_numbers),
+                    )
+                )
+            else:
+                detail = "This partial run contributes to a validated composite pass."
         else:
             result = RESULT_NOT_EVALUATED
             detail = "The run does not contain the complete front-panel channel set."

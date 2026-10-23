@@ -7344,7 +7344,7 @@ class MainWindow(QMainWindow):
             RESULT_PASS: ("#72d19a", "#28704a"),
             RESULT_PASS_OPTIMIZATION: ("#ffd166", "#946200"),
             RESULT_PASS_REVIEW: ("#ffd166", "#946200"),
-            RESULT_COMPOSITE: ("#ffd166", "#946200"),
+            RESULT_COMPOSITE: ("#72d19a", "#28704a"),
             RESULT_SUPPLEMENTAL: ("#8ecbff", "#14649a"),
             RESULT_FAIL_RECOVERABLE: ("#ff8f86", "#a33b2f"),
             RESULT_FAIL_UNRECOVERABLE: ("#ff8f86", "#a33b2f"),
@@ -8833,13 +8833,13 @@ class MainWindow(QMainWindow):
                 "%d nm" % wavelength for wavelength in assessment.fail_wavelengths
             )
         elif assessment.is_too_good and assessment.is_optimization:
-            status = "Too good to verify; optimization warning"
+            status = "Too good, please verify; optimization warning"
         elif assessment.is_too_good:
-            status = "Too good to verify"
+            status = "Too good, please verify"
         elif assessment.is_optimization:
             status = "Optimization warning"
         else:
-            status = "Within configured limit"
+            status = "Pass"
         self.reading_status_label.setText(status)
         self._refresh_reading_status_color()
 
@@ -8979,10 +8979,10 @@ class MainWindow(QMainWindow):
                         "FAIL at " + ", ".join("%d nm" % wavelength for wavelength in assessment.fail_wavelengths)
                     )
                 if assessment.is_too_good:
-                    status_parts.append("Too good to verify")
+                    status_parts.append("Too good, please verify")
                 if assessment.is_optimization and not assessment.is_fail:
                     status_parts.append("Optimization warning")
-                status = "; ".join(status_parts) if status_parts else "Within configured limit"
+                status = "; ".join(status_parts) if status_parts else "Pass"
             values = [
                 str(record.channel),
                 "%.4f" % record.loss_for(wavelengths[0]),

@@ -288,7 +288,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.35.1**; an existing executable keeps its prior
+current source version is **1.35.4**; an existing executable keeps its prior
 version until rebuilt.
 
 The desktop application opens maximized by default while retaining the normal
@@ -893,8 +893,12 @@ The readings table also shows `Run` and `Result` status beside `Compare with:`.
 Run status reports progress against that run's own channel plan. Result status
 separately reports pass/fail quality, optimization or review recommendations,
 and validated opportunities to combine compatible runs. A partial retest may
-be complete for its own plan while being marked supplemental for production
-coverage. These statuses do not generate a COC or modify run data.
+be complete for its own plan while contributing to a composite pass for the
+unit. A valid passing multi-run projection is displayed as `Composite pass
+available`, with the status detail identifying the partial run and contributing
+run numbers. The green `Composite pass available` status also indicates that
+COC creation is available; it does not generate a COC automatically. These
+statuses do not modify run data.
 
 The operating band is currently hardcoded to `O band`. A `TODO` comment in
 `ILMReadLoss.py` marks this as something to query or prompt for later.

@@ -174,7 +174,7 @@ class SampleDatabaseSeedingTests(unittest.TestCase):
             compatible_run_numbers=(1,),
         )
         self.assertEqual(base_status.result_status, RESULT_COMPOSITE)
-        self.assertEqual(supplemental_status.result_status, RESULT_SUPPLEMENTAL)
+        self.assertEqual(supplemental_status.result_status, RESULT_COMPOSITE)
 
     def test_seed_is_idempotent_and_partial_data_is_refused(self):
         scenario = load_scenario(SCENARIO_ROOT / "osx150_two_run_coc_demo.json")

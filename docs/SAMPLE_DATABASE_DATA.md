@@ -31,9 +31,12 @@ measurement eligibility and compatibility rules do.
 
 The three-run composite scenario is intentionally stopped/incomplete at the
 individual-run level. Every one-run and two-run subset is missing front-panel
-channels, while the complete three-run history is eligible. All sample
-scenarios default to station 99; this is sample-data behavior and does not
-change the normal production station default.
+channels, while the complete three-run history is eligible. When any one of
+the contributing runs is loaded, its `Run:` status remains partial while its
+`Result:` status is `Composite pass available`; the detail text identifies the
+loaded run's supplemental role and the contributing runs. All sample scenarios
+default to station 99; this is sample-data behavior and does not change the
+normal production station default.
 
 ## Running the tool
 
