@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from threading import RLock
+from uuid import UUID
 
 from domain.database_records import (
     AssignmentRecord,
@@ -14,6 +15,10 @@ from domain.database_records import (
     MeasurementRecord,
     MeasurementSpec,
     MeasurementWriteSpec,
+    ReplacementAnalysisRecommendationRecord,
+    ReplacementAnalysisRecommendationSpec,
+    ReplacementAnalysisRecord,
+    ReplacementAnalysisSpec,
     ReplacementRecord,
     ReplacementSpec,
     RunRecord,
@@ -43,6 +48,10 @@ class InMemoryRepositories:
         self.measurements: dict[int, MeasurementRecord] = {}
         self.replacements: dict[int, ReplacementRecord] = {}
         self.spare_events: dict[int, SpareEventRecord] = {}
+        self.replacement_analyses: dict[int, ReplacementAnalysisRecord] = {}
+        self.replacement_analysis_recommendations: dict[
+            int, ReplacementAnalysisRecommendationRecord
+        ] = {}
         self._next_ids: dict[str, int] = {}
         self._lock = RLock()
 
@@ -650,6 +659,36 @@ class InMemoryRepositories:
                 run = self.runs.get(spec.related_run_id)
                 if run is None or run.assignment_id != spec.assignment_id:
                     raise ValueError("Related run does not belong to this assignment")
+            if spec.source_recommendation_id is not None:
+                recommendation = self.replacement_analysis_recommendations.get(
+                    int(spec.source_recommendation_id)
+                )
+                if recommendation is None:
+                    raise ValueError("Source replacement recommendation does not exist")
+                analysis = self.replacement_analyses[recommendation.analysis_id]
+                source_run = self.runs.get(analysis.run_id)
+                if source_run is None or source_run.assignment_id != spec.assignment_id:
+                    raise ValueError(
+                        "Source replacement recommendation belongs to another assignment"
+                    )
+                if (
+                    analysis.source_measurement_high_watermark_id
+                    != self.current_measurement_high_watermark(analysis.run_id)
+                ):
+                    raise ValueError("Source replacement recommendation is stale")
+                if (
+                    recommendation.logical_channel != spec.logical_channel
+                    or recommendation.candidate_physical_port
+                    != spec.replacement_physical_port
+                ):
+                    raise ValueError(
+                        "Source recommendation does not match the replacement"
+                    )
+                if any(
+                    item.source_recommendation_id == spec.source_recommendation_id
+                    for item in self.replacements.values()
+                ):
+                    raise ValueError("Source replacement recommendation was already used")
             history = self.replacement_history_for_assignment(spec.assignment_id)
             prior = [
                 item for item in history if item.logical_channel == spec.logical_channel
@@ -669,9 +708,134 @@ class InMemoryRepositories:
                 spec.replaced_at_utc,
                 spec.related_run_id,
                 spec.notes,
+                spec.source_recommendation_id,
             )
             self.replacements[record.replacement_id] = record
             return record
+
+    def append_analysis(self, spec, recommendations):
+        with self._lock:
+            existing = next(
+                (
+                    item
+                    for item in self.replacement_analyses.values()
+                    if item.analysis_uuid == spec.analysis_uuid
+                ),
+                None,
+            )
+            if existing is not None:
+                return self._analysis_bundle(existing.analysis_id)
+            run = self.runs.get(spec.run_id)
+            if run is None:
+                raise ValueError("Replacement analysis run does not exist")
+            measurement = self.measurements.get(
+                spec.source_measurement_high_watermark_id
+            )
+            if measurement is None or measurement.run_id != spec.run_id:
+                raise ValueError(
+                    "Analysis source measurement does not belong to the run"
+                )
+            if (
+                spec.source_measurement_high_watermark_id
+                != self.current_measurement_high_watermark(spec.run_id)
+            ):
+                raise ValueError("Analysis source measurements are no longer current")
+            analysis_id = self._next("replacement_analysis")
+            record = ReplacementAnalysisRecord(
+                analysis_id,
+                spec.analysis_uuid,
+                spec.run_id,
+                spec.analyzed_at_utc,
+                spec.analyzed_by,
+                spec.application_version,
+                spec.source_measurement_high_watermark_id,
+                spec.front_panel_channel_count,
+                spec.wavelengths,
+                spec.criteria,
+                spec.result_status,
+                spec.result_details,
+            )
+            inserted = []
+            try:
+                self.replacement_analyses[analysis_id] = record
+                for item in recommendations:
+                    if item.analysis_id not in (None, analysis_id):
+                        raise ValueError("Recommendation analysis ID does not match")
+                    recommendation_id = self._next("replacement_recommendation")
+                    inserted_record = ReplacementAnalysisRecommendationRecord(
+                        recommendation_id,
+                        analysis_id,
+                        item.recommendation_rank,
+                        item.category,
+                        item.logical_channel,
+                        item.current_physical_port,
+                        item.candidate_physical_port,
+                        item.current_wavelength_1_il_db,
+                        item.current_wavelength_2_il_db,
+                        item.candidate_wavelength_1_il_db,
+                        item.candidate_wavelength_2_il_db,
+                        item.current_worst_loss_db,
+                        item.candidate_worst_loss_db,
+                        item.improvement_db,
+                    )
+                    self.replacement_analysis_recommendations[
+                        recommendation_id
+                    ] = inserted_record
+                    inserted.append(recommendation_id)
+            except Exception:
+                self.replacement_analyses.pop(analysis_id, None)
+                for recommendation_id in inserted:
+                    self.replacement_analysis_recommendations.pop(
+                        recommendation_id, None
+                    )
+                raise
+            return record, tuple(
+                self.replacement_analysis_recommendations[item]
+                for item in inserted
+            )
+
+    def latest_analysis_for_run(self, run_id):
+        analyses = [
+            item for item in self.replacement_analyses.values() if item.run_id == int(run_id)
+        ]
+        if not analyses:
+            return None
+        analysis = max(analyses, key=lambda item: (item.analyzed_at_utc, item.analysis_id))
+        return self._analysis_bundle(analysis.analysis_id)
+
+    def analysis_history_for_run(self, run_id):
+        analyses = sorted(
+            (
+                item
+                for item in self.replacement_analyses.values()
+                if item.run_id == int(run_id)
+            ),
+            key=lambda item: (item.analyzed_at_utc, item.analysis_id),
+            reverse=True,
+        )
+        return tuple(self._analysis_bundle(item.analysis_id) for item in analyses)
+
+    def current_measurement_high_watermark(self, run_id):
+        values = [
+            item.measurement_id
+            for item in self.measurements.values()
+            if item.run_id == int(run_id)
+        ]
+        return max(values) if values else None
+
+    def _analysis_bundle(self, analysis_id):
+        analysis = self.replacement_analyses[int(analysis_id)]
+        recommendations = tuple(
+            sorted(
+                (
+                    item
+                    for item in self.replacement_analysis_recommendations.values()
+                    if item.analysis_id == analysis.analysis_id
+                ),
+                key=lambda item: (item.recommendation_rank, item.recommendation_id),
+            )
+        )
+        return analysis, recommendations
 
     def replacement_history_for_assignment(
         self, assignment_id: int

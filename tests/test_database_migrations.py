@@ -94,7 +94,7 @@ class MigrationDiscoveryTests(unittest.TestCase):
     def test_bundled_migrations_are_discovered(self):
         migrations = discover_migrations()
 
-        self.assertEqual([item.migration_id for item in migrations], [1, 2, 3])
+        self.assertEqual([item.migration_id for item in migrations], [1, 2, 3, 4])
         self.assertEqual(migrations[0].name, "initial_schema")
         self.assertEqual(migrations[1].name, "nonnegative_measurement_losses")
         self.assertTrue(all(len(item.checksum) == 64 for item in migrations))
@@ -316,10 +316,17 @@ class SqlServerMigrationIntegrationTests(unittest.TestCase):
                 "IL_MEASUREMENTS",
                 "CHANNEL_REPLACEMENTS",
                 "DESIGNATED_SPARES",
+                "REPLACEMENT_ANALYSES",
+                "REPLACEMENT_ANALYSIS_RECOMMENDATIONS",
             },
         )
         self.assertEqual(
-            views, {"vw_CurrentILMeasurements", "vw_CurrentChannelMap"}
+            views,
+            {
+                "vw_CurrentILMeasurements",
+                "vw_CurrentChannelMap",
+                "vw_ReplacementRecommendationUsage",
+            },
         )
         self.assertIn("lwb_app_writer", roles)
         self.assertIn("lwb_report_reader", roles)
@@ -330,7 +337,7 @@ class SqlServerMigrationIntegrationTests(unittest.TestCase):
         ).apply()
 
         self.assertEqual(result.applied_ids, ())
-        self.assertEqual(result.current_version, 3)
+        self.assertEqual(result.current_version, 4)
 
     def test_invalid_json_and_nonpositive_counts_are_rejected(self):
         cursor = self.connection.cursor()

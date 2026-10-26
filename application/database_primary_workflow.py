@@ -16,6 +16,9 @@ from application.replacement_persistence_workflow import (
     AssignmentRoutingSnapshot,
     ReplacementPersistenceWorkflow,
 )
+from application.replacement_analysis_persistence import (
+    ReplacementAnalysisPersistenceWorkflow,
+)
 from application.run_lifecycle_workflow import (
     DatabaseRunUnavailableError,
     RunLifecycleWorkflow,
@@ -44,6 +47,8 @@ class DatabaseRunContext:
     assignment: object
     snapshot: DatabaseRunSnapshot
     routing: AssignmentRoutingSnapshot
+    replacement_analysis: object | None = None
+    replacement_analysis_history: tuple[object, ...] = ()
 
     @property
     def run(self) -> RunRecord:
@@ -64,6 +69,7 @@ class DatabasePrimaryRunWorkflow:
         self.queries = DatabaseRunQueryService(repositories, repositories)
         self.reporting = DatabaseReportingService(repositories, self.queries)
         self.replacements = ReplacementPersistenceWorkflow(repositories)
+        self.replacement_analyses = ReplacementAnalysisPersistenceWorkflow(repositories)
 
     def check_ready(self):
         return self._readiness_check()
@@ -202,6 +208,8 @@ class DatabasePrimaryRunWorkflow:
             assignment,
             self.queries.load(run.run_id),
             self.replacements.load_assignment(assignment.assignment_id),
+            self.replacement_analyses.latest_for_run(run.run_id),
+            self.replacement_analyses.history_for_run(run.run_id),
         )
 
 

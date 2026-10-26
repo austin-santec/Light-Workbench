@@ -236,11 +236,16 @@ replace the active session reference.
   does not use `CLOSe?`, change switch mappings, identify routed logical
   channels, or verify a manually performed hardware change. General
   `CLOSe?` behavior elsewhere remains a separate hardware concern.
-- Database recommendations and designated-spare suggestions are transient until
-  explicitly approved. One approval is persisted atomically, then the effective
-  map, full histories, and active spares are reloaded from SQL Server. Optional
-  operator details use `CHANNEL_REPLACEMENTS.notes`; no local routing fallback
-  is created if the database write fails.
+- Database replacement analyses are append-only snapshots tied to the run and
+  the highest accepted measurement included. The latest snapshot is restored
+  when a database run is loaded; a newer retest marks it stale and requires a
+  new calculation. Normalized recommendations retain their measured evidence,
+  while result details and criteria remain JSON snapshots.
+- A completed replacement may reference the recommendation that informed it
+  through `source_recommendation_id`. This records recommendation usage without
+  claiming that Light Workbench commanded or verified the physical reroute.
+  Optional operator details use `CHANNEL_REPLACEMENTS.notes`; no local routing
+  fallback is created if the database write fails.
 
 ## Rejected measurement evidence
 
@@ -319,8 +324,9 @@ requiring it to know the CSV layout.
 The approved schema is documented in `docs/DATABASE_ARCHITECTURE.md`; staged
 implementation is in `docs/DATABASE_ROADMAP.md`. It stores future units,
 switches, assignments, runs, accepted attempts, replacement records, and spare
-events. Support logs and raw power remain local, while replacement
-recommendations remain derived data.
+events. Support logs and raw power remain local. Database-backed replacement
+analysis is stored as append-only snapshots with normalized recommendations;
+file-backed legacy runs retain session-local analysis behavior.
 
 ## Controlled quality criteria
 

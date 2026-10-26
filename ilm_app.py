@@ -940,6 +940,8 @@ class MainWindow(QMainWindow):
         self.unit_directory = None
         self.unit_record = {}
         self.replacement_analysis = None
+        self.replacement_analysis_history = ()
+        self.replacement_analysis_stale = False
         self.replacement_history = []
         self.completed_replacements = []
         self.designated_spares = []
@@ -2230,6 +2232,16 @@ class MainWindow(QMainWindow):
         self.replacement_analysis_button = QPushButton("Analyze Replacements")
         self.replacement_analysis_button.clicked.connect(self.show_replacement_analysis)
         self.replacement_analysis_button.setEnabled(False)
+        self.replacement_analysis_history_button = QPushButton(
+            "Analysis History..."
+        )
+        self.replacement_analysis_history_button.setToolTip(
+            "View saved replacement analyses and which recommendations were used."
+        )
+        self.replacement_analysis_history_button.clicked.connect(
+            self.show_replacement_analysis_history
+        )
+        self.replacement_analysis_history_button.setEnabled(False)
         self.completed_replacements_label = QLabel("No completed replacements recorded")
         self.completed_replacements_label.setWordWrap(True)
         self.record_replacements_button = QPushButton("Manage Port Replacements...")
@@ -2246,7 +2258,10 @@ class MainWindow(QMainWindow):
         )
         self.copy_replacement_notes_button.setEnabled(False)
         replacement_layout.addWidget(self.replacement_summary_label)
-        replacement_layout.addWidget(self.replacement_analysis_button)
+        analysis_buttons = QHBoxLayout()
+        analysis_buttons.addWidget(self.replacement_analysis_button)
+        analysis_buttons.addWidget(self.replacement_analysis_history_button)
+        replacement_layout.addLayout(analysis_buttons)
         replacement_layout.addWidget(self.completed_replacements_label)
         replacement_buttons = QHBoxLayout()
         replacement_buttons.addWidget(self.record_replacements_button)
@@ -4130,7 +4145,12 @@ class MainWindow(QMainWindow):
         except ValueError:
             self._set_wavelength_mode("SM", invalidate=False)
         self._load_unit_state(self.unit_repository.infer_unit_directory(path))
-        self.replacement_analysis = None
+        # File-backed runs retain their legacy/session-local analysis only.
+        # Database analysis history is loaded by _apply_database_run_context;
+        # never reference database-only context objects from this path.
+        self.replacement_analysis_history = ()
+        self.replacement_analysis_stale = False
+        self.replacement_analysis = run_data.replacement_analysis
         self.switch_test_timer = None
         self.clear_current_reading()
         self.file_label.setText(str(path))
@@ -4816,7 +4836,20 @@ class MainWindow(QMainWindow):
             "Run purpose",
         ):
             self.metadata_labels[key].setText(metadata.get(key) or "Not recorded")
-        self.replacement_analysis = None
+        self.replacement_analysis_history = context.replacement_analysis_history
+        self.replacement_analysis_stale = False
+        if context.replacement_analysis is not None:
+            self.replacement_analysis_stale = not context.replacement_analysis.is_current(
+                context.snapshot.measurement_high_watermark_id
+            )
+            self.replacement_analysis = (
+                None
+                if self.replacement_analysis_stale
+                else context.replacement_analysis.to_result_dict()
+            )
+        else:
+            self.replacement_analysis = None
+        self.run_data.replacement_analysis = self.replacement_analysis
         self.clear_current_reading()
         self.refresh_comparison_runs()
         self.refresh_analysis()
@@ -5370,7 +5403,13 @@ class MainWindow(QMainWindow):
                 self.run_data.metadata,
                 self.run_data.switch_test_sessions,
             )
-            self.replacement_analysis = None
+            # _apply_database_run_context already restored the latest saved
+            # analysis. Preserve it when resuming/retesting an existing run;
+            # a newly created run has no analysis history and remains empty.
+            if self.database_run_context is None:
+                self.replacement_analysis = None
+                self.replacement_analysis_history = ()
+                self.replacement_analysis_stale = False
         elif not retest and run_mode == "new":
             self._loaded_run_profile_unavailable = False
             self._loaded_run_profile_reason = ""
@@ -7430,6 +7469,9 @@ class MainWindow(QMainWindow):
         self.copy_replacement_notes_button.setEnabled(
             bool(self.completed_replacements)
         )
+        self.replacement_analysis_history_button.setEnabled(
+            bool(self.database_run_context and self.replacement_analysis_history)
+        )
         if self.completed_replacements:
             lines = [
                 "Completed replacements: %d" % len(self.completed_replacements)
@@ -7456,6 +7498,13 @@ class MainWindow(QMainWindow):
         if not limits_available:
             self.replacement_summary_label.setText(
                 "Not available: no limit profile is configured for this model and mode."
+            )
+            return
+
+        if self.replacement_analysis_stale:
+            self.replacement_summary_label.setText(
+                "Saved analysis is stale because newer accepted measurements exist. "
+                "Run Analyze Replacements again to create a current snapshot."
             )
             return
 
@@ -7778,6 +7827,114 @@ class MainWindow(QMainWindow):
             % len(self.run_data.measurements)
         )
 
+    def show_replacement_analysis_history(self):
+        """Show immutable database analysis snapshots and recommendation usage."""
+        if self.database_run_context is None or not self.replacement_analysis_history:
+            QMessageBox.information(
+                self,
+                "Replacement analysis history",
+                "No database replacement analyses have been saved for this run.",
+            )
+            return
+
+        used_recommendation_ids = {
+            item.source_recommendation_id
+            for item in self.database_run_context.routing.replacement_history
+            if item.source_recommendation_id is not None
+        }
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Replacement Analysis History")
+        dialog.setMinimumSize(900, 500)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(
+            QLabel(
+                "Saved analyses are append-only. A recommendation is marked used "
+                "only when a replacement record explicitly references it."
+            )
+        )
+        history_table = QTableWidget(0, 7, dialog)
+        history_table.setHorizontalHeaderLabels(
+            [
+                "Analysis ID",
+                "Analyzed UTC",
+                "Operator",
+                "Result",
+                "Source measurement",
+                "Recommendations",
+                "Used",
+            ]
+        )
+        history_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        history_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        history_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        recommendation_table = QTableWidget(0, 6, dialog)
+        recommendation_table.setHorizontalHeaderLabels(
+            [
+                "Logical",
+                "Current port",
+                "Proposed port",
+                "Category",
+                "Improvement dB",
+                "Used",
+            ]
+        )
+        recommendation_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        recommendation_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+
+        def set_recommendations(row):
+            recommendation_table.setRowCount(0)
+            if row < 0 or row >= len(self.replacement_analysis_history):
+                return
+            analysis = self.replacement_analysis_history[row]
+            for item in analysis.recommendations:
+                recommendation_row = recommendation_table.rowCount()
+                recommendation_table.insertRow(recommendation_row)
+                values = (
+                    item.logical_channel,
+                    item.current_physical_port,
+                    item.candidate_physical_port,
+                    item.category,
+                    "%.4f" % float(item.improvement_db),
+                    "Yes" if item.recommendation_id in used_recommendation_ids else "No",
+                )
+                for column, value in enumerate(values):
+                    recommendation_table.setItem(
+                        recommendation_row, column, QTableWidgetItem(str(value))
+                    )
+
+        for analysis in self.replacement_analysis_history:
+            row = history_table.rowCount()
+            history_table.insertRow(row)
+            used = sum(
+                item.recommendation_id in used_recommendation_ids
+                for item in analysis.recommendations
+            )
+            values = (
+                analysis.record.analysis_id,
+                analysis.record.analyzed_at_utc.isoformat(),
+                analysis.record.analyzed_by,
+                analysis.record.result_status,
+                analysis.record.source_measurement_high_watermark_id,
+                len(analysis.recommendations),
+                "%d/%d" % (used, len(analysis.recommendations)),
+            )
+            for column, value in enumerate(values):
+                history_table.setItem(row, column, QTableWidgetItem(str(value)))
+
+        history_table.itemSelectionChanged.connect(
+            lambda: set_recommendations(history_table.currentRow())
+        )
+        layout.addWidget(history_table, 1)
+        layout.addWidget(QLabel("Recommendations in selected analysis:"))
+        layout.addWidget(recommendation_table, 1)
+        if history_table.rowCount():
+            history_table.selectRow(0)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec_()
+
     def show_replacement_analysis(self, launch_source="manual_button"):
         """Calculate advisory replacements using the existing operator workflow."""
         if self.run_data is None or not self.run_data.measurements:
@@ -7943,7 +8100,62 @@ class MainWindow(QMainWindow):
                     wavelengths=self.run_data.opm_wavelengths_nm,
                 )
                 self._record_replacement_analysis_result(result, launch_source)
-                self.apply_replacement_analysis(result)
+                if self.database_run_context is not None:
+                    try:
+                        run = self.database_run_context.run
+                        criteria = dict(self.run_data.criteria_snapshot or {})
+                        criteria["replacement_analysis"] = {
+                            "warning_limit_db": result.get("warning_limit_db"),
+                            "optimization_limit_db": result.get("optimization_limit_db"),
+                            "fail_limit_db": result.get("fail_limit_db"),
+                            "too_good_below_db": result.get("too_good_below_db"),
+                            "minimum_improvement_db": result.get(
+                                "minimum_improvement_db"
+                            ),
+                            "bottom_spare_count": result.get("bottom_spare_count"),
+                        }
+                        persisted = self.database_workflow.replacement_analyses.save_result(
+                            run_id=run.run_id,
+                            result=result,
+                            analyzed_by=(
+                                str(run.tested_by or self.hardware_tested_by.text()).strip()
+                                or "Unknown"
+                            ),
+                            application_version=APP_VERSION,
+                            front_panel_channel_count=part_context[
+                                "front_panel_channel_count"
+                            ],
+                            wavelengths=tuple(self.run_data.opm_wavelengths_nm),
+                            criteria=criteria,
+                            measurement_count=len(self.run_data.measurements),
+                        )
+                        refreshed = self.database_workflow.refresh(run.run_id)
+                        self._apply_database_run_context(
+                            refreshed, update_setup=False
+                        )
+                        self.statusBar().showMessage(
+                            "Replacement analysis saved to SQL Server."
+                        )
+                    except (OSError, RuntimeError, TypeError, ValueError) as error:
+                        self._record_support(
+                            SupportEventCategory.PERSISTENCE,
+                            "replacement.analysis_persistence_failed",
+                            level=SupportLogLevel.ERROR,
+                            launch_source=launch_source,
+                            run_number=self.database_run_context.run.run_number,
+                            error_type=type(error).__name__,
+                            error_message=str(error),
+                            status="error",
+                        )
+                        QMessageBox.critical(
+                            dialog,
+                            "Could not save replacement analysis",
+                            "The analysis was calculated but was not published because "
+                            "its database snapshot could not be saved:\n%s" % error,
+                        )
+                        return
+                else:
+                    self.apply_replacement_analysis(result)
                 return
             except (OSError, ValueError, TypeError) as error:
                 self._record_support(
@@ -7960,9 +8172,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(dialog, "Invalid replacement analysis", str(error))
 
     def apply_replacement_analysis(self, result):
-        """Display calculated recommendations without storing derived results."""
+        """Publish a calculated analysis for the active file-backed run."""
         if self.run_data is None:
             return
+        self.replacement_analysis_stale = False
         self.replacement_analysis = result
         self.run_data.replacement_analysis = result
         self.refresh_replacement_summary()

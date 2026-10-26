@@ -103,7 +103,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.35.10; an existing executable keeps its prior version until rebuilt. The main
+1.35.11; an existing executable keeps its prior version until rebuilt. The main
 window opens maximized by default and can be restored with the normal Windows
 title-bar control.
 
@@ -282,9 +282,13 @@ count. Missing or invalid part numbers block COC preparation; the application
 does not guess from the switch capacity or number of readings. OSX-150 MM
 remains unavailable for COC export because no approved OSX-150 MM templates
 exist.
-Replacement recommendations are calculated for the selected run but are not
-stored as permanent results. Completed replacements and designated spare ports
-are stored in the shared unit.json record.
+For database-backed runs, replacement analyses are stored as append-only
+snapshots with their criteria, source measurement high-watermark, and
+normalized recommendations. The latest analysis is restored with the run and
+is marked stale after a newer accepted measurement. Completed replacements and
+designated spare ports remain authoritative routing documentation; a replacement
+may retain the ID of the recommendation that informed it. File-backed legacy
+runs keep their existing session-local analysis behavior.
 After a successful full configured pass with every planned channel written, the
 operator is offered the same advisory replacement analysis. This offer does
 not appear for partial, selected, stopped, failed, retest-only, loaded-only,

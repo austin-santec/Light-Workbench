@@ -16,7 +16,7 @@ rules.
 
 ### Implement
 
-- Approve the eight tables and two read-only views.
+- Approve the ten tables and three read-only views.
 - Approve SQL Server types, nullable fields, status vocabularies, and JSON
   shapes.
 - Approve identity, foreign-key, unique, check, and append-only rules.
@@ -41,8 +41,8 @@ rules.
 ## Milestone 1 - SQL Server foundation
 
 Status: complete. Forward-only migrations through
-`0003_station_number.sql`, checksum/history validation, the
-eight tables, two views, least-privilege database roles,
+`0004_replacement_analysis_history.sql`, checksum/history validation, the
+ten tables, three views, least-privilege database roles,
 guarded reset tooling, and isolated SQL integration tests are implemented. The
 local `LWBTestDB_Integration` database has been reset, migrated, backed up,
 restored to a temporary database, checked with `DBCC CHECKDB`, and cleaned up
@@ -52,9 +52,11 @@ using 32-bit Python, `pyodbc`, Windows Authentication, and ODBC Driver 18.
 
 - Create forward-only migration scripts for `LWBTestDB`.
 - Create `UNITS`, `SWITCHES`, `UNIT_SWITCH_ASSIGNMENTS`, `IL_RUNS`,
-  `IL_MEASUREMENTS`, `CHANNEL_REPLACEMENTS`, `DESIGNATED_SPARES`, and
+  `IL_MEASUREMENTS`, `CHANNEL_REPLACEMENTS`, `DESIGNATED_SPARES`,
+  `REPLACEMENT_ANALYSES`, `REPLACEMENT_ANALYSIS_RECOMMENDATIONS`, and
   `SCHEMA_MIGRATIONS`.
-- Create `vw_CurrentILMeasurements` and `vw_CurrentChannelMap`.
+- Create `vw_CurrentILMeasurements`, `vw_CurrentChannelMap`, and
+  `vw_ReplacementRecommendationUsage`.
 - Add foreign keys, checks, unique constraints, filtered active-assignment
   indexes, and reporting indexes.
 - Configure Windows Authentication roles.
@@ -350,9 +352,9 @@ replacement chains, duplicate effective routes, out-of-capacity ports,
 cross-assignment related runs, and changes to removed assignments.
 `vw_CurrentChannelMap` supplies the effective logical-to-physical map, while a
 stable routing snapshot exposes complete replacement/spare history and the
-current designated-spare set. Replacement recommendations remain derived and
-are not persisted. Production UI integration remains deferred to the
-database-primary cutover in Milestone 9.
+current designated-spare set. Replacement analysis is now persisted as an
+append-only run snapshot, while recommendations remain advisory and do not
+change the external mapping.
 
 ### Implement
 
@@ -363,7 +365,11 @@ database-primary cutover in Milestone 9.
 - Append spare designation and undesignation events.
 - Use `vw_CurrentChannelMap` to combine the baseline assignment map with the
   latest replacement per logical channel.
-- Keep replacement recommendations derived and temporary.
+- Persist each completed replacement-analysis snapshot and its normalized
+  recommendations.
+- Store the source measurement high-watermark so older results become visibly
+  stale after a retest.
+- Link an approved replacement to its source recommendation when selected.
 - Do not command or verify external switch mapping changes.
 
 ### Tests
@@ -459,6 +465,25 @@ queries do not mutate authoritative records.
 - Users can answer normal production and troubleshooting questions without
   scanning local run folders.
 - Derived results can be reproduced from stored measurements and snapshots.
+
+## Milestone 10A - Persistent replacement-analysis history
+
+Status: complete. Every database-backed Analyze Replacements action saves an
+immutable analysis header and normalized recommendation rows. Loading a run
+restores the latest snapshot and its full history; a newer accepted measurement
+marks the latest snapshot stale instead of silently displaying old advice.
+Selecting a saved recommendation in the replacement editor carries its ID
+into the append-only replacement record, allowing adoption reporting through
+`vw_ReplacementRecommendationUsage`.
+
+### Scope safeguards
+
+- Analysis persistence never changes a switch route or verifies an external
+  reroute.
+- A failed database save does not publish the calculated result as authoritative
+  and reports the failure to the operator.
+- File-backed legacy runs keep their existing session-local analysis behavior;
+  no historical file import is introduced.
 
 ## Milestone 11 - Network pilot and production hardening
 

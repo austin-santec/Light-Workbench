@@ -2,9 +2,9 @@
 
 ## Status and purpose
 
-Status: implemented through read-only database reporting (Milestone 10), with
-station-number persistence added by forward-only migration
-`0003_station_number.sql`.
+Status: implemented through persistent replacement-analysis history and
+read-only database reporting (Milestone 10), with analysis history added by
+forward-only migration `0004_replacement_analysis_history.sql`.
 Database-neutral repositories and the unit, assignment, run-lifecycle,
 atomic-measurement, current/history query, and assignment-scoped routing
 boundaries are connected to the production hardware workflow.
@@ -117,6 +117,9 @@ UNIT_SWITCH_ASSIGNMENTS <----- SWITCHES
   +---- IL_RUNS
   |       |
   |       +---- IL_MEASUREMENTS
+  |       +---- REPLACEMENT_ANALYSES
+  |               |
+  |               +---- REPLACEMENT_ANALYSIS_RECOMMENDATIONS
   |
   +---- CHANNEL_REPLACEMENTS
   |
@@ -407,6 +410,7 @@ Append-only documentation of manually performed channel replacements.
 | `replaced_at_utc` | `DATETIME2(3)` | Replacement time |
 | `related_run_id` | `BIGINT NULL` | Associated run when applicable |
 | `notes` | `NVARCHAR(MAX) NULL` | Additional notes |
+| `source_recommendation_id` | `BIGINT NULL` | Saved analysis recommendation used for this replacement |
 
 All channels and ports are positive, and previous/replacement ports cannot be
 equal. A replacement belongs to an assignment rather than permanently to a
@@ -422,9 +426,11 @@ deleted.
 
 Light Workbench documents replacements only. It does not command the switch,
 use `CLOSe?` to infer a replaced route, or verify the external mapping change.
-Replacement recommendations remain temporary derived results and are never
-written to `CHANNEL_REPLACEMENTS` unless an operator separately documents a
-completed manual replacement.
+Replacement recommendations are also persisted as append-only analysis
+snapshots. They are advisory and do not change the routing map. A completed
+replacement may point to the exact recommendation that informed it through
+`source_recommendation_id`; a null value means the replacement was manually
+recorded without using a saved recommendation.
 
 The database-backed editor is logical-channel centered. It resolves the
 current effective physical port from `vw_CurrentChannelMap`, shows the complete
@@ -441,6 +447,60 @@ explicit spare designation/undesignation events approved in the same dialog
 are validated and committed in one transaction. After commit or failure, the
 application reloads the authoritative routing snapshot; no local replacement
 fallback is permitted.
+
+### `REPLACEMENT_ANALYSES`
+
+One immutable snapshot of a completed replacement-analysis calculation. A run
+may have many analyses; the latest one is the default display, while the full
+history remains available for support and trend review.
+
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `analysis_id` | `BIGINT IDENTITY(1,1)` | Primary key |
+| `analysis_uuid` | `UNIQUEIDENTIFIER` | Retry-safe analysis identity |
+| `run_id` | `BIGINT` | Run analyzed |
+| `analyzed_at_utc` | `DATETIME2(3)` | Calculation time |
+| `analyzed_by` | `NVARCHAR(100)` | Operator associated with the run |
+| `application_version` | `VARCHAR(30)` | Version that calculated the result |
+| `source_measurement_high_watermark_id` | `BIGINT` | Highest accepted measurement included |
+| `front_panel_channel_count` | `INT` | Front-panel count used |
+| `wavelengths_json` | `NVARCHAR(MAX)` | Wavelength pair used |
+| `criteria_json` | `NVARCHAR(MAX)` | Limit and analysis criteria snapshot |
+| `result_status` | `VARCHAR(40)` | Classification of the saved calculation |
+| `result_details_json` | `NVARCHAR(MAX)` | Bounded result details excluding normalized recommendations |
+
+`result_status` is one of `recommendations_available`,
+`no_viable_recommendations`, `not_applicable_no_extra_ports`, or
+`incomplete_input`. The measurement high-watermark prevents a saved result
+from being presented as current after a retest or new accepted reading. The
+analysis remains in history, but the UI marks it stale and requires a new
+calculation.
+
+### `REPLACEMENT_ANALYSIS_RECOMMENDATIONS`
+
+Normalized recommendation rows belonging to one saved analysis. Keeping the
+candidate and measured losses in columns supports reporting without parsing
+the result JSON.
+
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `recommendation_id` | `BIGINT IDENTITY(1,1)` | Primary key |
+| `analysis_id` | `BIGINT` | Parent analysis |
+| `recommendation_rank` | `INT` | Display/calculation order |
+| `category` | `VARCHAR(20)` | `required` or `optional` |
+| `logical_channel` | `INT` | Proposed logical channel |
+| `current_physical_port` | `INT` | Current route |
+| `candidate_physical_port` | `INT` | Measured replacement candidate |
+| `current_wavelength_1_il_db` | `DECIMAL(9,4)` | Current first-wavelength loss |
+| `current_wavelength_2_il_db` | `DECIMAL(9,4)` | Current second-wavelength loss |
+| `candidate_wavelength_1_il_db` | `DECIMAL(9,4)` | Candidate first-wavelength loss |
+| `candidate_wavelength_2_il_db` | `DECIMAL(9,4)` | Candidate second-wavelength loss |
+| `current_worst_loss_db` | `DECIMAL(9,4)` | Current worst loss |
+| `candidate_worst_loss_db` | `DECIMAL(9,4)` | Candidate worst loss |
+| `improvement_db` | `DECIMAL(9,4)` | Projected improvement |
+
+The unique analysis/rank, analysis/channel, and analysis/candidate-port
+constraints prevent duplicate recommendations inside one snapshot.
 
 ### `DESIGNATED_SPARES`
 
@@ -520,6 +580,14 @@ spare suggestions may be preselected for review, but neither recommendation
 generation nor opening the editor writes an event. An existing spare is
 undesignated only by an explicit operator selection saved as a new append-only
 event.
+
+### `vw_ReplacementRecommendationUsage`
+
+Joins each normalized recommendation to any replacement record that cites it
+through `source_recommendation_id`. This makes recommendation adoption
+reportable without treating an advisory calculation as proof that the physical
+reroute occurred. A recommendation with no matching replacement is simply
+shown as unused.
 
 ## Required indexes
 

@@ -477,6 +477,21 @@ class SqlRepositoryIntegrationTests(RepositoryContractMixin, unittest.TestCase):
         cursor = connection.cursor()
         try:
             cursor.execute(
+                "DELETE FROM dbo.REPLACEMENT_ANALYSIS_RECOMMENDATIONS "
+                "WHERE analysis_id IN (SELECT analysis_id FROM dbo.REPLACEMENT_ANALYSES "
+                "WHERE run_id IN (SELECT run_id FROM dbo.IL_RUNS WHERE assignment_id IN "
+                "(SELECT assignment_id FROM dbo.UNIT_SWITCH_ASSIGNMENTS WHERE unit_id IN "
+                "(SELECT unit_id FROM dbo.UNITS WHERE main_board_serial = ?))))",
+                unit_serial,
+            )
+            cursor.execute(
+                "DELETE FROM dbo.REPLACEMENT_ANALYSES WHERE run_id IN "
+                "(SELECT run_id FROM dbo.IL_RUNS WHERE assignment_id IN "
+                "(SELECT assignment_id FROM dbo.UNIT_SWITCH_ASSIGNMENTS WHERE unit_id IN "
+                "(SELECT unit_id FROM dbo.UNITS WHERE main_board_serial = ?)))",
+                unit_serial,
+            )
+            cursor.execute(
                 "DELETE FROM dbo.DESIGNATED_SPARES WHERE assignment_id IN "
                 "(SELECT assignment_id FROM dbo.UNIT_SWITCH_ASSIGNMENTS WHERE unit_id IN "
                 "(SELECT unit_id FROM dbo.UNITS WHERE main_board_serial = ?))",

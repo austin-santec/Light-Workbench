@@ -180,6 +180,16 @@ class DatabaseRunSnapshot:
     def comparison_records(self) -> dict[int, MeasurementRecord]:
         return {record.channel: record for record in self.measurements}
 
+    @property
+    def measurement_high_watermark_id(self) -> int | None:
+        """Highest accepted measurement ID in the current run projection."""
+        values = [
+            record.measurement_id
+            for record in self.measurements
+            if record.measurement_id is not None
+        ]
+        return max(values) if values else None
+
     def analysis(self, profile) -> dict:
         return analyze_measurements_with_profile(self.measurements, profile)
 

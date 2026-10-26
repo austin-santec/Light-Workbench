@@ -106,6 +106,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\reference_session.py',
    'PYMODULE'),
+  ('application.replacement_analysis_persistence',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\replacement_analysis_persistence.py',
+   'PYMODULE'),
   ('application.replacement_persistence_workflow',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\replacement_persistence_workflow.py',

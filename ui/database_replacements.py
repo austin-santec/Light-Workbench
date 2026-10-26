@@ -797,6 +797,14 @@ class DatabaseReplacementDialog(QDialog):
             reason=reason,
             replaced_by=operator,
             notes=self.details_edit.text().strip() or None,
+            source_recommendation_id=(
+                self._selected_recommendation.recommendation_id
+                if self._selected_recommendation is not None
+                and self._selected_recommendation.logical_channel == logical_channel
+                and self._selected_recommendation.proposed_replacement_physical_port
+                == proposed_port
+                else None
+            ),
         )
         self._pending.append(request)
         category = self.category_edit.text().strip()

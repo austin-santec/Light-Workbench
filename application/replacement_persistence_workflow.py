@@ -68,6 +68,7 @@ class ReplacementRecommendation:
     candidate_loss_1310_db: float | None = None
     candidate_loss_1550_db: float | None = None
     candidate_worst_loss_db: float | None = None
+    recommendation_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,7 @@ class ReplacementChangeRequest:
     reason: str
     replaced_by: str
     notes: str | None = None
+    source_recommendation_id: int | None = None
 
 
 class ReplacementPersistenceWorkflow:
@@ -174,6 +176,11 @@ class ReplacementPersistenceWorkflow:
                         if item.get("candidate_worst_loss_db") is None
                         else float(item["candidate_worst_loss_db"])
                     ),
+                    recommendation_id=(
+                        None
+                        if item.get("recommendation_id") is None
+                        else int(item["recommendation_id"])
+                    ),
                 )
             )
         return ReplacementEditorModel(
@@ -225,6 +232,7 @@ class ReplacementPersistenceWorkflow:
                     replaced_at_utc=timestamp,
                     related_run_id=related_run_id,
                     notes=request.notes,
+                    source_recommendation_id=request.source_recommendation_id,
                 )
             )
             effective[logical_channel] = replacement_port
@@ -293,6 +301,7 @@ class ReplacementPersistenceWorkflow:
                 replaced_at_utc=replaced_at_utc or utc_now(),
                 related_run_id=related_run_id,
                 notes=notes,
+                source_recommendation_id=None,
             )
         )
 

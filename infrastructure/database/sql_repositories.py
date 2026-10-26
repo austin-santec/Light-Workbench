@@ -15,6 +15,10 @@ from domain.database_records import (
     MeasurementRecord,
     MeasurementSpec,
     MeasurementWriteSpec,
+    ReplacementAnalysisRecommendationRecord,
+    ReplacementAnalysisRecommendationSpec,
+    ReplacementAnalysisRecord,
+    ReplacementAnalysisSpec,
     ReplacementRecord,
     ReplacementSpec,
     RunRecord,
@@ -838,6 +842,135 @@ class SqlRepositories:
                 tuple(self._measurement(item) for item in history_rows),
             )
 
+    def append_analysis(self, spec, recommendations):
+        with self._factory.transaction() as cursor:
+            existing = cursor.execute(
+                self._ANALYSIS_SELECT + " WHERE analysis.analysis_uuid = ?",
+                str(spec.analysis_uuid),
+            ).fetchone()
+            if existing is not None:
+                return self._analysis_bundle(cursor, existing[0])
+            run = cursor.execute(
+                "SELECT assignment_id FROM dbo.IL_RUNS WHERE run_id = ?",
+                spec.run_id,
+            ).fetchone()
+            if run is None:
+                raise ValueError("Replacement analysis run does not exist")
+            source = cursor.execute(
+                "SELECT run_id FROM dbo.IL_MEASUREMENTS WHERE measurement_id = ?",
+                spec.source_measurement_high_watermark_id,
+            ).fetchone()
+            if source is None or int(source[0]) != int(spec.run_id):
+                raise ValueError(
+                    "Analysis source measurement does not belong to the run"
+                )
+            current_max = cursor.execute(
+                "SELECT MAX(measurement_id) FROM dbo.IL_MEASUREMENTS "
+                "WHERE run_id = ?",
+                spec.run_id,
+            ).fetchone()[0]
+            if current_max is None or int(current_max) != int(
+                spec.source_measurement_high_watermark_id
+            ):
+                raise ValueError("Analysis source measurements are no longer current")
+            analysis_id = cursor.execute(
+                """
+                INSERT INTO dbo.REPLACEMENT_ANALYSES (
+                    analysis_uuid, run_id, analyzed_at_utc, analyzed_by,
+                    application_version, source_measurement_high_watermark_id,
+                    front_panel_channel_count, wavelengths_json, criteria_json,
+                    result_status, result_details_json
+                ) OUTPUT INSERTED.analysis_id
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                str(spec.analysis_uuid),
+                spec.run_id,
+                spec.analyzed_at_utc,
+                spec.analyzed_by,
+                spec.application_version,
+                spec.source_measurement_high_watermark_id,
+                spec.front_panel_channel_count,
+                _json(spec.wavelengths),
+                _json(spec.criteria),
+                spec.result_status,
+                _json(spec.result_details),
+            ).fetchone()[0]
+            for item in recommendations:
+                if item.analysis_id not in (None, int(analysis_id)):
+                    raise ValueError("Recommendation analysis ID does not match")
+                cursor.execute(
+                    """
+                    INSERT INTO dbo.REPLACEMENT_ANALYSIS_RECOMMENDATIONS (
+                        analysis_id, recommendation_rank, category,
+                        logical_channel, current_physical_port,
+                        candidate_physical_port, current_wavelength_1_il_db,
+                        current_wavelength_2_il_db, candidate_wavelength_1_il_db,
+                        candidate_wavelength_2_il_db, current_worst_loss_db,
+                        candidate_worst_loss_db, improvement_db
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    analysis_id,
+                    item.recommendation_rank,
+                    item.category,
+                    item.logical_channel,
+                    item.current_physical_port,
+                    item.candidate_physical_port,
+                    item.current_wavelength_1_il_db,
+                    item.current_wavelength_2_il_db,
+                    item.candidate_wavelength_1_il_db,
+                    item.candidate_wavelength_2_il_db,
+                    item.current_worst_loss_db,
+                    item.candidate_worst_loss_db,
+                    item.improvement_db,
+                )
+            return self._analysis_bundle(cursor, analysis_id)
+
+    def latest_analysis_for_run(self, run_id):
+        with self._factory.transaction() as cursor:
+            row = cursor.execute(
+                self._ANALYSIS_SELECT
+                + " WHERE analysis.run_id = ? "
+                "ORDER BY analysis.analyzed_at_utc DESC, analysis.analysis_id DESC",
+                run_id,
+            ).fetchone()
+            return None if row is None else self._analysis_bundle(cursor, row[0])
+
+    def analysis_history_for_run(self, run_id):
+        with self._factory.transaction() as cursor:
+            rows = cursor.execute(
+                self._ANALYSIS_SELECT
+                + " WHERE analysis.run_id = ? "
+                "ORDER BY analysis.analyzed_at_utc DESC, analysis.analysis_id DESC",
+                run_id,
+            ).fetchall()
+            return tuple(self._analysis_bundle(cursor, row[0]) for row in rows)
+
+    def current_measurement_high_watermark(self, run_id):
+        with self._factory.transaction() as cursor:
+            row = cursor.execute(
+                "SELECT MAX(measurement_id) FROM dbo.IL_MEASUREMENTS "
+                "WHERE run_id = ?",
+                run_id,
+            ).fetchone()
+            return None if row is None or row[0] is None else int(row[0])
+
+    def _analysis_bundle(self, cursor, analysis_id):
+        row = cursor.execute(
+            self._ANALYSIS_SELECT + " WHERE analysis.analysis_id = ?",
+            analysis_id,
+        ).fetchone()
+        if row is None:
+            raise ValueError("Replacement analysis does not exist")
+        recommendation_rows = cursor.execute(
+            self._ANALYSIS_RECOMMENDATION_SELECT
+            + " WHERE recommendation.analysis_id = ? "
+            "ORDER BY recommendation.recommendation_rank, recommendation.recommendation_id",
+            analysis_id,
+        ).fetchall()
+        return self._analysis(row), tuple(
+            self._analysis_recommendation(item) for item in recommendation_rows
+        )
+
     def append(self, spec: ReplacementSpec) -> ReplacementRecord:
         with self._factory.transaction() as cursor:
             return self._append_replacement(cursor, spec)
@@ -927,6 +1060,50 @@ class SqlRepositories:
             ).fetchone()
             if related is None or int(related[0]) != spec.assignment_id:
                 raise ValueError("Related run does not belong to this assignment")
+        if spec.source_recommendation_id is not None:
+            recommendation = cursor.execute(
+                """
+                SELECT recommendation.analysis_id, recommendation.logical_channel,
+                    recommendation.candidate_physical_port, analysis.run_id,
+                    analysis.source_measurement_high_watermark_id
+                FROM dbo.REPLACEMENT_ANALYSIS_RECOMMENDATIONS AS recommendation
+                INNER JOIN dbo.REPLACEMENT_ANALYSES AS analysis
+                    ON analysis.analysis_id = recommendation.analysis_id
+                WHERE recommendation.recommendation_id = ?
+                """,
+                spec.source_recommendation_id,
+            ).fetchone()
+            if recommendation is None:
+                raise ValueError("Source replacement recommendation does not exist")
+            source_assignment = cursor.execute(
+                "SELECT assignment_id FROM dbo.IL_RUNS WHERE run_id = ?",
+                recommendation[3],
+            ).fetchone()
+            if source_assignment is None or int(source_assignment[0]) != int(
+                spec.assignment_id
+            ):
+                raise ValueError(
+                    "Source replacement recommendation belongs to another assignment"
+                )
+            current_max = cursor.execute(
+                "SELECT MAX(measurement_id) FROM dbo.IL_MEASUREMENTS "
+                "WHERE run_id = ?",
+                recommendation[3],
+            ).fetchone()[0]
+            if current_max is None or int(current_max) != int(recommendation[4]):
+                raise ValueError("Source replacement recommendation is stale")
+            if (
+                int(recommendation[1]) != int(spec.logical_channel)
+                or int(recommendation[2]) != int(spec.replacement_physical_port)
+            ):
+                raise ValueError("Source recommendation does not match the replacement")
+            used = cursor.execute(
+                "SELECT 1 FROM dbo.CHANNEL_REPLACEMENTS "
+                "WHERE source_recommendation_id = ?",
+                spec.source_recommendation_id,
+            ).fetchone()
+            if used is not None:
+                raise ValueError("Source replacement recommendation was already used")
         prior = cursor.execute(
             """
             SELECT TOP (1) replaced_at_utc
@@ -946,9 +1123,9 @@ class SqlRepositories:
             INSERT INTO dbo.CHANNEL_REPLACEMENTS (
                 assignment_id, logical_channel, previous_physical_port,
                 replacement_physical_port, reason, replaced_by,
-                replaced_at_utc, related_run_id, notes
+                replaced_at_utc, related_run_id, notes, source_recommendation_id
             ) OUTPUT INSERTED.replacement_id
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             spec.assignment_id,
             spec.logical_channel,
@@ -959,6 +1136,7 @@ class SqlRepositories:
             spec.replaced_at_utc,
             spec.related_run_id,
             spec.notes,
+            spec.source_recommendation_id,
         ).fetchone()[0]
         row = cursor.execute(
             self._REPLACEMENT_SELECT + " WHERE replacement.replacement_id = ?",
@@ -1147,7 +1325,43 @@ class SqlRepositories:
     def _replacement(row) -> ReplacementRecord:
         return ReplacementRecord(
             row[0], row[1], row[2], row[3], row[4], row[5], row[6],
-            _utc(row[7]), row[8], row[9],
+            _utc(row[7]), row[8], row[9], row[10],
+        )
+
+    @staticmethod
+    def _analysis(row) -> ReplacementAnalysisRecord:
+        return ReplacementAnalysisRecord(
+            analysis_id=row[0],
+            analysis_uuid=UUID(str(row[1])),
+            run_id=row[2],
+            analyzed_at_utc=_utc(row[3]),
+            analyzed_by=row[4],
+            application_version=row[5],
+            source_measurement_high_watermark_id=row[6],
+            front_panel_channel_count=row[7],
+            wavelengths=_mapping(row[8]),
+            criteria=_mapping(row[9]),
+            result_status=row[10],
+            result_details=_mapping(row[11]),
+        )
+
+    @staticmethod
+    def _analysis_recommendation(row) -> ReplacementAnalysisRecommendationRecord:
+        return ReplacementAnalysisRecommendationRecord(
+            recommendation_id=row[0],
+            analysis_id=row[1],
+            recommendation_rank=row[2],
+            category=row[3],
+            logical_channel=row[4],
+            current_physical_port=row[5],
+            candidate_physical_port=row[6],
+            current_wavelength_1_il_db=Decimal(row[7]),
+            current_wavelength_2_il_db=Decimal(row[8]),
+            candidate_wavelength_1_il_db=Decimal(row[9]),
+            candidate_wavelength_2_il_db=Decimal(row[10]),
+            current_worst_loss_db=Decimal(row[11]),
+            candidate_worst_loss_db=Decimal(row[12]),
+            improvement_db=Decimal(row[13]),
         )
 
     @staticmethod
@@ -1206,8 +1420,33 @@ class SqlRepositories:
             replacement.logical_channel, replacement.previous_physical_port,
             replacement.replacement_physical_port, replacement.reason,
             replacement.replaced_by, replacement.replaced_at_utc,
-            replacement.related_run_id, replacement.notes
+            replacement.related_run_id, replacement.notes,
+            replacement.source_recommendation_id
         FROM dbo.CHANNEL_REPLACEMENTS AS replacement
+    """
+    _ANALYSIS_SELECT = """
+        SELECT analysis.analysis_id, analysis.analysis_uuid, analysis.run_id,
+            analysis.analyzed_at_utc, analysis.analyzed_by,
+            analysis.application_version,
+            analysis.source_measurement_high_watermark_id,
+            analysis.front_panel_channel_count, analysis.wavelengths_json,
+            analysis.criteria_json, analysis.result_status,
+            analysis.result_details_json
+        FROM dbo.REPLACEMENT_ANALYSES AS analysis
+    """
+    _ANALYSIS_RECOMMENDATION_SELECT = """
+        SELECT recommendation.recommendation_id, recommendation.analysis_id,
+            recommendation.recommendation_rank, recommendation.category,
+            recommendation.logical_channel, recommendation.current_physical_port,
+            recommendation.candidate_physical_port,
+            recommendation.current_wavelength_1_il_db,
+            recommendation.current_wavelength_2_il_db,
+            recommendation.candidate_wavelength_1_il_db,
+            recommendation.candidate_wavelength_2_il_db,
+            recommendation.current_worst_loss_db,
+            recommendation.candidate_worst_loss_db,
+            recommendation.improvement_db
+        FROM dbo.REPLACEMENT_ANALYSIS_RECOMMENDATIONS AS recommendation
     """
     _SPARE_SELECT = """
         SELECT spare.spare_event_id, spare.assignment_id, spare.physical_port,

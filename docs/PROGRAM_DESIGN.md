@@ -388,8 +388,11 @@ storage option may be evaluated here without changing domain reporting.
 - A run belongs to a unit, but switch identity is run-specific.
 - Replacements and designated spares are device-level information and are
   shared across runs for that unit.
-- Replacement analysis is derived guidance, not a record of what the operator
-  actually changed. Manually recorded replacements are authoritative.
+- Database-backed replacement analysis is saved as an append-only snapshot with
+  normalized recommendation rows, criteria, operator, and source measurement
+  high-watermark. A newer accepted measurement marks the saved analysis stale.
+  Manually recorded replacements remain authoritative, and may reference the
+  recommendation that informed them for usage reporting.
 - Existing run formats should remain readable when storage changes.
 
 ## Refactoring strategy

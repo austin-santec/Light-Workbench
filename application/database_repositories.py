@@ -13,6 +13,10 @@ from domain.database_records import (
     MeasurementRecord,
     MeasurementSpec,
     MeasurementWriteSpec,
+    ReplacementAnalysisRecommendationRecord,
+    ReplacementAnalysisRecommendationSpec,
+    ReplacementAnalysisRecord,
+    ReplacementAnalysisSpec,
     ReplacementRecord,
     ReplacementSpec,
     RunRecord,
@@ -128,6 +132,35 @@ class MeasurementRepository(Protocol):
     def snapshot_for_run(
         self, run_id: int
     ) -> tuple[tuple[MeasurementRecord, ...], tuple[MeasurementRecord, ...]]: ...
+
+
+class ReplacementAnalysisRepository(Protocol):
+    def append_analysis(
+        self,
+        spec: ReplacementAnalysisSpec,
+        recommendations: tuple[ReplacementAnalysisRecommendationSpec, ...],
+    ) -> tuple[
+        ReplacementAnalysisRecord,
+        tuple[ReplacementAnalysisRecommendationRecord, ...],
+    ]: ...
+
+    def latest_analysis_for_run(
+        self, run_id: int
+    ) -> tuple[
+        ReplacementAnalysisRecord,
+        tuple[ReplacementAnalysisRecommendationRecord, ...],
+    ] | None: ...
+
+    def analysis_history_for_run(
+        self, run_id: int
+    ) -> tuple[
+        tuple[
+            ReplacementAnalysisRecord,
+            tuple[ReplacementAnalysisRecommendationRecord, ...],
+        ], ...
+    ]: ...
+
+    def current_measurement_high_watermark(self, run_id: int) -> int | None: ...
 
 
 class ReplacementRepository(Protocol):

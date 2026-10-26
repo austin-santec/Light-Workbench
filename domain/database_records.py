@@ -184,6 +184,7 @@ class ReplacementRecord:
     replaced_at_utc: datetime
     related_run_id: int | None = None
     notes: str | None = None
+    source_recommendation_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -483,6 +484,7 @@ class ReplacementSpec:
     replaced_at_utc: datetime
     related_run_id: int | None = None
     notes: str | None = None
+    source_recommendation_id: int | None = None
 
     def __post_init__(self) -> None:
         require_positive(self.assignment_id, "Assignment ID")
@@ -496,6 +498,118 @@ class ReplacementSpec:
         object.__setattr__(
             self, "replaced_at_utc", require_utc(self.replaced_at_utc, "Replacement time")
         )
+        if self.source_recommendation_id is not None:
+            require_positive(
+                self.source_recommendation_id, "Source recommendation ID"
+            )
+
+
+@dataclass(frozen=True)
+class ReplacementAnalysisSpec:
+    """Immutable database snapshot of one completed replacement analysis."""
+
+    analysis_uuid: UUID
+    run_id: int
+    analyzed_at_utc: datetime
+    analyzed_by: str
+    application_version: str
+    source_measurement_high_watermark_id: int
+    front_panel_channel_count: int
+    wavelengths: Mapping
+    criteria: Mapping
+    result_status: str
+    result_details: Mapping
+
+    def __post_init__(self) -> None:
+        require_positive(self.run_id, "Run ID")
+        require_utc(self.analyzed_at_utc, "Analysis time")
+        require_text(self.analyzed_by, "Analysis operator")
+        require_text(self.application_version, "Application version")
+        require_positive(
+            self.source_measurement_high_watermark_id,
+            "Source measurement high-watermark ID",
+        )
+        require_positive(self.front_panel_channel_count, "Front-panel channel count")
+        require_snapshot(self.wavelengths, "Analysis wavelengths")
+        require_snapshot(self.criteria, "Analysis criteria")
+        require_text(self.result_status, "Analysis result status")
+        require_snapshot(self.result_details, "Analysis result details")
+
+
+@dataclass(frozen=True)
+class ReplacementAnalysisRecord:
+    analysis_id: int
+    analysis_uuid: UUID
+    run_id: int
+    analyzed_at_utc: datetime
+    analyzed_by: str
+    application_version: str
+    source_measurement_high_watermark_id: int
+    front_panel_channel_count: int
+    wavelengths: Mapping
+    criteria: Mapping
+    result_status: str
+    result_details: Mapping
+
+
+@dataclass(frozen=True)
+class ReplacementAnalysisRecommendationSpec:
+    analysis_id: int | None
+    recommendation_rank: int
+    category: str
+    logical_channel: int
+    current_physical_port: int
+    candidate_physical_port: int
+    current_wavelength_1_il_db: Decimal
+    current_wavelength_2_il_db: Decimal
+    candidate_wavelength_1_il_db: Decimal
+    candidate_wavelength_2_il_db: Decimal
+    current_worst_loss_db: Decimal
+    candidate_worst_loss_db: Decimal
+    improvement_db: Decimal
+
+    def __post_init__(self) -> None:
+        if self.analysis_id is not None:
+            require_positive(self.analysis_id, "Analysis ID")
+        require_positive(self.recommendation_rank, "Recommendation rank")
+        if self.category not in {"required", "optional"}:
+            raise ValueError("Invalid replacement recommendation category")
+        for value, label in (
+            (self.logical_channel, "Logical channel"),
+            (self.current_physical_port, "Current physical port"),
+            (self.candidate_physical_port, "Candidate physical port"),
+        ):
+            require_positive(value, label)
+        if self.current_physical_port == self.candidate_physical_port:
+            raise ValueError("Recommendation ports must differ")
+        for value, label in (
+            (self.current_wavelength_1_il_db, "Current wavelength 1 loss"),
+            (self.current_wavelength_2_il_db, "Current wavelength 2 loss"),
+            (self.candidate_wavelength_1_il_db, "Candidate wavelength 1 loss"),
+            (self.candidate_wavelength_2_il_db, "Candidate wavelength 2 loss"),
+            (self.current_worst_loss_db, "Current worst loss"),
+            (self.candidate_worst_loss_db, "Candidate worst loss"),
+            (self.improvement_db, "Improvement"),
+        ):
+            require_loss(value, label)
+
+
+@dataclass(frozen=True)
+class ReplacementAnalysisRecommendationRecord:
+    recommendation_id: int
+    analysis_id: int
+    recommendation_rank: int
+    category: str
+    logical_channel: int
+    current_physical_port: int
+    candidate_physical_port: int
+    current_wavelength_1_il_db: Decimal
+    current_wavelength_2_il_db: Decimal
+    candidate_wavelength_1_il_db: Decimal
+    candidate_wavelength_2_il_db: Decimal
+    current_worst_loss_db: Decimal
+    candidate_worst_loss_db: Decimal
+    improvement_db: Decimal
 
 
 @dataclass(frozen=True)
