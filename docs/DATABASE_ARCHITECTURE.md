@@ -267,7 +267,7 @@ One record per Light Workbench test run.
 | `superseded_by_run_id` | `BIGINT NULL` | Preferred replacement run |
 | `part_number_snapshot` | `NVARCHAR(100) NULL` | Part number at test time |
 | `front_panel_channel_count` | `INT NULL` | Required channels at test time |
-| `measurement_hardware_json` | `NVARCHAR(MAX)` | ILM/OPM/laser identity snapshot |
+| `measurement_hardware_json` | `NVARCHAR(MAX)` | ILM/OPM/laser identity plus extra-channel routing provenance and known channel counts |
 | `limit_snapshot_json` | `NVARCHAR(MAX)` | Exact criteria used |
 | `notes` | `NVARCHAR(MAX) NULL` | Run notes |
 | `created_at_utc` | `DATETIME2(3)` | Database creation time |

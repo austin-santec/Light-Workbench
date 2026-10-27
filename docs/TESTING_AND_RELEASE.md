@@ -68,14 +68,18 @@ Persistent-connection tests must verify partial connection success, duplicate
 session prevention, exclusive lease conflicts, release without disconnect,
 single-thread native calls, laser-safe shutdown, and application-close cleanup.
 
-Extra-port coverage must remain hardware-free and verify exact
-`writereg mems.ch <port>` formatting, TCP port 2323, configured termination,
-bounded reads/timeouts, acknowledgement/error/unverified classification,
-optional readback, routing serialization, part-number front-panel planning,
-one-time phase offering, sequential probing, explicit-write-only persistence,
-retry/discard behavior, and safety-ceiling enforcement. Fake sockets or a
-deterministic local fake server must be used; CI must never require a reachable
-switch LAN interface.
+Extra-channel coverage must remain hardware-free. Verify that missing admin
+configuration defaults to SCPI; SCPI extras use the exact finite configured
+range, call only `set_channel()`, retain returned physical ports separately,
+skip accepted continuation rows, hide No More Physical Ports, and never save a
+failed route. Preserve CLI coverage for exact `writereg mems.ch <port>`
+formatting, TCP port 2323, configured termination, bounded reads/timeouts,
+acknowledgement/error/unverified classification, optional readback, sequential
+unknown-capacity probing, retry/discard behavior, and safety-ceiling
+enforcement. Both methods must verify routing serialization, part-number
+front-panel planning, explicit-write-only persistence, support provenance, and
+no automatic method fallback. Fake hardware/sockets must be used; CI must never
+require a reachable switch LAN interface.
 
 ### Manual hardware smoke tests
 
@@ -83,7 +87,9 @@ Required before a release that changes driver behavior, worker lifecycle, or
 measurement timing. Verify the ILM, switch, driver, VISA resource ownership,
 reference calculation, start/stop, and clean close behavior.
 
-For direct physical-port routing, additionally verify TCP/2323 framing and
+For SCPI-mapped extras, verify the configured range on representative OSX-150
+firmware, including `CLOSe?` physical-port results and failure handling. For
+direct physical-port routing, additionally verify TCP/2323 framing and
 termination on both supported models/firmware families, capture actual success
 and error responses, confirm whether an approved readback exists, test the
 operator-confirmed unverified path, and prove that returning to a normal

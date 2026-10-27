@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from application.hardware_planning import HardwareRunPlan, build_hardware_run_plan
 from application.run_controller import HardwareRunRequest
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
+from domain.extra_ports import ExtraChannelRoutingMethod
 from hardware.interfaces import OpticalSwitch, PowerMeter
 from domain.wavelengths import MeasurementConfiguration
 
@@ -35,6 +36,7 @@ def evaluate_extra_port_offer_eligibility(
     retest: bool,
     run_mode: str,
     has_part_number: bool,
+    supports_extra_channels: bool = True,
 ) -> ExtraPortOfferEligibility:
     """Evaluate run-level conditions for offering extra physical ports.
 
@@ -52,6 +54,8 @@ def evaluate_extra_port_offer_eligibility(
         return ExtraPortOfferEligibility(False, "unsupported_run_mode")
     if not has_part_number:
         return ExtraPortOfferEligibility(False, "missing_part_number")
+    if not supports_extra_channels:
+        return ExtraPortOfferEligibility(False, "switch_model_has_no_spares")
     return ExtraPortOfferEligibility(True, "eligible")
 
 
@@ -111,6 +115,10 @@ def build_hardware_run_request(
     run_mode: str = "new",
     retest: bool = False,
     existing_extra_physical_ports: Sequence[int] | None = None,
+    existing_extra_logical_channels: Sequence[int] | None = None,
+    extra_channel_routing_method: ExtraChannelRoutingMethod | str = (
+        ExtraChannelRoutingMethod.SCPI_MAPPED
+    ),
 ) -> HardwareRunRequest:
     """Create a controller request for already-created hardware adapters."""
     return HardwareRunRequest(
@@ -136,6 +144,10 @@ def build_hardware_run_request(
         run_mode=run_mode,
         retest=retest,
         existing_extra_physical_ports=existing_extra_physical_ports,
+        existing_extra_logical_channels=existing_extra_logical_channels,
+        extra_channel_routing_method=ExtraChannelRoutingMethod.parse(
+            extra_channel_routing_method
+        ),
     )
 
 

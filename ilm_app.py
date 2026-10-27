@@ -111,6 +111,7 @@ from domain.hardware_connection import (
 )
 from domain.models import ConnectionState, DeviceCategory
 from domain.extra_ports import (
+    ExtraChannelRoutingMethod,
     ExtraPortPhaseStatus,
     PhysicalPortRouteStatus,
 )
@@ -855,9 +856,13 @@ class MainWindow(QMainWindow):
         self._syncing_reference_widgets = False
         self.limit_profile_repository = LimitProfileRepository()
         self.limit_profiles = default_limit_profiles()
+        self.extra_channel_routing_method = ExtraChannelRoutingMethod.SCPI_MAPPED
         self.limit_profile_error = None
         try:
             self.limit_profiles = self.limit_profile_repository.load_profiles()
+            self.extra_channel_routing_method = (
+                self.limit_profile_repository.load_extra_channel_routing_method()
+            )
         except (OSError, ValueError, TypeError) as error:
             self.limit_profile_error = str(error)
         self.active_limit_profile = self.limit_profiles[profile_key("OSX-150", "SM")]
@@ -2911,11 +2916,15 @@ class MainWindow(QMainWindow):
             self.limit_profiles,
             self.limit_profile_repository,
             self,
+            extra_channel_routing_method=self.extra_channel_routing_method,
         )
         if dialog.exec_() != QDialog.Accepted:
             return
         try:
             self.limit_profiles = self.limit_profile_repository.load_profiles()
+            self.extra_channel_routing_method = (
+                self.limit_profile_repository.load_extra_channel_routing_method()
+            )
             self.limit_profile_error = None
         except (OSError, ValueError, TypeError) as error:
             self.limit_profile_error = str(error)
@@ -2945,6 +2954,9 @@ class MainWindow(QMainWindow):
             admin_mode=True,
             criteria_profile="OSX-100/OSX-150 SM/MM",
             profiles_updated=len(self.limit_profiles),
+            extra_channel_routing_method=(
+                self.extra_channel_routing_method.value
+            ),
             status="success",
         )
         self.statusBar().showMessage("Admin criteria configuration reloaded.")
@@ -4633,7 +4645,12 @@ class MainWindow(QMainWindow):
     def database_run_active(self):
         return self.database_run_context is not None
 
-    def _database_measurement_hardware_snapshot(self, preparation):
+    def _database_measurement_hardware_snapshot(
+        self,
+        preparation,
+        front_panel_channel_count=None,
+        extra_channel_routing_method=None,
+    ):
         meter = self.hardware_connection_manager.snapshot(
             HardwareCapability.MEASUREMENT
         ).device_info
@@ -4644,6 +4661,9 @@ class MainWindow(QMainWindow):
             list(self._active_planned_channels)
             if self._active_planned_channels is not None
             else []
+        )
+        routing_method = ExtraChannelRoutingMethod.parse(
+            extra_channel_routing_method or self.extra_channel_routing_method
         )
         return {
             "ilm": {
@@ -4680,10 +4700,44 @@ class MainWindow(QMainWindow):
                 self.measurement_configuration.source_profile.origin
             ),
             "mode_selection_method": self._wavelength_mode_selection_method,
+            "extra_channel_routing": {
+                "method": routing_method.value,
+                "front_panel_channel_count": front_panel_channel_count,
+                "configured_channel_count": switch.configured_channel_count,
+            },
         }
+
+    def _extra_channel_routing_method_for_run(self, run_mode):
+        """Return immutable saved provenance for continuations when available."""
+        if run_mode == "new":
+            return self.extra_channel_routing_method
+        value = None
+        if self.database_run_context is not None:
+            routing = self.database_run_context.run.measurement_hardware.get(
+                "extra_channel_routing", {}
+            )
+            if hasattr(routing, "get"):
+                value = routing.get("method")
+        if value is None and self.run_data is not None:
+            value = self.run_data.metadata.get("Extra channel routing method")
+        if value:
+            try:
+                return ExtraChannelRoutingMethod.parse(value)
+            except ValueError:
+                self._record_support(
+                    SupportEventCategory.WORKFLOW,
+                    "extra_ports.saved_routing_method_invalid",
+                    saved_value=str(value),
+                    fallback=ExtraChannelRoutingMethod.SCPI_MAPPED.value,
+                    status="warning",
+                )
+        return ExtraChannelRoutingMethod.SCPI_MAPPED
 
     def _database_metadata(self, context):
         hardware = context.run.measurement_hardware
+        routing = hardware.get("extra_channel_routing", {})
+        if not hasattr(routing, "get"):
+            routing = {}
         metadata = dict(context.snapshot.metadata)
         metadata.update(
             {
@@ -4724,6 +4778,12 @@ class MainWindow(QMainWindow):
                 "Channel mode": str(hardware.get("channel_mode") or ""),
                 "Planned channels": ",".join(
                     str(value) for value in hardware.get("planned_channels", ())
+                ),
+                "Extra channel routing method": str(
+                    routing.get("method") or ""
+                ),
+                "Configured channel count": str(
+                    routing.get("configured_channel_count") or ""
                 ),
             }
         )
@@ -5195,6 +5255,8 @@ class MainWindow(QMainWindow):
                 )
                 return
 
+        extra_routing_method = self._extra_channel_routing_method_for_run(run_mode)
+
         if retest:
             self._active_planned_channels = self._status_planned_channels()
         elif run_mode == "continue" and self.run_data is not None:
@@ -5290,7 +5352,11 @@ class MainWindow(QMainWindow):
                     ),
                     "application_version": APP_VERSION,
                     "measurement_hardware": (
-                        self._database_measurement_hardware_snapshot(preparation)
+                        self._database_measurement_hardware_snapshot(
+                            preparation,
+                            part_details.front_panel_channel_count,
+                            extra_routing_method,
+                        )
                     ),
                     "limit_snapshot": profile.as_dict(),
                     "part_number_snapshot": part_details.value,
@@ -5450,6 +5516,18 @@ class MainWindow(QMainWindow):
                     "Measurement classification": (
                         self.measurement_configuration.classification.value
                     ),
+                    "Extra channel routing method": extra_routing_method.value,
+                    "Front-panel channel count": (
+                        str(part_details.front_panel_channel_count)
+                        if part_details is not None
+                        else ""
+                    ),
+                    "Configured channel count": str(
+                        self.hardware_connection_manager.snapshot(
+                            HardwareCapability.OPTICAL_SWITCH
+                        ).device_info.configured_channel_count
+                        or ""
+                    ),
                     "Channel mode": (
                         preparation.plan.mode.value
                         if preparation.plan is not None
@@ -5569,6 +5647,10 @@ class MainWindow(QMainWindow):
                     retest=retest,
                     run_mode=run_mode,
                     has_part_number=part_details is not None,
+                    supports_extra_channels=(
+                        part_details is not None
+                        and normalize_switch_model(part_details.model) == "OSX-150"
+                    ),
                 ).eligible
             ),
             run_mode=run_mode,
@@ -5590,6 +5672,22 @@ class MainWindow(QMainWindow):
                 if run_mode == "continue" and self.run_data is not None
                 else ()
             ),
+            existing_extra_logical_channels=(
+                tuple(
+                    sorted(
+                        {
+                            int(record.channel)
+                            for record in (self.run_data.measurements or ())
+                            if part_details is not None
+                            and int(record.channel)
+                            > part_details.front_panel_channel_count
+                        }
+                    )
+                )
+                if run_mode == "continue" and self.run_data is not None
+                else ()
+            ),
+            extra_channel_routing_method=extra_routing_method,
         )
         try:
             self.hardware_controller.start(request)
@@ -6067,7 +6165,13 @@ class MainWindow(QMainWindow):
         self.pending_reading_validation = None
         self.hardware_live_indicator.setVisible(self.live_write_mode_enabled)
         if self.hardware_session.extra_port_active:
-            instruction = "Extra physical port %d — pending" % physical_port
+            instruction = (
+                "SCPI-mapped extra channel %d routed to physical port %d — pending"
+                % (channel, physical_port)
+                if self.hardware_session.extra_channel_routing_method
+                == ExtraChannelRoutingMethod.SCPI_MAPPED.value
+                else "Extra physical port %d — pending" % physical_port
+            )
         else:
             instruction = (
                 "Move cable to this channel; live reading is active"
@@ -6094,20 +6198,44 @@ class MainWindow(QMainWindow):
             )
         )
 
-    def hardware_extra_port_offer_required(self, front_panel_count):
+    def hardware_extra_port_offer_required(self, front_panel_count, details=None):
         """Offer the optional engineering phase once the required pass is done."""
+        details = details or {}
+        routing_method = ExtraChannelRoutingMethod.parse(
+            details.get("routing_method")
+        )
+        configured_count = details.get("configured_channel_count")
         message = QMessageBox(self)
         message.setIcon(QMessageBox.Question)
         message.setWindowTitle("Front-panel testing complete")
         message.setText(
             "All %d front-panel channels have been measured." % front_panel_count
         )
-        message.setInformativeText(
-            "Would you like to test additional physical ports using the switch's "
-            "engineering interface? Extra-port readings are used for spare-port "
-            "and replacement analysis. They do not count as front-panel channels "
-            "and are not written directly to the COC."
-        )
+        if routing_method is ExtraChannelRoutingMethod.SCPI_MAPPED:
+            first_extra = int(front_panel_count) + 1
+            final_extra = int(configured_count)
+            message.setInformativeText(
+                "The switch reports %d additional SCPI-mapped channels, %d-%d. "
+                "Would you like to test them?\n\nRouting method: %s\n\n"
+                "Extra-channel readings are used for spare-port and replacement "
+                "analysis. They do not count as front-panel channels and are not "
+                "written directly to the COC."
+                % (
+                    final_extra - int(front_panel_count),
+                    first_extra,
+                    final_extra,
+                    routing_method.label,
+                )
+            )
+        else:
+            message.setInformativeText(
+                "Would you like to test additional physical ports using the "
+                "switch's engineering interface?\n\nRouting method: %s\n\n"
+                "Extra-port readings are used for spare-port and replacement "
+                "analysis. They do not count as front-panel channels and are not "
+                "written directly to the COC."
+                % routing_method.label
+            )
         test_button = message.addButton("Test Extra Ports", QMessageBox.ActionRole)
         finish_button = message.addButton("Finish Run", QMessageBox.AcceptRole)
         message.setDefaultButton(finish_button)
@@ -6118,6 +6246,8 @@ class MainWindow(QMainWindow):
             SupportEventCategory.OPERATOR,
             "extra_ports.offer_decision",
             front_panel_channel_count=front_panel_count,
+            configured_channel_count=configured_count,
+            routing_method=routing_method.value,
             choice="test_extra_ports" if enabled else "finish_run",
             status="accepted" if enabled else "declined",
         )
@@ -6125,26 +6255,57 @@ class MainWindow(QMainWindow):
 
     def hardware_extra_port_phase_changed(self, status, candidate, details):
         highest = (details or {}).get("highest_confirmed_extra_port")
-        self.hardware_session.set_extra_port_phase(status, candidate, highest)
+        routing_method = ExtraChannelRoutingMethod.parse(
+            (details or {}).get("routing_method")
+        )
+        self.hardware_session.set_extra_port_phase(
+            status,
+            candidate,
+            highest,
+            routing_method,
+        )
         active = status == ExtraPortPhaseStatus.IN_PROGRESS.value
         self.write_hardware_button.set_title(
             "Write & Continue" if active else "Write IL"
         )
-        for button in (
-            self.retry_extra_port_button,
-            self.no_more_extra_ports_button,
-            self.stop_extra_testing_button,
-        ):
+        self.retry_extra_port_button.setText(
+            "Retry Current Channel"
+            if routing_method is ExtraChannelRoutingMethod.SCPI_MAPPED
+            else "Retry Current Port"
+        )
+        for button in (self.retry_extra_port_button, self.stop_extra_testing_button):
             button.setVisible(active)
             button.setEnabled(active)
+        cli_active = active and routing_method is ExtraChannelRoutingMethod.CLI_DIRECT
+        self.no_more_extra_ports_button.setVisible(cli_active)
+        self.no_more_extra_ports_button.setEnabled(cli_active)
         if active:
             self.change_hardware_channel_button.setEnabled(False)
             self.statusBar().showMessage(
-                "Extra physical port %d — pending" % candidate
+                "%s %d — pending"
+                % (
+                    "SCPI-mapped extra channel"
+                    if routing_method is ExtraChannelRoutingMethod.SCPI_MAPPED
+                    else "Extra physical port",
+                    candidate,
+                )
             )
         elif status == ExtraPortPhaseStatus.SAFETY_CEILING_REACHED.value:
             self.statusBar().showMessage(
                 "Internal extra-port safety limit reached; front-panel readings remain saved."
+            )
+        elif (details or {}).get("reason") == "no_scpi_mapped_extra_channels":
+            self.statusBar().showMessage(
+                "Front-panel testing complete; no additional SCPI-mapped channels "
+                "are configured."
+            )
+        elif (
+            (details or {}).get("reason")
+            == "all_scpi_mapped_extra_channels_measured"
+        ):
+            self.statusBar().showMessage(
+                "All configured SCPI-mapped extra channels already have accepted "
+                "measurements."
             )
 
     def hardware_extra_port_confirmation_required(self, candidate, result):
@@ -6183,16 +6344,34 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Internal extra-port safety limit reached", detail)
             self._hardware_command("extra_port_action", "stop")
             return
+        routing_method = ExtraChannelRoutingMethod.parse(
+            self.hardware_session.extra_channel_routing_method
+        )
         message = QMessageBox(self)
         message.setIcon(QMessageBox.Warning)
-        message.setWindowTitle("Extra physical port could not be confirmed")
-        message.setText("Physical port %d was not saved." % candidate)
-        message.setInformativeText(
-            "%s\n\nThis can mean the port is not installed, the optical "
-            "connection is not ready, or routing was not confirmed." % detail
-        )
-        retry = message.addButton("Retry Current Port", QMessageBox.ActionRole)
-        no_more = message.addButton("No More Physical Ports", QMessageBox.DestructiveRole)
+        if routing_method is ExtraChannelRoutingMethod.SCPI_MAPPED:
+            message.setWindowTitle("SCPI-mapped extra channel was not saved")
+            message.setText("Mapped channel %d was not saved." % candidate)
+            message.setInformativeText(
+                "%s\n\nThe configured channel could not be routed, verified, or "
+                "measured. Correct the switch configuration or retry the channel."
+                % detail
+            )
+            retry = message.addButton(
+                "Retry Current Channel", QMessageBox.ActionRole
+            )
+            no_more = None
+        else:
+            message.setWindowTitle("Extra physical port could not be confirmed")
+            message.setText("Physical port %d was not saved." % candidate)
+            message.setInformativeText(
+                "%s\n\nThis can mean the port is not installed, the optical "
+                "connection is not ready, or routing was not confirmed." % detail
+            )
+            retry = message.addButton("Retry Current Port", QMessageBox.ActionRole)
+            no_more = message.addButton(
+                "No More Physical Ports", QMessageBox.DestructiveRole
+            )
         stop = message.addButton("Stop Extra Testing", QMessageBox.RejectRole)
         message.setDefaultButton(stop)
         message.setEscapeButton(stop)
@@ -6202,7 +6381,7 @@ class MainWindow(QMainWindow):
             "retry"
             if clicked == retry
             else "no_more"
-            if clicked == no_more
+            if no_more is not None and clicked == no_more
             else "stop_failed"
         )
         self._hardware_command("extra_port_action", action)
@@ -6228,7 +6407,14 @@ class MainWindow(QMainWindow):
         self._record_support(
             SupportEventCategory.OPERATOR,
             "extra_ports.provisional_discarded",
+            logical_channel=(
+                candidate
+                if self.hardware_session.extra_channel_routing_method
+                == ExtraChannelRoutingMethod.SCPI_MAPPED.value
+                else None
+            ),
             physical_port=candidate,
+            routing_method=self.hardware_session.extra_channel_routing_method,
             choice=action,
             reading_state="discarded",
             status="requested",

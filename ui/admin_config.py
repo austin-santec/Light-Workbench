@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
+from domain.extra_ports import ExtraChannelRoutingMethod
 from domain.limit_profiles import LimitProfile, default_limit_profiles, profile_key
 
 
@@ -47,12 +48,16 @@ class AdminConfigDialog(QDialog):
         profiles,
         repository,
         parent=None,
+        extra_channel_routing_method=ExtraChannelRoutingMethod.SCPI_MAPPED,
     ):
         super().__init__(parent)
         self.setWindowTitle("Admin Config")
         self.setMinimumWidth(430)
         self.repository = repository
         self.profiles = dict(profiles)
+        self.extra_channel_routing_method = ExtraChannelRoutingMethod.parse(
+            extra_channel_routing_method
+        )
         self._dirty = False
         self._loading = False
         layout = QVBoxLayout(self)
@@ -82,6 +87,16 @@ class AdminConfigDialog(QDialog):
         )
         self.minimum_improvement_label = QLabel("Minimum replacement improvement:")
         form.addRow(self.minimum_improvement_label, self.minimum_improvement_spin)
+        self.extra_routing_combo = QComboBox()
+        for method in ExtraChannelRoutingMethod:
+            self.extra_routing_combo.addItem(method.label, method.value)
+        self.extra_routing_combo.currentIndexChanged.connect(self._mark_dirty)
+        self.extra_routing_label = QLabel("Extra-channel routing:")
+        self.extra_routing_combo.setToolTip(
+            "SCPI mapped channels are the default. CLI direct routing is an "
+            "experimental engineering option for OSX-150 only."
+        )
+        form.addRow(self.extra_routing_label, self.extra_routing_combo)
         self.warning_note = QLabel("Not applicable for OSX-100")
         self.warning_note.setWordWrap(True)
         form.addRow("", self.warning_note)
@@ -133,10 +148,16 @@ class AdminConfigDialog(QDialog):
         self.minimum_improvement_spin.setValue(
             profile.minimum_replacement_improvement_db
         )
+        routing_index = self.extra_routing_combo.findData(
+            self.extra_channel_routing_method.value
+        )
+        self.extra_routing_combo.setCurrentIndex(max(0, routing_index))
         is_150 = self.model_combo.currentText() == "OSX-150"
         self.warning_spin.setEnabled(is_150)
         self.minimum_improvement_label.setVisible(is_150)
         self.minimum_improvement_spin.setVisible(is_150)
+        self.extra_routing_label.setVisible(is_150)
+        self.extra_routing_combo.setVisible(is_150)
         self.warning_note.setVisible(not is_150)
         self._loading = False
 
@@ -185,7 +206,13 @@ class AdminConfigDialog(QDialog):
     def _save_selected(self):
         try:
             self.profiles[self._selected_key()] = self._profile_from_form()
-            self.repository.save_profiles(self.profiles)
+            self.extra_channel_routing_method = ExtraChannelRoutingMethod.parse(
+                self.extra_routing_combo.currentData()
+            )
+            self.repository.save_profiles(
+                self.profiles,
+                self.extra_channel_routing_method,
+            )
         except (OSError, ValueError, TypeError) as error:
             QMessageBox.warning(self, "Could not save admin config", str(error))
             return
@@ -196,6 +223,9 @@ class AdminConfigDialog(QDialog):
     def _reload(self):
         try:
             self.profiles = self.repository.load_profiles()
+            self.extra_channel_routing_method = (
+                self.repository.load_extra_channel_routing_method()
+            )
         except (OSError, ValueError, TypeError) as error:
             QMessageBox.warning(self, "Could not reload admin config", str(error))
             return
@@ -203,6 +233,7 @@ class AdminConfigDialog(QDialog):
 
     def _restore_defaults(self):
         self.profiles = default_limit_profiles()
+        self.extra_channel_routing_method = ExtraChannelRoutingMethod.SCPI_MAPPED
         self._load_current_profile()
         self._dirty = True
 

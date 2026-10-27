@@ -1,5 +1,6 @@
 import unittest
 
+from domain.extra_ports import ExtraChannelRoutingMethod
 from application.run_start import (
     HardwareRunPreparation,
     build_hardware_run_request,
@@ -55,6 +56,8 @@ class RunStartPreparationTests(unittest.TestCase):
             offer_extra_ports=True,
             run_mode="continue",
             existing_extra_physical_ports=[49, 50],
+            existing_extra_logical_channels=[49, 50],
+            extra_channel_routing_method=ExtraChannelRoutingMethod.CLI_DIRECT,
         )
 
         self.assertIs(request.power_meter_factory(), meter)
@@ -68,6 +71,11 @@ class RunStartPreparationTests(unittest.TestCase):
         self.assertTrue(request.offer_extra_ports)
         self.assertEqual(request.run_mode, "continue")
         self.assertEqual(request.existing_extra_physical_ports, [49, 50])
+        self.assertEqual(request.existing_extra_logical_channels, [49, 50])
+        self.assertEqual(
+            request.extra_channel_routing_method,
+            ExtraChannelRoutingMethod.CLI_DIRECT,
+        )
 
     def test_extra_port_offer_allows_new_and_continued_full_passes(self):
         for run_mode in ("new", "continue"):
@@ -88,6 +96,10 @@ class RunStartPreparationTests(unittest.TestCase):
             {"retest": True, "reason": "selected_retest"},
             {"run_mode": "unknown", "reason": "unsupported_run_mode"},
             {"has_part_number": False, "reason": "missing_part_number"},
+            {
+                "supports_extra_channels": False,
+                "reason": "switch_model_has_no_spares",
+            },
         )
         for case in cases:
             values = {
@@ -96,6 +108,7 @@ class RunStartPreparationTests(unittest.TestCase):
                 "retest": False,
                 "run_mode": "continue",
                 "has_part_number": True,
+                "supports_extra_channels": True,
             }
             expected_reason = case.pop("reason")
             values.update(case)

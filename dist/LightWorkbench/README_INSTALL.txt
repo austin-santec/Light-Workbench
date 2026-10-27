@@ -62,6 +62,9 @@ The target computer needs:
     cannot edit them during a run. Administrators can use Edit > Admin Mode...
     and Edit > Admin Config... to change the per-user profiles stored under
     `%LOCALAPPDATA%\\LightWorkbench\\config\\limit_profiles.ini`.
+    For OSX-150, the same administrator file stores the extra-channel routing
+    method. `SCPI mapped channels` is the default; `CLI direct physical ports`
+    is an experimental alternative.
 
 The application is 32-bit. It normally runs on both 32-bit and 64-bit Windows,
 but a 64-bit computer must still have the 32-bit VISA support installed.
@@ -103,7 +106,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.35.11; an existing executable keeps its prior version until rebuilt. The main
+1.35.12; an existing executable keeps its prior version until rebuilt. The main
 window opens maximized by default and can be restored with the normal Windows
 title-bar control.
 
@@ -191,6 +194,16 @@ folder and its available runs.
 The front-panel channel count is derived automatically from the three-digit
 channel field in the part number. It is displayed read-only; COC preparation
 and replacement analysis do not accept a manually entered count.
+
+After a completed OSX-150 front-panel pass, extra-channel behavior follows the
+method selected in Admin Config. The default SCPI method offers only logical
+channels above the front-panel count that are already present in the switch's
+temporary module configuration, routes them with `CLOSe`, verifies them with
+`CLOSe?`, and stops at the configured endpoint. Light Workbench does not add or
+remove those mappings. The experimental CLI method instead probes direct
+physical ports sequentially and keeps the operator-controlled `No More Physical
+Ports` action because capacity is unknown. The application never falls back
+from one method to the other automatically.
 
 Real switch runs also record start time, stop time, continuation times, session
 count, and accumulated switch-test duration in the CSV metadata. Live IL and

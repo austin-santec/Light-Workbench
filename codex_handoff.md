@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.35.2**. The single
+The current source release is **Light Workbench 1.35.12**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -482,7 +482,15 @@ information but block routing and close the session safely. It uses:
 - CLOSe <logical channel> to route a test channel;
 - CLOSe? to read the physical port actually selected.
 
-The optional direct-port engineering path is deliberately separate. It queries
+OSX-150 extra-channel routing is administrator-selected and fixed for the run.
+The default `scpi_mapped` path offers the finite configured range above the
+part-number-derived front-panel count and routes it with the same verified
+`CLOSe`/`CLOSe?` behavior. Operators must temporarily add those mappings to the
+module configuration outside Light Workbench; the application never edits the
+map. A configured count below the front-panel count blocks a full pass.
+
+The optional `cli_direct` engineering path is deliberately separate and marked
+experimental. It queries
 the connected switch IP over VISA, opens only that address on raw TCP port 2323,
 and sends `writereg mems.ch <physical port>` with a default CRLF ending. It does
 not use `CLOSe?`, alter permanent mapping, scan the network, or accept arbitrary
@@ -491,6 +499,12 @@ unverified, or failed; unverified routing requires explicit operator
 confirmation and failed routing cannot be accepted. The current timeout,
 framing, acknowledgement patterns, and absence of a default readback command
 still require physical firmware validation.
+
+No automatic fallback mixes SCPI and CLI methods. The run's
+`measurement_hardware_json` records the method and known channel counts, while
+support events retain route commands, outcomes, returned ports, and failures.
+Both paths feed the same accepted-reading and replacement-analysis workflows;
+extra rows remain excluded from required front-panel COC rows.
 
 `CLOSe?` must not be used as a connection probe. It is valid only after
 `CLOSe <logical channel>` has routed a channel.

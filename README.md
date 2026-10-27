@@ -288,7 +288,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.35.11**; an existing executable keeps its prior
+current source version is **1.35.12**; an existing executable keeps its prior
 version until rebuilt.
 
 The desktop application opens maximized by default while retaining the normal
@@ -468,7 +468,23 @@ not written back to either run.
 
 Some 48-channel switches contain extra physical ports, such as ports 49 and
 50, while the finished switch is still designed to use only 48 channels. After
-a full pass, open `Analyze Replacements` in the analysis panel. The application
+a full front-panel pass, Light Workbench can optionally measure those spares.
+The administrator-selected routing method is fixed for the run:
+
+- `SCPI mapped channels` is the default. Extra channels must be temporarily
+  present in the switch module configuration. Light Workbench tests the exact
+  configured range above the front-panel count with the normal verified
+  `CLOSe`/`CLOSe?` path and stops at the configured endpoint.
+- `CLI direct physical ports (Experimental)` retains sequential unknown-capacity
+  discovery over TCP port 2323. It is available only through Admin Config and
+  requires the operator to identify the last installed port.
+
+Light Workbench never edits the switch mapping and never changes methods
+automatically during an extra-channel phase. The selected method and known
+channel counts are retained in run hardware metadata; route attempts and
+outcomes are recorded in the engineering support log.
+
+After measuring extras, open `Analyze Replacements` in the analysis panel. The application
 derives the designed/front-panel channel count from the three-digit channel
 field in the saved OSX part number; it does not ask the operator to enter a
 second count. Rows beyond that derived count are treated as measured extras.
@@ -610,7 +626,9 @@ Hardware Controls uses a responsive two-column button layout. The controls
 panel receives more width than the adjacent Reference panel so action labels
 remain readable at normal window sizes. During extra physical-port testing,
 the Write IL button is labeled `Write & Continue` while it saves the reading
-and advances to the next port.
+and advances to the next channel or port. SCPI mode has a known configured
+endpoint and completes automatically; experimental CLI mode retains `No More
+Physical Ports` because its endpoint is unknown.
 
 The Hardware test setup includes a Part number field and a lookup button. The
 default lookup folder is
@@ -829,8 +847,10 @@ For a one-channel or partial-range run, this describes only the channels tested
 in that run; the program does not move through unselected channels merely to
 inspect their mappings.
 
-The full-pass and range limits come from `CFG:SWT:END?`, so the program adapts
-to different switches and configured logical channel counts.
+For a full pass, the required front-panel range comes from the part number.
+`CFG:SWT:END?` supplies the configured logical count: fewer configured channels
+than the front-panel count blocks the run, while additional configured channels
+are offered separately as SCPI-mapped spares when that routing method is active.
 
 ## Output names
 

@@ -18,6 +18,7 @@ from domain.measurement import (
 from domain.models import ConnectionState, DeviceCategory
 from domain.extra_ports import (
     EXTRA_PORT_HARD_SAFETY_LIMIT,
+    ExtraChannelRoutingMethod,
     ExtraPortPhaseStatus,
     PhysicalPortRouteStatus,
 )
@@ -50,7 +51,7 @@ class MeasurementWorker(QObject):
     stopped = pyqtSignal()
     failed = pyqtSignal(str)
     device_status_changed = pyqtSignal(object)
-    extra_port_offer_required = pyqtSignal(int)
+    extra_port_offer_required = pyqtSignal(int, object)
     extra_port_phase_changed = pyqtSignal(str, int, object)
     extra_port_confirmation_required = pyqtSignal(int, object)
     extra_port_issue = pyqtSignal(int, str, str)
@@ -75,6 +76,10 @@ class MeasurementWorker(QObject):
         run_mode="new",
         retest=False,
         existing_extra_physical_ports: Sequence[int] | None = None,
+        existing_extra_logical_channels: Sequence[int] | None = None,
+        extra_channel_routing_method: ExtraChannelRoutingMethod | str = (
+            ExtraChannelRoutingMethod.SCPI_MAPPED
+        ),
         extra_port_safety_limit: int | None = None,
     ):
         super().__init__()
@@ -109,6 +114,14 @@ class MeasurementWorker(QObject):
             for port in (existing_extra_physical_ports or ())
             if int(port) > 0
         }
+        self.existing_extra_logical_channels = {
+            int(channel)
+            for channel in (existing_extra_logical_channels or ())
+            if int(channel) > 0
+        }
+        self.extra_channel_routing_method = ExtraChannelRoutingMethod.parse(
+            extra_channel_routing_method
+        )
         self._extra_port_safety_limit = int(
             EXTRA_PORT_HARD_SAFETY_LIMIT
             if extra_port_safety_limit is None
@@ -139,6 +152,8 @@ class MeasurementWorker(QObject):
         self._extra_action_lock = threading.Lock()
         self._extra_action = None
         self._highest_confirmed_extra_port = None
+        self._last_confirmed_extra_physical_port = None
+        self._configured_channel_count = None
 
     @pyqtSlot()
     def run(self):
@@ -168,6 +183,18 @@ class MeasurementWorker(QObject):
                 raise RuntimeError("No channels were selected for measurement.")
             if hasattr(self.switch, "configured_channel_count"):
                 configured_count = self.switch.configured_channel_count()
+                if (
+                    self.channels is None
+                    and self.front_panel_channel_count is not None
+                    and configured_count < self.front_panel_channel_count
+                ):
+                    raise RuntimeError(
+                        "The connected switch reports %d configured channels, but "
+                        "the selected part number requires %d front-panel channels. "
+                        "Correct the switch module configuration before starting "
+                        "the full pass."
+                        % (configured_count, self.front_panel_channel_count)
+                    )
                 invalid_channels = [
                     channel
                     for channel in channels
@@ -184,6 +211,7 @@ class MeasurementWorker(QObject):
                     )
             if configured_count is None:
                 configured_count = max(channels)
+            self._configured_channel_count = int(configured_count)
             self.channel_configuration_ready.emit(configured_count)
             if self.manual_channel_order:
                 completed_front_panel_channels = self._run_manual_channel_order(
@@ -193,13 +221,19 @@ class MeasurementWorker(QObject):
             else:
                 start_channel = None
                 if self.resume_existing and self.resume_full_pass:
+                    planned_channels = set(channels)
+                    completed_planned_channels = sorted(
+                        channel
+                        for channel in self.existing_channels
+                        if channel in planned_channels
+                    )
                     default_channel = self._first_uncompleted_channel(
                         channels,
                         self.existing_channels,
                     ) or channels[0]
                     self.continuation_selection_required.emit(
-                        configured_count,
-                        sorted(self.existing_channels),
+                        len(channels),
+                        completed_planned_channels,
                         default_channel,
                     )
                     start_channel = self._wait_for_continuation_selection()
@@ -391,10 +425,15 @@ class MeasurementWorker(QObject):
     ):
         """Record extra-port eligibility and offer it after full coverage."""
         count = self.front_panel_channel_count
-        existing_extra = sorted(
+        existing_physical_ports = sorted(
             port
             for port in self.existing_extra_physical_ports
             if count is not None and port > count
+        )
+        existing_logical_channels = sorted(
+            channel
+            for channel in self.existing_extra_logical_channels
+            if count is not None and channel > count
         )
         missing = []
         if count is not None:
@@ -408,15 +447,41 @@ class MeasurementWorker(QObject):
                 for channel in range(1, count + 1)
                 if channel not in completed
             ]
-        eligible = bool(
+        unmeasured_scpi_extras = []
+        if count is not None and int(configured_count) > int(count):
+            unmeasured_scpi_extras = [
+                channel
+                for channel in range(int(count) + 1, int(configured_count) + 1)
+                if channel not in self.existing_extra_logical_channels
+            ]
+        base_eligible = bool(
             self.offer_extra_ports
             and count is not None
             and not missing
             and count <= int(configured_count)
         )
-        reason = "eligible" if eligible else (
-            "missing_front_panel_channels" if missing else "not_enabled"
-        )
+        if not base_eligible:
+            eligible = False
+            reason = (
+                "missing_front_panel_channels" if missing else "not_enabled"
+            )
+        elif (
+            self.extra_channel_routing_method
+            is ExtraChannelRoutingMethod.SCPI_MAPPED
+            and int(configured_count) <= int(count)
+        ):
+            eligible = False
+            reason = "no_scpi_mapped_extra_channels"
+        elif (
+            self.extra_channel_routing_method
+            is ExtraChannelRoutingMethod.SCPI_MAPPED
+            and not unmeasured_scpi_extras
+        ):
+            eligible = False
+            reason = "all_scpi_mapped_extra_channels_measured"
+        else:
+            eligible = True
+            reason = "eligible"
         self._record(
             SupportEventCategory.WORKFLOW,
             "extra_ports.eligibility_evaluated",
@@ -432,13 +497,38 @@ class MeasurementWorker(QObject):
                 else 0
             ),
             missing_front_panel_channels=missing,
-            existing_extra_physical_ports=existing_extra,
+            existing_extra_physical_ports=existing_physical_ports,
+            existing_extra_logical_channels=existing_logical_channels,
+            routing_method=self.extra_channel_routing_method.value,
             eligible=eligible,
             reason=reason,
             status="eligible" if eligible else "not_eligible",
         )
+        if reason in {
+            "no_scpi_mapped_extra_channels",
+            "all_scpi_mapped_extra_channels_measured",
+        }:
+            self.extra_port_phase_changed.emit(
+                ExtraPortPhaseStatus.NOT_OFFERED.value,
+                int(count),
+                {
+                    "routing_method": self.extra_channel_routing_method.value,
+                    "configured_channel_count": int(configured_count),
+                    "reason": reason,
+                    "highest_confirmed_extra_port": self._highest_confirmed_extra_port,
+                },
+            )
         if eligible:
-            self._offer_and_run_extra_ports(existing_extra)
+            if (
+                self.extra_channel_routing_method
+                is ExtraChannelRoutingMethod.SCPI_MAPPED
+            ):
+                self._offer_and_run_scpi_extra_channels(
+                    configured_count,
+                    existing_logical_channels,
+                )
+            else:
+                self._offer_and_run_cli_extra_ports(existing_physical_ports)
 
     def _measure_channel(self, channel, index=None, total=None, emit_progress=True):
         """Route, read, and accept one channel, including repeat reads."""
@@ -692,17 +782,23 @@ class MeasurementWorker(QObject):
                 status="requested",
             )
 
-    def _offer_and_run_extra_ports(self, existing_extra_physical_ports=()):
-        """Pause once after the front-panel pass, then probe extras sequentially."""
+    def _offer_extra_phase(self, configured_count=None):
+        """Ask once whether the selected extra-channel strategy should run."""
         count = self.front_panel_channel_count
         self._set_extra_phase(ExtraPortPhaseStatus.OFFERED, count)
+        details = {
+            "routing_method": self.extra_channel_routing_method.value,
+            "configured_channel_count": configured_count,
+        }
         self._record(
             SupportEventCategory.WORKFLOW,
             "extra_ports.offered",
             front_panel_channel_count=count,
+            configured_channel_count=configured_count,
+            routing_method=self.extra_channel_routing_method.value,
             status="offered",
         )
-        self.extra_port_offer_required.emit(count)
+        self.extra_port_offer_required.emit(count, details)
         action = self._wait_for_extra_action()
         if action != "begin":
             self._set_extra_phase(ExtraPortPhaseStatus.DECLINED, count)
@@ -710,16 +806,145 @@ class MeasurementWorker(QObject):
                 SupportEventCategory.OPERATOR,
                 "extra_ports.declined",
                 front_panel_channel_count=count,
+                routing_method=self.extra_channel_routing_method.value,
                 status="declined",
             )
             self._record(
                 SupportEventCategory.WORKFLOW,
                 "extra_ports.phase_completed",
                 phase_status=ExtraPortPhaseStatus.DECLINED.value,
+                routing_method=self.extra_channel_routing_method.value,
                 status="completed",
             )
+            return False
+        return True
+
+    def _offer_and_run_scpi_extra_channels(
+        self,
+        configured_count,
+        existing_extra_logical_channels=(),
+    ):
+        """Test the finite configured extra range through verified SCPI routing."""
+        if not self._offer_extra_phase(configured_count):
             return
 
+        count = int(self.front_panel_channel_count)
+        configured_count = int(configured_count)
+        existing = set(existing_extra_logical_channels)
+        candidates = [
+            channel
+            for channel in range(count + 1, configured_count + 1)
+            if channel not in existing
+        ]
+        self._record(
+            SupportEventCategory.OPERATOR,
+            "extra_ports.accepted",
+            first_candidate=candidates[0] if candidates else None,
+            final_candidate=configured_count,
+            configured_channel_count=configured_count,
+            routing_method=self.extra_channel_routing_method.value,
+            status="accepted",
+        )
+        for candidate in candidates:
+            while True:
+                self._set_extra_phase(ExtraPortPhaseStatus.IN_PROGRESS, candidate)
+                outcome = self._run_scpi_extra_candidate(candidate)
+                if outcome == "written":
+                    physical_port = self._last_confirmed_extra_physical_port
+                    self._highest_confirmed_extra_port = physical_port
+                    self._record(
+                        SupportEventCategory.MEASUREMENT,
+                        "extra_ports.reading_written",
+                        logical_channel=candidate,
+                        physical_port=physical_port,
+                        highest_confirmed_extra_port=physical_port,
+                        routing_method=self.extra_channel_routing_method.value,
+                        status="success",
+                    )
+                    break
+                if outcome == "retry":
+                    self._record(
+                        SupportEventCategory.OPERATOR,
+                        "extra_ports.retry_requested",
+                        logical_channel=candidate,
+                        routing_method=self.extra_channel_routing_method.value,
+                        status="requested",
+                    )
+                    continue
+                phase = (
+                    ExtraPortPhaseStatus.FAILED
+                    if outcome == "failed"
+                    else ExtraPortPhaseStatus.STOPPED
+                )
+                self._set_extra_phase(phase, candidate)
+                self._record(
+                    SupportEventCategory.WORKFLOW,
+                    "extra_ports.phase_completed",
+                    phase_status=phase.value,
+                    logical_channel=candidate,
+                    routing_method=self.extra_channel_routing_method.value,
+                    status="failed" if outcome == "failed" else "completed",
+                )
+                return
+
+        self._set_extra_phase(ExtraPortPhaseStatus.COMPLETED, configured_count)
+        self._record(
+            SupportEventCategory.WORKFLOW,
+            "extra_ports.phase_completed",
+            phase_status=ExtraPortPhaseStatus.COMPLETED.value,
+            configured_channel_count=configured_count,
+            highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+            routing_method=self.extra_channel_routing_method.value,
+            status="completed",
+        )
+
+    def _run_scpi_extra_candidate(self, logical_channel):
+        """Route one configured extra channel and share normal measurement logic."""
+        try:
+            route_started = time.perf_counter()
+            physical_port = self.switch.set_channel(logical_channel)
+        except Exception as error:
+            return self._extra_issue_decision(
+                logical_channel,
+                "scpi_route_failed",
+                "SCPI could not route or verify mapped channel %d: %s"
+                % (logical_channel, error),
+            )
+        self._record(
+            SupportEventCategory.HARDWARE,
+            "extra_ports.route_result",
+            logical_channel=logical_channel,
+            physical_port=physical_port,
+            command_name="CLOSe",
+            verification_status="verified",
+            routing_method=self.extra_channel_routing_method.value,
+            elapsed_ms=(time.perf_counter() - route_started) * 1000.0,
+            status="success",
+        )
+        try:
+            measurement_outcome = self._measure_routed_target(
+                logical_channel,
+                physical_port,
+                emit_progress=False,
+                extra_port=True,
+            )
+        except Exception as error:
+            return self._extra_issue_decision(
+                logical_channel,
+                "measurement_failed",
+                "No usable optical reading was obtained: %s" % error,
+            )
+        if measurement_outcome is None:
+            self._last_confirmed_extra_physical_port = int(physical_port)
+            return "written"
+        return measurement_outcome.get("extra_action", "retry")
+
+    def _offer_and_run_cli_extra_ports(self, existing_extra_physical_ports=()):
+        """Pause once, then probe unknown physical capacity through the CLI."""
+        if not self._offer_extra_phase():
+            return
+
+        count = self.front_panel_channel_count
         existing_extra = set(existing_extra_physical_ports)
         candidate = count + 1
         while candidate in existing_extra:
@@ -729,6 +954,7 @@ class MeasurementWorker(QObject):
             "extra_ports.accepted",
             first_candidate=candidate,
             safety_ceiling=self._extra_port_safety_limit,
+            routing_method=self.extra_channel_routing_method.value,
             status="accepted",
         )
         while candidate <= self._extra_port_safety_limit:
@@ -739,8 +965,10 @@ class MeasurementWorker(QObject):
                 self._record(
                     SupportEventCategory.MEASUREMENT,
                     "extra_ports.reading_written",
+                    logical_channel=candidate,
                     physical_port=candidate,
                     highest_confirmed_extra_port=candidate,
+                    routing_method=self.extra_channel_routing_method.value,
                     status="success",
                 )
                 candidate += 1
@@ -751,7 +979,9 @@ class MeasurementWorker(QObject):
                 self._record(
                     SupportEventCategory.OPERATOR,
                     "extra_ports.retry_requested",
+                    logical_channel=candidate,
                     physical_port=candidate,
+                    routing_method=self.extra_channel_routing_method.value,
                     status="requested",
                 )
                 continue
@@ -765,6 +995,7 @@ class MeasurementWorker(QObject):
                     "extra_ports.end_of_installed_ports_reported",
                     physical_port=candidate,
                     highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+                    routing_method=self.extra_channel_routing_method.value,
                     reading_state="discarded",
                     status="reported",
                 )
@@ -775,6 +1006,7 @@ class MeasurementWorker(QObject):
                         ExtraPortPhaseStatus.END_OF_INSTALLED_PORTS_REPORTED.value
                     ),
                     highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+                    routing_method=self.extra_channel_routing_method.value,
                     status="completed",
                 )
                 return
@@ -787,6 +1019,7 @@ class MeasurementWorker(QObject):
                 "extra_ports.phase_ended",
                 physical_port=candidate,
                 highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+                routing_method=self.extra_channel_routing_method.value,
                 reading_state="discarded",
                 status=outcome,
             )
@@ -799,6 +1032,7 @@ class MeasurementWorker(QObject):
                     else ExtraPortPhaseStatus.STOPPED.value
                 ),
                 highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+                routing_method=self.extra_channel_routing_method.value,
                 status="failed" if outcome == "failed" else "completed",
             )
             return
@@ -812,6 +1046,7 @@ class MeasurementWorker(QObject):
             "extra_ports.safety_ceiling_reached",
             safety_ceiling=self._extra_port_safety_limit,
             highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+            routing_method=self.extra_channel_routing_method.value,
             status="stopped",
         )
         self.extra_port_issue.emit(
@@ -826,6 +1061,7 @@ class MeasurementWorker(QObject):
             "extra_ports.phase_completed",
             phase_status=ExtraPortPhaseStatus.SAFETY_CEILING_REACHED.value,
             highest_confirmed_extra_port=self._highest_confirmed_extra_port,
+            routing_method=self.extra_channel_routing_method.value,
             status="completed",
         )
 
@@ -847,12 +1083,14 @@ class MeasurementWorker(QObject):
         self._record(
             SupportEventCategory.HARDWARE,
             "extra_ports.route_result",
+            logical_channel=candidate,
             physical_port=candidate,
             network_address=network_address,
             network_port=network_port,
             verification_status=route_status.value,
             response=response,
             details=detail,
+            routing_method=self.extra_channel_routing_method.value,
             status=(
                 "error"
                 if route_status is PhysicalPortRouteStatus.FAILED
@@ -900,9 +1138,16 @@ class MeasurementWorker(QObject):
             SupportEventCategory.HARDWARE,
             "extra_ports.provisional_failed",
             level=SupportLogLevel.WARNING,
-            physical_port=candidate,
+            logical_channel=candidate,
+            physical_port=(
+                candidate
+                if self.extra_channel_routing_method
+                is ExtraChannelRoutingMethod.CLI_DIRECT
+                else None
+            ),
             issue_kind=issue_kind,
             error_message=message,
+            routing_method=self.extra_channel_routing_method.value,
             reading_state="discarded",
             status="warning",
         )
@@ -914,6 +1159,8 @@ class MeasurementWorker(QObject):
         details = {
             "highest_confirmed_extra_port": self._highest_confirmed_extra_port,
             "safety_ceiling": self._extra_port_safety_limit,
+            "routing_method": self.extra_channel_routing_method.value,
+            "configured_channel_count": self._configured_channel_count,
         }
         self.extra_port_phase_changed.emit(status.value, int(candidate), details)
 

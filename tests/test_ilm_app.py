@@ -22,7 +22,7 @@ from PyQt5.QtTest import QTest
 from application.coc_workflow import CocRunOption
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
 from domain.coc_preparation import CocSourceRun, prepare_coc
-from domain.extra_ports import ExtraPortPhaseStatus
+from domain.extra_ports import ExtraChannelRoutingMethod, ExtraPortPhaseStatus
 from domain.limit_profiles import default_limit_profiles
 from domain.run_status import (
     COMPLETION_COMPLETE,
@@ -1909,7 +1909,7 @@ class MainWindowTests(unittest.TestCase):
             window.hardware_extra_port_phase_changed(
                 ExtraPortPhaseStatus.IN_PROGRESS.value,
                 49,
-                {},
+                {"routing_method": ExtraChannelRoutingMethod.SCPI_MAPPED.value},
             )
             self.assertEqual(
                 window.write_hardware_button.title_label.text(),
@@ -1920,14 +1920,70 @@ class MainWindowTests(unittest.TestCase):
                 "Write & Continue",
             )
             self.assertFalse(window.retry_extra_port_button.isHidden())
+            self.assertEqual(
+                window.retry_extra_port_button.text(), "Retry Current Channel"
+            )
+            self.assertTrue(window.no_more_extra_ports_button.isHidden())
             window.hardware_extra_port_phase_changed(
                 ExtraPortPhaseStatus.COMPLETED.value,
                 None,
-                {},
+                {"routing_method": ExtraChannelRoutingMethod.SCPI_MAPPED.value},
             )
             self.assertEqual(
                 window.write_hardware_button.title_label.text(),
                 "Write IL",
+            )
+        finally:
+            window.close()
+
+    def test_cli_extra_port_controls_keep_unknown_capacity_action(self):
+        window = MainWindow()
+        try:
+            window.hardware_extra_port_phase_changed(
+                ExtraPortPhaseStatus.IN_PROGRESS.value,
+                49,
+                {"routing_method": ExtraChannelRoutingMethod.CLI_DIRECT.value},
+            )
+
+            self.assertEqual(window.retry_extra_port_button.text(), "Retry Current Port")
+            self.assertFalse(window.no_more_extra_ports_button.isHidden())
+        finally:
+            window.close()
+
+    def test_continued_database_run_preserves_saved_extra_routing_method(self):
+        window = MainWindow()
+        try:
+            context = MagicMock()
+            context.run.measurement_hardware = {
+                "extra_channel_routing": {"method": "cli_direct"}
+            }
+            window.database_run_context = context
+            window.extra_channel_routing_method = (
+                ExtraChannelRoutingMethod.SCPI_MAPPED
+            )
+
+            self.assertEqual(
+                window._extra_channel_routing_method_for_run("continue"),
+                ExtraChannelRoutingMethod.CLI_DIRECT,
+            )
+            self.assertEqual(
+                window._extra_channel_routing_method_for_run("new"),
+                ExtraChannelRoutingMethod.SCPI_MAPPED,
+            )
+        finally:
+            window.close()
+
+    def test_old_run_without_extra_routing_metadata_uses_safe_default(self):
+        window = MainWindow()
+        try:
+            context = MagicMock()
+            context.run.measurement_hardware = {}
+            window.database_run_context = context
+            window.run_data = RunData(Path("legacy.csv"), [], {})
+
+            self.assertEqual(
+                window._extra_channel_routing_method_for_run("continue"),
+                ExtraChannelRoutingMethod.SCPI_MAPPED,
             )
         finally:
             window.close()

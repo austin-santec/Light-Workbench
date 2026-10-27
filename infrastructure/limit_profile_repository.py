@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 from config.app_config import default_limit_profile_path
+from domain.extra_ports import ExtraChannelRoutingMethod
 from domain.limit_profiles import (
     LimitProfile,
     LimitProfileCollection,
@@ -65,7 +66,24 @@ class LimitProfileRepository:
                 profiles[key] = LimitProfile.from_mapping(values)
         return profiles
 
-    def save_profiles(self, profiles: dict[str, LimitProfile]):
+    def load_extra_channel_routing_method(self) -> ExtraChannelRoutingMethod:
+        """Load the OSX-150 extra-channel route, defaulting older files to SCPI."""
+        if not self.path.is_file():
+            return ExtraChannelRoutingMethod.SCPI_MAPPED
+        parser = configparser.ConfigParser()
+        parser.read(self.path, encoding="utf-8")
+        value = parser.get(
+            "hardware-routing",
+            "osx_150_extra_channel_method",
+            fallback=ExtraChannelRoutingMethod.SCPI_MAPPED.value,
+        )
+        return ExtraChannelRoutingMethod.parse(value)
+
+    def save_profiles(
+        self,
+        profiles: dict[str, LimitProfile],
+        extra_channel_routing_method: ExtraChannelRoutingMethod | str | None = None,
+    ):
         validated = LimitProfileCollection()
         for model, profile in profiles.items():
             if model in SUPPORTED_SWITCH_MODELS:
@@ -108,6 +126,14 @@ class LimitProfileRepository:
                         profile.minimum_replacement_improvement_db
                     ),
                 }
+        routing_method = (
+            self.load_extra_channel_routing_method()
+            if extra_channel_routing_method is None
+            else ExtraChannelRoutingMethod.parse(extra_channel_routing_method)
+        )
+        parser["hardware-routing"] = {
+            "osx_150_extra_channel_method": routing_method.value,
+        }
         temporary_path = None
         try:
             with tempfile.NamedTemporaryFile(

@@ -91,9 +91,20 @@ to use USB/VISA `CLOSe <logical channel>`, the existing 250 ms switch-settling
 delay, and `CLOSe?` physical-port verification. A larger `CFG:SWT:END?` result
 does not expand the normal pass beyond `N`.
 
-Optional ports above `N` use the separate `set_physical_port()` capability.
-The adapter first obtains the already-connected switch's configured IP through
-the existing LAN query, then `hardware/santec_cli.py` opens only that address
+The administrator-selected extra-channel method is fixed for a run. The
+default `scpi_mapped` method treats `CFG:SWT:END?` as the known configured
+logical endpoint `M`. If `M > N`, it offers exactly `N + 1..M`, routes each
+candidate through the same verified `set_channel()` SCPI path, and completes
+automatically at `M`. The commanded logical channel and returned physical port
+are retained separately. `M = N` means no SCPI extras are configured; `M < N`
+is a blocking configuration mismatch. Operators must temporarily configure
+the extra mappings outside Light Workbench; the application does not edit the
+module map.
+
+The administrator-only `cli_direct` method is explicitly experimental and uses
+the separate `set_physical_port()` capability. The adapter first obtains the
+already-connected switch's configured IP through the existing LAN query, then
+`hardware/santec_cli.py` opens only that address
 on named TCP port 2323 and sends exactly:
 
 ```text
@@ -123,8 +134,9 @@ confirmation. It does not call `CLOSe`, `CLOSe?`, the CLI tunnel, VISA, or any
 other switch command, and it does not claim that the external mapping was
 verified.
 
-Unknown physical capacity is handled by operator-confirmed sequential
-discovery. The worker begins at `N + 1`; a command or provisional reading alone
+Unknown physical capacity applies only to experimental CLI mode and is handled
+by operator-confirmed sequential discovery. The worker begins at `N + 1`; a
+command or provisional reading alone
 does not prove that a port exists. Write IL and Continue confirms and stores a
 candidate. Retry reroutes the same candidate without saving. No More Physical
 Ports records the operator-reported endpoint; Stop Extra Testing ends without
@@ -132,6 +144,10 @@ inferring capacity. Both discard the current provisional candidate. An internal
 hard stop at physical port 512 prevents unbounded register writes. It is not
 operator- or administrator-configurable and is never treated as installed
 capacity; reaching it requires engineering review.
+
+There is no automatic fallback between SCPI and CLI. Both methods share the
+measurement, validation, persistence, and replacement-analysis pipeline, but
+only CLI mode opens TCP port 2323 or sends `writereg`.
 
 After a supported switch reaches the Connected state, the main window may use
 the serial already present in `DeviceInfo` as the setup's Main board serial and

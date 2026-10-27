@@ -12,6 +12,7 @@ from typing import Any
 from PyQt5.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
+from domain.extra_ports import ExtraChannelRoutingMethod
 from domain.models import RunState
 from domain.wavelengths import MeasurementConfiguration
 from hardware.interfaces import OpticalSwitch, PowerMeter
@@ -41,6 +42,10 @@ class HardwareRunRequest:
     run_mode: str = "new"
     retest: bool = False
     existing_extra_physical_ports: Sequence[int] | None = None
+    existing_extra_logical_channels: Sequence[int] | None = None
+    extra_channel_routing_method: ExtraChannelRoutingMethod = (
+        ExtraChannelRoutingMethod.SCPI_MAPPED
+    )
 
 
 class HardwareRunController(QObject):
@@ -58,7 +63,7 @@ class HardwareRunController(QObject):
     thread_finished = pyqtSignal()
     state_changed = pyqtSignal(object)
     device_status_changed = pyqtSignal(object)
-    extra_port_offer_required = pyqtSignal(int)
+    extra_port_offer_required = pyqtSignal(int, object)
     extra_port_phase_changed = pyqtSignal(str, int, object)
     extra_port_confirmation_required = pyqtSignal(int, object)
     extra_port_issue = pyqtSignal(int, str, str)
@@ -129,6 +134,10 @@ class HardwareRunController(QObject):
                 run_mode=request.run_mode,
                 retest=request.retest,
                 existing_extra_physical_ports=request.existing_extra_physical_ports,
+                existing_extra_logical_channels=(
+                    request.existing_extra_logical_channels
+                ),
+                extra_channel_routing_method=request.extra_channel_routing_method,
             )
             thread = QThread(self)
             worker.moveToThread(thread)
