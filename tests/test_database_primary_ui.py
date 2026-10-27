@@ -8,8 +8,10 @@ from PyQt5.QtWidgets import QApplication
 
 from application.database_primary_workflow import DatabasePrimaryRunWorkflow
 from domain.database_records import SwitchSpec, UnitSpec
+from domain.models import PendingMeasurementToken, ProvisionalMeasurement
 from infrastructure.database.memory_repositories import InMemoryRepositories
 from ilm_app import MainWindow
+from uuid import uuid4
 
 
 class _Ready:
@@ -84,6 +86,49 @@ class DatabasePrimaryUiTests(unittest.TestCase):
         window.run_repository.new_recorder.assert_not_called()
         window.close()
 
+    def test_successful_database_write_acknowledges_the_same_pending_sample(self):
+        window = self._window()
+        worker = MagicMock()
+        window.hardware_worker = worker
+        window.hardware_pending_reading = (1, 1, 0.65, 0.50)
+
+        self.assertTrue(window._commit_and_advance_hardware())
+
+        worker.write_current.assert_called_once_with()
+        worker.acknowledge_persisted_measurement.assert_called_once()
+        acknowledgement = (
+            worker.acknowledge_persisted_measurement.call_args.args[0]
+        )
+        self.assertEqual(acknowledgement.run_id, self.context.run.run_id)
+        self.assertEqual(acknowledgement.logical_channel, 1)
+        self.assertEqual(acknowledgement.physical_port, 1)
+        window.hardware_worker = None
+        window.close()
+
+    def test_worker_accepted_payload_is_the_sample_committed_to_database(self):
+        window = self._window()
+        worker = MagicMock()
+        window.hardware_worker = worker
+        token = PendingMeasurementToken(
+            operation_id="measurement-atomic",
+            measurement_uuid=uuid4(),
+            logical_channel=2,
+            physical_port=2,
+            run_id=self.context.run.run_id,
+        )
+        provisional = ProvisionalMeasurement(token, 0.65, 0.50)
+
+        window.hardware_persistence_requested(provisional)
+
+        current = self.repositories.current_for_run(self.context.run.run_id)
+        self.assertEqual(len(current), 1)
+        self.assertEqual(current[0].logical_channel, 2)
+        self.assertAlmostEqual(float(current[0].wavelength_1_il_db), 0.65)
+        self.assertAlmostEqual(float(current[0].wavelength_2_il_db), 0.50)
+        worker.acknowledge_persisted_measurement.assert_called_once()
+        window.hardware_worker = None
+        window.close()
+
     def test_failed_database_write_retains_pending_sample_and_does_not_advance(self):
         window = self._window()
         worker = MagicMock()
@@ -99,10 +144,25 @@ class DatabasePrimaryUiTests(unittest.TestCase):
 
         self.assertIsNotNone(window.database_pending_measurement)
         self.assertEqual(len(self.repositories.current_for_run(self.context.run.run_id)), 0)
-        worker.write_current.assert_not_called()
+        worker.write_current.assert_called_once_with()
+        worker.acknowledge_persisted_measurement.assert_not_called()
         self.assertIn("still pending", message.call_args.args[2])
         self.workflow.commit_measurement = original_commit
         window.hardware_worker = None
+        window.close()
+
+    def test_completion_reconciliation_blocks_complete_when_channels_are_missing(self):
+        window = self._window()
+
+        with patch("ilm_app.QMessageBox.warning") as message:
+            window.hardware_completed()
+
+        self.assertEqual(
+            window.database_run_context.run.completion_status,
+            "in_progress",
+        )
+        self.assertIn("Missing planned channels", window._run_completion_reason)
+        message.assert_called_once()
         window.close()
 
     def test_load_run_uses_database_identity_and_does_not_upload_files(self):

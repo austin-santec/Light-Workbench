@@ -385,6 +385,21 @@ return a typed MeasurementResult
 The pipeline should be testable with simulated meter, laser, and switch
 objects. Tests should never require the vendor DLL or VISA installation.
 
+For database-backed runs, the live-reading path uses a token-bound two-phase
+write handshake. The worker publishes one immutable provisional measurement
+containing both loss values and the operation/measurement identity. The UI
+sends that exact payload back to the worker when Write IL is pressed. The
+worker keeps a small bounded set of samples presented for the current routed
+channel because a newer live acquisition may begin before an operator can
+click. It accepts the exact selected payload, pauses live remeasurement, and
+emits a persistence request. The UI commits the accepted payload to SQL Server
+and returns an acknowledgement containing the same identity and the allocated
+attempt number. The worker advances only after that acknowledgement matches.
+Unknown payloads and payloads from another run or routed channel are rejected
+without a database write, and a failed database commit leaves the same payload
+retryable. This prevents a fast live-update cycle or repeated button clicks
+from saving one reading while advancing a different one.
+
 ## Adding a new instrument
 
 1. Identify the capability it provides.

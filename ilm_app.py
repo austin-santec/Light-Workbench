@@ -109,7 +109,14 @@ from domain.hardware_connection import (
     HardwareCapability,
     HardwareNotReadyError,
 )
-from domain.models import ChannelMode, ConnectionState, DeviceCategory
+from domain.models import (
+    ChannelMode,
+    ConnectionState,
+    DeviceCategory,
+    MeasurementPersistenceAcknowledgement,
+    PendingMeasurementToken,
+    ProvisionalMeasurement,
+)
 from domain.extra_ports import (
     ExtraChannelRoutingMethod,
     ExtraPortPhaseStatus,
@@ -850,6 +857,11 @@ class MainWindow(QMainWindow):
         self.database_workflow = database_workflow
         self.database_run_context: DatabaseRunContext | None = None
         self.database_pending_measurement = None
+        self.hardware_pending_token = None
+        self._last_measurement_acknowledgement = None
+        self._database_persistence_payload = None
+        self._database_write_request_in_flight = False
+        self._database_persistence_waiting_for_ack = False
         self.admin_session = AdminSession()
         self.reference_session = ReferenceSession()
         self.active_run_reference_snapshot = None
@@ -1079,7 +1091,19 @@ class MainWindow(QMainWindow):
         self.hardware_controller.operator_required.connect(
             self.hardware_operator_required
         )
-        self.hardware_controller.reading_ready.connect(self.hardware_reading_ready)
+        # Database-backed runs use one atomic payload containing the displayed
+        # values and their worker token.  Keeping the legacy four-value signal
+        # available on the controller preserves compatibility for lightweight
+        # callers without exposing the UI to the token-delivery race.
+        self.hardware_controller.provisional_measurement_ready.connect(
+            self.hardware_provisional_measurement_ready
+        )
+        self.hardware_controller.persistence_requested.connect(
+            self.hardware_persistence_requested
+        )
+        self.hardware_controller.persistence_request_rejected.connect(
+            self.hardware_persistence_request_rejected
+        )
         self.hardware_controller.device_status_changed.connect(
             self._hardware_device_status_changed
         )
@@ -4174,6 +4198,11 @@ class MainWindow(QMainWindow):
             editable=False,
         )
         self.database_pending_measurement = None
+        self.hardware_pending_token = None
+        self._last_measurement_acknowledgement = None
+        self._database_persistence_payload = None
+        self._database_write_request_in_flight = False
+        self._database_persistence_waiting_for_ack = False
         self.run_data = run_data
         self.run_recorder = None
         self._loaded_run_profile_unavailable = False
@@ -4870,6 +4899,8 @@ class MainWindow(QMainWindow):
         """Publish one committed database snapshot to existing UI consumers."""
         self.database_run_context = context
         self.database_pending_measurement = None
+        self.hardware_pending_token = None
+        self._last_measurement_acknowledgement = None
         metadata = self._database_metadata(context)
         self.run_data = RunData(
             Path("database-run-%d" % context.run.run_id),
@@ -5846,6 +5877,12 @@ class MainWindow(QMainWindow):
                 else ()
             ),
             extra_channel_routing_method=extra_routing_method,
+            persistence_run_id=(
+                self.database_run_context.run.run_id
+                if self.database_workflow is not None
+                and self.database_run_context is not None
+                else None
+            ),
         )
         try:
             self.hardware_controller.start(request)
@@ -6637,12 +6674,139 @@ class MainWindow(QMainWindow):
                 )
                 self.write_hardware_button.setEnabled(False)
                 return False
+        if (
+            self.database_workflow is not None
+            and self.hardware_controller.is_active
+        ):
+            return self._request_database_write()
         return self._commit_and_advance_hardware()
+
+    def _request_database_write(self):
+        """Ask the worker to lock the displayed sample before saving it."""
+        if self._database_write_request_in_flight:
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "measurement.write_click_ignored",
+                logical_channel=self.hardware_pending_channel,
+                reason="persistence_request_in_flight",
+                status="ignored",
+            )
+            return False
+        provisional = self._database_persistence_payload
+        if (
+            provisional is not None
+            and self._database_persistence_waiting_for_ack
+        ):
+            # The worker is already blocked on this token after a prior
+            # database failure. Retry persistence directly; sending another
+            # write decision would be interpreted as an invalid command while
+            # the worker is waiting for the acknowledgement.
+            return self._persist_database_payload(provisional)
+        if provisional is None:
+            # The combined payload is required for a database-backed live
+            # write.  This also protects against a token arriving after the
+            # legacy four-value reading signal.
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.write_rejected_not_ready",
+                logical_channel=self.hardware_pending_channel,
+                reason="provisional_measurement_token_not_ready",
+                status="rejected",
+            )
+            self.write_hardware_button.setEnabled(False)
+            return False
+        self._database_write_request_in_flight = True
+        self.write_hardware_button.setEnabled(False)
+        self.continue_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(False)
+        self._hardware_command("write_current", provisional)
+        return True
+
+    def hardware_persistence_requested(self, provisional):
+        """Persist the exact sample after the worker accepts its token."""
+        if not isinstance(provisional, ProvisionalMeasurement):
+            return
+        self._database_persistence_payload = provisional
+        self._database_persistence_waiting_for_ack = True
+        self._persist_database_payload(provisional)
+
+    def _persist_database_payload(self, provisional):
+        """Commit a worker-locked payload and acknowledge it after success."""
+        self._database_write_request_in_flight = True
+        try:
+            committed = self.commit_hardware_reading(provisional)
+        except Exception as error:
+            self._database_write_request_in_flight = False
+            QMessageBox.critical(
+                self,
+                "Could not save reading",
+                "The reading was not committed to the run:\n%s\n\n"
+                "The completed reading is still pending. Correct the database "
+                "problem, then press Write IL again to retry it." % error,
+            )
+            self.write_hardware_button.setEnabled(True)
+            return False
+        if not committed:
+            self._database_write_request_in_flight = False
+            self.write_hardware_button.setEnabled(False)
+            return False
+        acknowledgement = self._last_measurement_acknowledgement
+        if acknowledgement is None:
+            self._database_write_request_in_flight = False
+            self.write_hardware_button.setEnabled(True)
+            return False
+        self._database_persistence_payload = None
+        self._database_write_request_in_flight = False
+        self._database_persistence_waiting_for_ack = False
+        self.continue_hardware_button.setEnabled(False)
+        self.write_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(False)
+        self._hardware_command(
+            "acknowledge_persisted_measurement",
+            acknowledgement,
+        )
+        return True
+
+    def hardware_persistence_request_rejected(self, provisional, reason):
+        """Discard a stale write request and wait for the current sample."""
+        if not isinstance(provisional, ProvisionalMeasurement):
+            return
+        current_token = self.hardware_pending_token
+        self._database_write_request_in_flight = False
+        self._database_persistence_waiting_for_ack = False
+        if current_token is None or current_token == provisional.token:
+            self._database_persistence_payload = None
+            self.hardware_pending_token = None
+            self.write_hardware_button.setEnabled(False)
+            self.demo_channel_label.setText(
+                "Reading refreshed before it could be saved; waiting for the "
+                "current reading"
+            )
+        self._record_support(
+            SupportEventCategory.MEASUREMENT,
+            "measurement.persistence_request_rejected",
+            operation_id=provisional.token.operation_id,
+            measurement_uuid=str(provisional.token.measurement_uuid),
+            logical_channel=provisional.token.logical_channel,
+            physical_port=provisional.token.physical_port,
+            reason=reason,
+            status="rejected",
+        )
 
     def _commit_and_advance_hardware(self):
         """Save a pending reading and let the worker continue to the next step."""
+        if (
+            self.database_workflow is not None
+            and self.hardware_controller.is_active
+        ):
+            return self._request_database_write()
         if self.hardware_worker is None or self.hardware_pending_reading is None:
             return False
+        if self.database_workflow is not None:
+            # Establish the worker's write-wait state before performing the
+            # synchronous UI/database commit.  The matching acknowledgement
+            # below then releases the worker only after the commit succeeds.
+            self._hardware_command("write_current")
         try:
             committed = self.commit_hardware_reading()
         except Exception as error:
@@ -6660,7 +6824,21 @@ class MainWindow(QMainWindow):
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
         self.change_hardware_channel_button.setEnabled(False)
-        self._hardware_command("write_current")
+        if self.database_workflow is not None:
+            acknowledgement = getattr(self, "_last_measurement_acknowledgement", None)
+            if acknowledgement is None:
+                # A database-backed worker always supplies a token.  Keep a
+                # safe fallback for lightweight tests and older injected
+                # workers; it still cannot advance a strict worker unless the
+                # identifiers match.
+                self.write_hardware_button.setEnabled(True)
+                return False
+            self._hardware_command(
+                "acknowledge_persisted_measurement",
+                acknowledgement,
+            )
+        else:
+            self._hardware_command("write_current")
         return True
 
     def _hardware_command(self, command, *args):
@@ -6675,7 +6853,16 @@ class MainWindow(QMainWindow):
             return getattr(self.hardware_worker, command)(*args)
         return None
 
-    def commit_hardware_reading(self):
+    def commit_hardware_reading(self, provisional_measurement=None):
+        if isinstance(provisional_measurement, ProvisionalMeasurement):
+            token = provisional_measurement.token
+            self.hardware_pending_reading = (
+                token.logical_channel,
+                token.physical_port,
+                provisional_measurement.first_loss_db,
+                provisional_measurement.second_loss_db,
+            )
+            self.hardware_pending_token = token
         channel, physical_port, first_loss, second_loss = self.hardware_pending_reading
         if self.run_data is None:
             return False
@@ -6686,6 +6873,36 @@ class MainWindow(QMainWindow):
         if not validation.valid:
             self._record_negative_loss_write_attempt(validation)
             return False
+        token = self.hardware_pending_token
+        if token is None:
+            # Direct UI/test callers may not have a worker token.  Generate a
+            # stable token once and reuse it across database retries.
+            fallback_uuid = uuid.uuid4()
+            token = PendingMeasurementToken(
+                operation_id="measurement-" + fallback_uuid.hex,
+                measurement_uuid=fallback_uuid,
+                run_id=(
+                    self.database_run_context.run.run_id
+                    if self.database_run_context is not None
+                    else None
+                ),
+                logical_channel=int(channel),
+                physical_port=int(physical_port),
+            )
+            self.hardware_pending_token = token
+        if (
+            token.logical_channel != int(channel)
+            or token.physical_port != int(physical_port)
+            or (
+                self.database_run_context is not None
+                and token.run_id is not None
+                and token.run_id != self.database_run_context.run.run_id
+            )
+        ):
+            raise RuntimeError(
+                "The displayed measurement no longer matches the active run. "
+                "Take a new reading before writing it."
+            )
         record = MeasurementRecord.from_wavelengths(
             channel,
             losses,
@@ -6721,11 +6938,36 @@ class MainWindow(QMainWindow):
                             else {}
                         ),
                         written_by=self.run_data.metadata.get("Tested by", ""),
+                        measurement_uuid=token.measurement_uuid,
                     )
                 )
-            _, context = self.database_workflow.commit_measurement(
-                self.database_pending_measurement
+            self._last_measurement_acknowledgement = None
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.commit_started",
+                operation_id=token.operation_id,
+                measurement_uuid=str(token.measurement_uuid),
+                logical_channel=channel,
+                physical_port=physical_port,
+                status="started",
             )
+            try:
+                _, context = self.database_workflow.commit_measurement(
+                    self.database_pending_measurement
+                )
+            except Exception as error:
+                self._record_support(
+                    SupportEventCategory.MEASUREMENT,
+                    "measurement.commit_failed",
+                    operation_id=token.operation_id,
+                    measurement_uuid=str(token.measurement_uuid),
+                    logical_channel=channel,
+                    physical_port=physical_port,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    status="error",
+                )
+                raise
             measurement_uuid = str(
                 self.database_pending_measurement.measurement_uuid
             )
@@ -6734,6 +6976,26 @@ class MainWindow(QMainWindow):
                 item
                 for item in self.run_data.measurement_attempts
                 if item.attempt_id == measurement_uuid
+            )
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.commit_succeeded",
+                operation_id=token.operation_id,
+                measurement_uuid=measurement_uuid,
+                logical_channel=channel,
+                physical_port=physical_port,
+                attempt_number=attempt.attempt_number,
+                status="success",
+            )
+            self._last_measurement_acknowledgement = (
+                MeasurementPersistenceAcknowledgement(
+                    operation_id=token.operation_id,
+                    measurement_uuid=token.measurement_uuid,
+                    run_id=self.database_run_context.run.run_id,
+                    logical_channel=int(channel),
+                    physical_port=int(physical_port),
+                    attempt_number=int(attempt.attempt_number),
+                )
             )
         else:
             attempt = self._accept_measurement_record(record)
@@ -6758,6 +7020,13 @@ class MainWindow(QMainWindow):
             second_loss_db=second_loss,
             measurement_classification=configuration.classification.value,
             attempt_id=attempt.attempt_id,
+            operation_id=token.operation_id,
+            measurement_uuid=str(token.measurement_uuid),
+            database_run_id=(
+                self.database_run_context.run.run_id
+                if self.database_run_context is not None
+                else None
+            ),
             attempt_number=attempt.attempt_number,
             replaces_attempt_id=attempt.replaces_attempt_id,
             retest=attempt.attempt_number > 1,
@@ -6904,9 +7173,61 @@ class MainWindow(QMainWindow):
         self._apply_run_mode_controls()
 
     def hardware_reading_ready(self, channel, _physical_port, loss_1310, loss_1550):
+        """Present a legacy reading that has no atomic worker token."""
+        self._present_hardware_reading(
+            channel,
+            _physical_port,
+            loss_1310,
+            loss_1550,
+            token=None,
+        )
+
+    def hardware_provisional_measurement_ready(self, provisional):
+        """Present one reading and its worker identity as an atomic payload."""
+        if not isinstance(provisional, ProvisionalMeasurement):
+            return
+        token = provisional.token
+        if (
+            token.logical_channel <= 0
+            or token.physical_port <= 0
+        ):
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.token_mismatch",
+                level=SupportLogLevel.ERROR,
+                operation_id=token.operation_id,
+                logical_channel=token.logical_channel,
+                physical_port=token.physical_port,
+                reason="invalid_provisional_identity",
+                status="error",
+            )
+            return
+        self._database_persistence_payload = (
+            provisional if self.database_workflow is not None else None
+        )
+        self._database_write_request_in_flight = False
+        self._present_hardware_reading(
+            token.logical_channel,
+            token.physical_port,
+            provisional.first_loss_db,
+            provisional.second_loss_db,
+            token=token,
+        )
+
+    def _present_hardware_reading(
+        self,
+        channel,
+        _physical_port,
+        loss_1310,
+        loss_1550,
+        *,
+        token=None,
+    ):
         wavelengths = self.measurement_configuration.opm_wavelengths_nm
         try:
             self.database_pending_measurement = None
+            self.hardware_pending_token = token
+            self._last_measurement_acknowledgement = None
             self.hardware_session.set_pending_reading(
                 channel,
                 _physical_port,
@@ -7289,7 +7610,95 @@ class MainWindow(QMainWindow):
             "configured_physical_channel_count": configured_count,
         }
 
+    def _reconcile_database_completion(self):
+        """Return persisted planned channels missing at worker completion.
+
+        The worker cannot see the database transaction.  Refreshing here is
+        the final defense against marking a run complete from a UI-side
+        progress counter or an incomplete in-memory projection.
+        """
+        if self.database_workflow is None or self.database_run_context is None:
+            return ()
+        if self._active_extra_only:
+            return ()
+        try:
+            context = self.database_workflow.refresh(
+                self.database_run_context.run.run_id
+            )
+            self._apply_database_run_context(context, update_setup=False)
+        except Exception as error:
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "run.completion_reconciliation",
+                level=SupportLogLevel.ERROR,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
+            return None
+        planned = self._status_planned_channels()
+        if not planned:
+            return None
+        persisted = {
+            int(record.channel)
+            for record in self.database_run_context.snapshot.measurements
+        }
+        missing = tuple(channel for channel in planned if channel not in persisted)
+        self._record_support(
+            SupportEventCategory.MEASUREMENT,
+            "run.completion_reconciliation",
+            run_id=self.database_run_context.run.run_id,
+            planned_channel_count=len(planned),
+            persisted_channel_count=len(persisted),
+            missing_channels=list(missing),
+            status="success" if not missing else "blocked",
+        )
+        return missing
+
     def hardware_completed(self):
+        missing = self._reconcile_database_completion()
+        if missing is None or missing:
+            missing_text = (
+                ", ".join(str(channel) for channel in (missing or ()))
+                or "unknown"
+            )
+            self._run_terminal_status = COMPLETION_INCOMPLETE
+            self._run_completion_reason = (
+                "Completion was blocked because persisted coverage could not be "
+                "verified. Missing planned channels: %s." % missing_text
+            )
+            self._run_completed_at_utc = utc_now()
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "run.completion_blocked",
+                missing_channels=list(missing or ()),
+                reason=self._run_completion_reason,
+                status="blocked",
+            )
+            self.finish_switch_test_session()
+            self.hardware_live_indicator.setVisible(False)
+            self.continue_hardware_button.setEnabled(False)
+            self.write_hardware_button.setEnabled(False)
+            self.change_hardware_channel_button.setEnabled(False)
+            self._finish_extra_port_ui()
+            self.stop_hardware_button.setEnabled(False)
+            self.retest_button.setEnabled(True)
+            self.active_run_reference_snapshot = None
+            self._set_run_purpose_editable(False)
+            self.refresh_run_status(include_composite=False)
+            self.statusBar().showMessage(
+                "Run remains open because persisted coverage is incomplete."
+            )
+            QMessageBox.warning(
+                self,
+                "Run completion blocked",
+                "Light Workbench did not mark this run complete because the "
+                "database does not contain every planned channel.\n\n"
+                "Missing channels: %s\n\n"
+                "The run remains available for retesting."
+                % missing_text,
+            )
+            return
         self._finish_database_run("complete")
         self._run_terminal_status = COMPLETION_COMPLETE
         self._run_completion_reason = "Every planned channel has an accepted reading."
@@ -7454,6 +7863,34 @@ class MainWindow(QMainWindow):
         self.hardware_live_indicator.setVisible(False)
         self.change_hardware_channel_button.setEnabled(False)
         self.set_open_csv_available(True)
+
+    def hardware_measurement_token_ready(self, token):
+        """Retain the worker identity for the currently displayed sample."""
+        if not isinstance(token, PendingMeasurementToken):
+            return
+        if self.hardware_pending_reading is None:
+            return
+        channel, physical_port, _first_loss, _second_loss = (
+            self.hardware_pending_reading
+        )
+        if (
+            token.logical_channel != int(channel)
+            or token.physical_port != int(physical_port)
+        ):
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.token_mismatch",
+                level=SupportLogLevel.ERROR,
+                operation_id=token.operation_id,
+                logical_channel=token.logical_channel,
+                physical_port=token.physical_port,
+                displayed_channel=channel,
+                displayed_physical_port=physical_port,
+                status="error",
+            )
+            self.hardware_pending_token = None
+            return
+        self.hardware_pending_token = token
 
     def set_open_csv_available(self, available):
         """Keep CSV loading disabled while a hardware run owns the UI."""

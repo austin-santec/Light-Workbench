@@ -101,6 +101,23 @@ readings are not accepted attempts. Legacy runs without this collection are
 loaded by synthesizing one `legacy_import` attempt per existing effective row;
 the legacy file is not rewritten until a later save changes the run.
 
+For database-backed hardware runs, a displayed reading has an immutable
+provisional payload before it is written. The payload keeps the two loss
+values together with the operation ID, measurement UUID, logical channel,
+physical port, and database run ID. Write IL first asks the worker to accept
+that exact payload. A newer live acquisition does not invalidate a sample
+already presented for the current routed channel. The worker rejects unknown,
+cross-run, or cross-channel payloads without writing them, pauses live
+remeasurement for an accepted payload, and then asks the UI to persist it. The
+worker advances only after the database commit returns an acknowledgement
+containing the same identity plus the allocated attempt number. Commit
+failures leave the same payload and measurement UUID retryable; retrying does
+not create a second attempt or send another advance command. This two-phase
+handshake prevents a fast live-update cycle or repeated button clicks from
+saving one reading while advancing a different one. The UI also
+refreshes persisted coverage before setting a run to `complete`; missing
+planned channels leave the run open and are reported for retest.
+
 Numbered-run navigation keeps the loaded unit directory as its preferred
 repository context, even when that directory is nested under a descriptive
 folder or has been renamed. Before using it, the application validates the

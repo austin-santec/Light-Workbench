@@ -15,7 +15,13 @@ from domain.measurement import (
     calculate_insertion_loss,
     validate_insertion_loss,
 )
-from domain.models import ConnectionState, DeviceCategory
+from domain.models import (
+    ConnectionState,
+    DeviceCategory,
+    MeasurementPersistenceAcknowledgement,
+    PendingMeasurementToken,
+    ProvisionalMeasurement,
+)
 from domain.extra_ports import (
     EXTRA_PORT_HARD_SAFETY_LIMIT,
     ExtraChannelRoutingMethod,
@@ -46,6 +52,10 @@ class MeasurementWorker(QObject):
     channel_configuration_ready = pyqtSignal(int)
     continuation_selection_required = pyqtSignal(int, object, int)
     reading_ready = pyqtSignal(int, int, float, float)
+    reading_token_ready = pyqtSignal(object)
+    provisional_measurement_ready = pyqtSignal(object)
+    persistence_requested = pyqtSignal(object)
+    persistence_request_rejected = pyqtSignal(object, str)
     progress_changed = pyqtSignal(int, int)
     completed = pyqtSignal()
     stopped = pyqtSignal()
@@ -82,6 +92,7 @@ class MeasurementWorker(QObject):
             ExtraChannelRoutingMethod.SCPI_MAPPED
         ),
         extra_port_safety_limit: int | None = None,
+        persistence_run_id: int | None = None,
     ):
         super().__init__()
         self.power_meter = power_meter
@@ -147,6 +158,7 @@ class MeasurementWorker(QObject):
         self._continuation_channel = None
         self._channel_change_request = None
         self._decision = None
+        self._writeable_provisional_measurements = {}
         self._negative_episode_active = False
         self._negative_episode_count = 0
         self._negative_episode_context = {}
@@ -157,6 +169,9 @@ class MeasurementWorker(QObject):
         self._last_confirmed_extra_physical_port = None
         self._configured_channel_count = None
         self._extra_phase_outcome = None
+        self.persistence_run_id = (
+            int(persistence_run_id) if persistence_run_id is not None else None
+        )
 
     @pyqtSlot()
     def run(self):
@@ -581,6 +596,11 @@ class MeasurementWorker(QObject):
         extra_port=False,
     ):
         """Measure an already-routed target without duplicating IL logic."""
+        # Keep a bounded set of samples presented for this routed target. A
+        # live measurement may already be in progress when the operator clicks
+        # Write IL for the previously displayed sample; that click must remain
+        # valid until this channel advances.
+        self._writeable_provisional_measurements = {}
         self._operator_ready.clear()
         self.operator_required.emit(channel, physical_port)
         if not self.live_write_mode:
@@ -596,7 +616,8 @@ class MeasurementWorker(QObject):
         while True:
             wavelengths = self.measurement_configuration.opm_wavelengths_nm
             first_wavelength, second_wavelength = wavelengths
-            measurement_id = "measurement-" + uuid.uuid4().hex
+            measurement_uuid = uuid.uuid4()
+            measurement_id = "measurement-" + measurement_uuid.hex
             trace_context = {
                 "workflow_id": self.workflow_id,
                 "operation_id": measurement_id,
@@ -748,6 +769,31 @@ class MeasurementWorker(QObject):
                 losses[first_wavelength],
                 losses[second_wavelength],
             )
+            # Keep the legacy four-value signal above for existing consumers,
+            # but publish an immutable identity for the exact provisional
+            # sample as a separate signal.  The UI uses this token when it
+            # commits the sample and when it acknowledges the commit back to
+            # this worker.
+            pending_token = PendingMeasurementToken(
+                operation_id=measurement_id,
+                measurement_uuid=measurement_uuid,
+                run_id=self.persistence_run_id,
+                logical_channel=int(channel),
+                physical_port=int(physical_port),
+            )
+            self.reading_token_ready.emit(pending_token)
+            provisional_measurement = ProvisionalMeasurement(
+                token=pending_token,
+                first_loss_db=float(losses[first_wavelength]),
+                second_loss_db=float(losses[second_wavelength]),
+            )
+            self._writeable_provisional_measurements[
+                pending_token.measurement_uuid
+            ] = provisional_measurement
+            while len(self._writeable_provisional_measurements) > 8:
+                oldest_uuid = next(iter(self._writeable_provisional_measurements))
+                del self._writeable_provisional_measurements[oldest_uuid]
+            self.provisional_measurement_ready.emit(provisional_measurement)
             decision = self._wait_for_read_or_write(
                 live_update=self.live_write_mode
             )
@@ -757,6 +803,85 @@ class MeasurementWorker(QObject):
             if isinstance(decision, dict):
                 return decision
             if decision == "live_update":
+                continue
+            if isinstance(decision, ProvisionalMeasurement):
+                if self.persistence_run_id is not None:
+                    if not self._provisional_is_writeable(
+                        decision,
+                        channel,
+                        physical_port,
+                    ):
+                        reason = "unrecognized_provisional_measurement"
+                        self._record(
+                            SupportEventCategory.MEASUREMENT,
+                            "measurement.write_rejected_stale",
+                            operation_id=decision.token.operation_id,
+                            measurement_uuid=str(decision.token.measurement_uuid),
+                            logical_channel=decision.token.logical_channel,
+                            physical_port=decision.token.physical_port,
+                            current_operation_id=pending_token.operation_id,
+                            current_measurement_uuid=str(
+                                pending_token.measurement_uuid
+                            ),
+                            reason=reason,
+                            status="rejected",
+                        )
+                        self.persistence_request_rejected.emit(
+                            decision,
+                            reason,
+                        )
+                        continue
+                    self._record(
+                        SupportEventCategory.MEASUREMENT,
+                        "measurement.persistence_lock_accepted",
+                        operation_id=decision.token.operation_id,
+                        measurement_uuid=str(decision.token.measurement_uuid),
+                        logical_channel=decision.token.logical_channel,
+                        physical_port=decision.token.physical_port,
+                        current_operation_id=pending_token.operation_id,
+                        current_measurement_uuid=str(
+                            pending_token.measurement_uuid
+                        ),
+                        reading_state="accepted_pending_persistence",
+                        status="success",
+                    )
+                    self.persistence_requested.emit(decision)
+                    if self._wait_for_persistence_ack(decision.token):
+                        if emit_progress:
+                            self.progress_changed.emit(index, total)
+                        return
+                    continue
+                # A file-backed or lightweight worker may still receive the
+                # combined payload. Treat it as the existing write decision.
+                decision = "write"
+            if isinstance(decision, MeasurementPersistenceAcknowledgement):
+                if self.persistence_run_id is not None and self._ack_matches(
+                    pending_token,
+                    decision,
+                ):
+                    self._record(
+                        SupportEventCategory.OPERATOR,
+                        "measurement.write_requested",
+                        operation_id=measurement_id,
+                        logical_channel=channel,
+                        physical_port=physical_port,
+                        reading_state="accepted_pending_persistence",
+                        status="requested",
+                    )
+                    self._record_persistence_ack(pending_token, decision)
+                    if emit_progress:
+                        self.progress_changed.emit(index, total)
+                    return
+                self._record(
+                    SupportEventCategory.MEASUREMENT,
+                    "measurement.advance_blocked",
+                    operation_id=pending_token.operation_id,
+                    measurement_uuid=str(pending_token.measurement_uuid),
+                    logical_channel=pending_token.logical_channel,
+                    physical_port=pending_token.physical_port,
+                    reason="acknowledgement_before_write_decision",
+                    status="blocked",
+                )
                 continue
             if decision == "write":
                 if not validation.valid:
@@ -784,6 +909,15 @@ class MeasurementWorker(QObject):
                     reading_state="accepted_pending_persistence",
                     status="requested",
                 )
+                if self.persistence_run_id is not None:
+                    if self._wait_for_persistence_ack(pending_token):
+                        if emit_progress:
+                            self.progress_changed.emit(index, total)
+                        return
+                    # A mismatched acknowledgement is never allowed to
+                    # advance the worker.  Continue waiting for this same
+                    # token so the UI can retry the identical database write.
+                    continue
                 if emit_progress:
                     self.progress_changed.emit(index, total)
                 return
@@ -798,6 +932,100 @@ class MeasurementWorker(QObject):
                 repeated_reading=True,
                 status="requested",
             )
+
+    def _wait_for_persistence_ack(self, token):
+        """Wait until the exact provisional sample is durably acknowledged."""
+        self._record(
+            SupportEventCategory.MEASUREMENT,
+            "measurement.persistence_waiting",
+            operation_id=token.operation_id,
+            measurement_uuid=str(token.measurement_uuid),
+            logical_channel=token.logical_channel,
+            physical_port=token.physical_port,
+            reading_state="accepted_pending_persistence",
+            status="waiting",
+        )
+        while True:
+            decision = self._wait_for_read_or_write()
+            if not isinstance(decision, MeasurementPersistenceAcknowledgement):
+                # Do not let a repeat/read command turn a committed sample
+                # into a new provisional sample.  The operator can retry
+                # Write IL, or stop the worker, while this acknowledgement is
+                # outstanding.
+                self._record(
+                    SupportEventCategory.MEASUREMENT,
+                    "measurement.advance_blocked",
+                    operation_id=token.operation_id,
+                    measurement_uuid=str(token.measurement_uuid),
+                    logical_channel=token.logical_channel,
+                    physical_port=token.physical_port,
+                    reason="persistence_acknowledgement_required",
+                    received_decision=str(decision),
+                    status="blocked",
+                )
+                continue
+            matches = self._ack_matches(token, decision)
+            if not matches:
+                self._record(
+                    SupportEventCategory.MEASUREMENT,
+                    "measurement.advance_blocked",
+                    operation_id=token.operation_id,
+                    measurement_uuid=str(token.measurement_uuid),
+                    logical_channel=token.logical_channel,
+                    physical_port=token.physical_port,
+                    reason="acknowledgement_mismatch",
+                    acknowledged_operation_id=decision.operation_id,
+                    acknowledged_measurement_uuid=str(decision.measurement_uuid),
+                    acknowledged_run_id=decision.run_id,
+                    acknowledged_logical_channel=decision.logical_channel,
+                    acknowledged_physical_port=decision.physical_port,
+                    status="blocked",
+                )
+                continue
+            self._record_persistence_ack(token, decision)
+            return True
+
+    @staticmethod
+    def _ack_matches(token, acknowledgement):
+        return (
+            acknowledgement.operation_id == token.operation_id
+            and acknowledgement.measurement_uuid == token.measurement_uuid
+            and acknowledgement.run_id == token.run_id
+            and acknowledgement.logical_channel == token.logical_channel
+            and acknowledgement.physical_port == token.physical_port
+            and acknowledgement.attempt_number > 0
+        )
+
+    def _provisional_is_writeable(
+        self,
+        provisional_measurement,
+        logical_channel,
+        physical_port,
+    ):
+        """Return whether a UI request names a sample shown for this target."""
+        requested = provisional_measurement.token
+        stored = self._writeable_provisional_measurements.get(
+            requested.measurement_uuid
+        )
+        return (
+            stored == provisional_measurement
+            and requested.run_id == self.persistence_run_id
+            and requested.logical_channel == int(logical_channel)
+            and requested.physical_port == int(physical_port)
+        )
+
+    def _record_persistence_ack(self, token, acknowledgement):
+        self._record(
+            SupportEventCategory.MEASUREMENT,
+            "measurement.advance_acknowledged",
+            operation_id=token.operation_id,
+            measurement_uuid=str(token.measurement_uuid),
+            logical_channel=token.logical_channel,
+            physical_port=token.physical_port,
+            attempt_number=acknowledgement.attempt_number,
+            reading_state="written",
+            status="success",
+        )
 
     def _offer_extra_phase(self, configured_count=None):
         """Ask once whether the selected extra-channel strategy should run."""
@@ -1352,9 +1580,24 @@ class MeasurementWorker(QObject):
             self._continuation_selection_event.clear()
         return channel
 
-    @pyqtSlot()
-    def write_current(self):
-        self._set_decision("write")
+    @pyqtSlot(object)
+    def write_current(self, provisional_measurement=None):
+        """Request a write, optionally bound to one displayed sample."""
+        self._set_decision(
+            provisional_measurement
+            if isinstance(provisional_measurement, ProvisionalMeasurement)
+            else "write"
+        )
+
+    @pyqtSlot(object)
+    def acknowledge_persisted_measurement(self, acknowledgement):
+        """Release the worker only after the UI confirms durable persistence."""
+        if not isinstance(
+            acknowledgement,
+            MeasurementPersistenceAcknowledgement,
+        ):
+            return
+        self._set_decision(acknowledgement)
 
     @pyqtSlot()
     def read_current(self):

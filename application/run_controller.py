@@ -47,6 +47,7 @@ class HardwareRunRequest:
     extra_channel_routing_method: ExtraChannelRoutingMethod = (
         ExtraChannelRoutingMethod.SCPI_MAPPED
     )
+    persistence_run_id: int | None = None
 
 
 class HardwareRunController(QObject):
@@ -57,6 +58,10 @@ class HardwareRunController(QObject):
     channel_configuration_ready = pyqtSignal(int)
     operator_required = pyqtSignal(int, int)
     reading_ready = pyqtSignal(int, int, float, float)
+    reading_token_ready = pyqtSignal(object)
+    provisional_measurement_ready = pyqtSignal(object)
+    persistence_requested = pyqtSignal(object)
+    persistence_request_rejected = pyqtSignal(object, str)
     progress_changed = pyqtSignal(int, int)
     completed = pyqtSignal()
     stopped = pyqtSignal()
@@ -73,7 +78,8 @@ class HardwareRunController(QObject):
     # thread. Qt queues UI commands safely into the worker thread.
     _continue_requested = pyqtSignal()
     _read_requested = pyqtSignal()
-    _write_requested = pyqtSignal()
+    _write_requested = pyqtSignal(object)
+    _persistence_ack_requested = pyqtSignal(object)
     _select_next_requested = pyqtSignal(int)
     _select_resume_requested = pyqtSignal(int)
     _change_requested = pyqtSignal(int, bool)
@@ -140,6 +146,7 @@ class HardwareRunController(QObject):
                     request.existing_extra_logical_channels
                 ),
                 extra_channel_routing_method=request.extra_channel_routing_method,
+                persistence_run_id=request.persistence_run_id,
             )
             thread = QThread(self)
             worker.moveToThread(thread)
@@ -180,6 +187,14 @@ class HardwareRunController(QObject):
         )
         worker.operator_required.connect(self._relay_operator_required)
         worker.reading_ready.connect(self._relay_reading_ready)
+        worker.reading_token_ready.connect(self.reading_token_ready)
+        worker.provisional_measurement_ready.connect(
+            self.provisional_measurement_ready
+        )
+        worker.persistence_requested.connect(self.persistence_requested)
+        worker.persistence_request_rejected.connect(
+            self.persistence_request_rejected
+        )
         worker.progress_changed.connect(self.progress_changed)
         worker.device_status_changed.connect(self.device_status_changed)
         worker.extra_port_offer_required.connect(self.extra_port_offer_required)
@@ -199,6 +214,10 @@ class HardwareRunController(QObject):
             (self._continue_requested, worker.continue_current),
             (self._read_requested, worker.read_current),
             (self._write_requested, worker.write_current),
+            (
+                self._persistence_ack_requested,
+                worker.acknowledge_persisted_measurement,
+            ),
             (self._select_next_requested, worker.select_next_channel),
             (self._select_resume_requested, worker.select_resume_channel),
             (self._change_requested, worker.change_channel),
@@ -302,9 +321,14 @@ class HardwareRunController(QObject):
     def finish_manual_pass(self) -> None:
         self._invoke_command(self._finish_manual_requested)
 
-    def write_current(self) -> None:
+    def write_current(self, provisional_measurement=None) -> None:
         self._set_state(RunState.WRITING)
-        self._invoke_command(self._write_requested)
+        self._invoke_command(self._write_requested, provisional_measurement)
+
+    def acknowledge_persisted_measurement(self, acknowledgement) -> None:
+        """Release the worker after the exact sample is persisted."""
+        self._set_state(RunState.WRITING)
+        self._invoke_command(self._persistence_ack_requested, acknowledgement)
 
     def stop(self) -> None:
         if self.worker is not None:

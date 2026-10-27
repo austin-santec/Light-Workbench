@@ -281,6 +281,15 @@ after repository success, so a failed write remains retryable with the same
 UUID and cannot alter the accepted projection. Production Write IL remains on
 the file workflow until the database-primary cutover milestone.
 
+The database-backed hardware worker now participates in the same acceptance
+boundary. It receives a token for each displayed provisional sample and does
+not advance to the next channel until the UI reports a matching successful
+commit (run, operation, measurement UUID, logical channel, physical port, and
+attempt number). A failed commit leaves the exact pending sample retryable;
+reading/repeat requests cannot silently advance it. Run completion performs a
+fresh persisted-coverage reconciliation and leaves the database run open when
+any planned channel is missing.
+
 ### Implement
 
 - Generate `measurement_uuid` before insertion.
@@ -290,6 +299,8 @@ the file workflow until the database-primary cutover milestone.
 - Allocate `attempt_number` safely for each run/logical channel.
 - Mark a reading accepted in the UI only after commit succeeds.
 - Leave failed writes temporary and retryable without advancing the channel.
+- Acknowledge persistence only with the exact displayed sample token.
+- Reconcile persisted coverage before marking a hardware run `complete`.
 - Keep raw power, temporary readings, live samples, and rejected samples out of
   `IL_MEASUREMENTS`.
 
@@ -300,6 +311,10 @@ the file workflow until the database-primary cutover milestone.
 - Retrying the same UUID is idempotent.
 - Parallel or repeated attempts cannot claim the same attempt number.
 - Database failure does not alter the current accepted projection.
+- A mismatched or missing persistence acknowledgement does not advance the
+  worker or mark a channel complete.
+- Completion is blocked and missing channels are reported when the persisted
+  run projection is incomplete.
 - Invalid/negative/unwritten readings are absent from the database.
 
 ### Exit criteria

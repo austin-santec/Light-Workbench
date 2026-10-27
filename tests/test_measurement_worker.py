@@ -1,9 +1,15 @@
+import threading
 import unittest
 
 from PyQt5.QtWidgets import QApplication
 
 from application.measurement_worker import MeasurementWorker as ApplicationMeasurementWorker
-from domain.models import ConnectionState, DeviceCategory
+from domain.models import (
+    ConnectionState,
+    DeviceCategory,
+    MeasurementPersistenceAcknowledgement,
+    ProvisionalMeasurement,
+)
 from domain.extra_ports import (
     EXTRA_PORT_HARD_SAFETY_LIMIT,
     ExtraChannelRoutingMethod,
@@ -129,6 +135,167 @@ class CapturingSupportLogger:
 
 
 class MeasurementWorkerTests(unittest.TestCase):
+    def test_live_database_write_locks_the_exact_provisional_measurement(self):
+        worker = ApplicationMeasurementWorker(
+            FakePowerMeter(),
+            FakeSwitch(),
+            [1],
+            {1310: 0.72, 1550: 0.28},
+            persistence_run_id=42,
+            live_write_mode=True,
+            live_write_interval=0.05,
+        )
+        provisional = []
+        persistence_requests = []
+
+        worker.operator_required.connect(
+            lambda _channel, _port: worker.continue_current()
+        )
+
+        def request_write(sample):
+            provisional.append(sample)
+            if len(provisional) == 1:
+                worker.write_current(sample)
+
+        def acknowledge(sample):
+            persistence_requests.append(sample)
+            token = sample.token
+            worker.acknowledge_persisted_measurement(
+                MeasurementPersistenceAcknowledgement(
+                    operation_id=token.operation_id,
+                    measurement_uuid=token.measurement_uuid,
+                    run_id=42,
+                    logical_channel=token.logical_channel,
+                    physical_port=token.physical_port,
+                    attempt_number=1,
+                )
+            )
+
+        worker.provisional_measurement_ready.connect(request_write)
+        worker.persistence_requested.connect(acknowledge)
+
+        worker.run()
+
+        self.assertEqual(len(provisional), 1)
+        self.assertEqual(persistence_requests, provisional)
+        self.assertIsInstance(provisional[0], ProvisionalMeasurement)
+
+    def test_live_write_accepts_displayed_sample_after_next_acquisition(self):
+        worker = ApplicationMeasurementWorker(
+            FakePowerMeter(),
+            FakeSwitch(),
+            [1],
+            {1310: 0.72, 1550: 0.28},
+            persistence_run_id=42,
+            live_write_mode=True,
+            live_write_interval=0.05,
+        )
+        provisional = []
+        persistence_requests = []
+        rejections = []
+        progress = []
+        logger = CapturingSupportLogger()
+        worker.support_logger = logger
+
+        worker.operator_required.connect(
+            lambda _channel, _port: worker.continue_current()
+        )
+
+        def request_previous_displayed_sample(sample):
+            provisional.append(sample)
+            if len(provisional) == 2:
+                worker.write_current(provisional[0])
+
+        def acknowledge(sample):
+            persistence_requests.append(sample)
+            token = sample.token
+            worker.acknowledge_persisted_measurement(
+                MeasurementPersistenceAcknowledgement(
+                    operation_id=token.operation_id,
+                    measurement_uuid=token.measurement_uuid,
+                    run_id=42,
+                    logical_channel=token.logical_channel,
+                    physical_port=token.physical_port,
+                    attempt_number=1,
+                )
+            )
+
+        worker.provisional_measurement_ready.connect(
+            request_previous_displayed_sample
+        )
+        worker.persistence_requested.connect(acknowledge)
+        worker.persistence_request_rejected.connect(
+            lambda sample, reason: rejections.append((sample, reason))
+        )
+        worker.progress_changed.connect(
+            lambda current, total: progress.append((current, total))
+        )
+
+        worker.run()
+
+        self.assertGreaterEqual(len(provisional), 2)
+        self.assertEqual(persistence_requests, [provisional[0]])
+        self.assertEqual(rejections, [])
+        self.assertEqual(progress, [(1, 1)])
+        self.assertTrue(
+            any(
+                event == "measurement.persistence_lock_accepted"
+                for _category, event, _fields in logger.events
+            )
+        )
+
+    def test_database_run_waits_for_matching_persistence_acknowledgement(self):
+        worker = MeasurementWorker(
+            FakePowerMeter(),
+            FakeSwitch(),
+            [1],
+            {1310: 0.72, 1550: 0.28},
+            persistence_run_id=42,
+        )
+        progress = []
+        tokens = []
+
+        worker.operator_required.connect(
+            lambda _channel, _port: worker.continue_current()
+        )
+        worker.reading_ready.connect(lambda *_values: worker.write_current())
+
+        def acknowledge(token):
+            tokens.append(token)
+
+            def send_acknowledgements():
+                wrong = MeasurementPersistenceAcknowledgement(
+                    operation_id="measurement-wrong",
+                    measurement_uuid=token.measurement_uuid,
+                    run_id=42,
+                    logical_channel=token.logical_channel,
+                    physical_port=token.physical_port,
+                    attempt_number=1,
+                )
+                worker.acknowledge_persisted_measurement(wrong)
+                worker.acknowledge_persisted_measurement(
+                    MeasurementPersistenceAcknowledgement(
+                        operation_id=token.operation_id,
+                        measurement_uuid=token.measurement_uuid,
+                        run_id=42,
+                        logical_channel=token.logical_channel,
+                        physical_port=token.physical_port,
+                        attempt_number=1,
+                    )
+                )
+
+            timer = threading.Timer(0.01, send_acknowledgements)
+            timer.daemon = True
+            timer.start()
+
+        worker.reading_token_ready.connect(acknowledge)
+        worker.progress_changed.connect(lambda *values: progress.append(values))
+
+        worker.run()
+
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(progress, [(1, 1)])
+
     def test_extra_port_hard_stop_is_internal_and_fixed_by_default(self):
         worker = MeasurementWorker(
             FakePowerMeter(),

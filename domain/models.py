@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
 from collections.abc import Mapping
+from uuid import UUID
 
 
 class OperatingBand(str, Enum):
@@ -69,6 +70,48 @@ class ConnectionState(str, Enum):
     CONNECTED = "connected"
     IN_USE = "in_use"
     ERROR = "error"
+
+
+@dataclass(frozen=True)
+class PendingMeasurementToken:
+    """Identity of one displayed sample awaiting durable persistence.
+
+    The token is deliberately separate from the displayed loss values.  It
+    lets the hardware worker match the UI/database acknowledgement to the
+    exact sample that was presented, including retries after a transient
+    database failure.
+    """
+
+    operation_id: str
+    measurement_uuid: UUID
+    logical_channel: int
+    physical_port: int
+    run_id: int | None = None
+
+
+@dataclass(frozen=True)
+class MeasurementPersistenceAcknowledgement:
+    """Authoritative acknowledgement that a displayed sample was persisted."""
+
+    operation_id: str
+    measurement_uuid: UUID
+    run_id: int
+    logical_channel: int
+    physical_port: int
+    attempt_number: int
+
+
+@dataclass(frozen=True)
+class ProvisionalMeasurement:
+    """One immutable reading and the identity assigned to that reading.
+
+    Keeping the values and token together prevents the UI from committing a
+    reading after the live worker has already moved on to a newer sample.
+    """
+
+    token: PendingMeasurementToken
+    first_loss_db: float
+    second_loss_db: float
 
 
 @dataclass(frozen=True)

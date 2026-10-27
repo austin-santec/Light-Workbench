@@ -111,6 +111,12 @@ Depending on the event, logs may contain:
   calculated insertion loss, and whether both wavelengths completed.
 - Whether a reading was temporary, repeated, accepted, written, overwritten,
   diagnostic-only, or failed.
+- Measurement commit lifecycle events, including commit start/success/failure,
+  provisional payload presentation, token-bound write acceptance, unknown or
+  cross-target write rejection, persistence-waiting, acknowledgement
+  mismatch/blocking, duplicate
+  click suppression, and final completion-coverage reconciliation with missing
+  channels when applicable.
 - Run/unit save requests and results, atomic file replacement, measurement
   counts, export results, and sanitized destinations.
 - Database configuration lifecycle events, including whether the per-user

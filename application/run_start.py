@@ -128,6 +128,7 @@ def build_hardware_run_request(
     extra_channel_routing_method: ExtraChannelRoutingMethod | str = (
         ExtraChannelRoutingMethod.SCPI_MAPPED
     ),
+    persistence_run_id: int | None = None,
 ) -> HardwareRunRequest:
     """Create a controller request for already-created hardware adapters."""
     return HardwareRunRequest(
@@ -158,6 +159,7 @@ def build_hardware_run_request(
         extra_channel_routing_method=ExtraChannelRoutingMethod.parse(
             extra_channel_routing_method
         ),
+        persistence_run_id=persistence_run_id,
     )
 
 
