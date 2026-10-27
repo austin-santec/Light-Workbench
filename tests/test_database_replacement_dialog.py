@@ -46,6 +46,9 @@ class DatabaseReplacementDialogTests(unittest.TestCase):
                 ReplacementRecommendation(
                     1, 4, 6, "required", 1.2,
                     "", True, 1.08, 1.12, 1.12,
+                    current_loss_1310_db=2.4000,
+                    current_loss_1550_db=2.3500,
+                    current_worst_loss_db=2.4000,
                 ),
             ),
         )
@@ -55,6 +58,38 @@ class DatabaseReplacementDialogTests(unittest.TestCase):
 
         self.assertEqual(dialog.pending_table.rowCount(), 0)
         self.assertEqual(dialog.recommendation_table.rowCount(), 1)
+        self.assertEqual(dialog.recommendation_table.columnCount(), 7)
+        self.assertEqual(
+            [
+                dialog.recommendation_table.horizontalHeaderItem(column).text()
+                for column in range(dialog.recommendation_table.columnCount())
+            ],
+            [
+                "Logical",
+                "Current Port",
+                "Proposed Port",
+                "Category",
+                "Improvement",
+                "Current IL",
+                "Candidate IL",
+            ],
+        )
+        self.assertEqual(
+            dialog.recommendation_table.item(0, 5).text(),
+            "2.4000 / 2.3500 dB",
+        )
+        self.assertEqual(
+            dialog.recommendation_table.item(0, 6).text(),
+            "1.0800 / 1.1200 dB",
+        )
+        self.assertIn(
+            "Current physical port: 4",
+            dialog.recommendation_table.item(0, 5).toolTip(),
+        )
+        self.assertIn(
+            "Worst case: 2.4000 dB",
+            dialog.recommendation_table.item(0, 5).toolTip(),
+        )
         self.assertEqual(dialog.history_table.rowCount(), 2)
         self.assertEqual(dialog.history_table.item(1, 0).text(), "9")
         self.assertEqual(dialog.history_table.item(1, 1).text(), "1")

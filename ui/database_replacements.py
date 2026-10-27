@@ -372,28 +372,58 @@ class DatabaseReplacementDialog(QDialog):
         table.horizontalHeader().setMinimumSectionSize(55)
 
     @staticmethod
-    def _candidate_il_text(recommendation) -> str:
+    def _il_text(first_loss_db, second_loss_db) -> str:
         values = []
-        for value in (
-            recommendation.candidate_loss_1310_db,
-            recommendation.candidate_loss_1550_db,
-        ):
+        for value in (first_loss_db, second_loss_db):
             if value is not None:
                 values.append(f"{value:.4f}")
         return " / ".join(values) + (" dB" if values else "Not available")
 
     @classmethod
-    def _candidate_il_tooltip(cls, recommendation) -> str:
-        candidate_text = cls._candidate_il_text(recommendation)
-        worst = recommendation.candidate_worst_loss_db
+    def _current_il_text(cls, recommendation) -> str:
+        return cls._il_text(
+            recommendation.current_loss_1310_db,
+            recommendation.current_loss_1550_db,
+        )
+
+    @classmethod
+    def _candidate_il_text(cls, recommendation) -> str:
+        return cls._il_text(
+            recommendation.candidate_loss_1310_db,
+            recommendation.candidate_loss_1550_db,
+        )
+
+    @classmethod
+    def _il_tooltip(cls, *, port_label, port, text, worst, description) -> str:
         worst_text = "Not available" if worst is None else f"{worst:.4f} dB"
         return (
-            f"Candidate physical port: "
-            f"{recommendation.proposed_replacement_physical_port}\n"
-            f"1310 nm / 1550 nm: {candidate_text}\n"
+            f"{port_label}: {port}\n"
+            f"1310 nm / 1550 nm: {text}\n"
             f"Worst case: {worst_text}\n\n"
-            "This is the accepted measurement for the candidate port, "
-            "not a guaranteed result after physical rerouting."
+            f"{description}"
+        )
+
+    @classmethod
+    def _current_il_tooltip(cls, recommendation) -> str:
+        return cls._il_tooltip(
+            port_label="Current physical port",
+            port=recommendation.current_effective_physical_port,
+            text=cls._current_il_text(recommendation),
+            worst=recommendation.current_worst_loss_db,
+            description="Accepted measurement for the current effective port.",
+        )
+
+    @classmethod
+    def _candidate_il_tooltip(cls, recommendation) -> str:
+        return cls._il_tooltip(
+            port_label="Candidate physical port",
+            port=recommendation.proposed_replacement_physical_port,
+            text=cls._candidate_il_text(recommendation),
+            worst=recommendation.candidate_worst_loss_db,
+            description=(
+                "Accepted measurement for the candidate port, not a guaranteed "
+                "result after physical rerouting."
+            ),
         )
 
     def _set_reason_mode(self, correction: bool) -> None:
@@ -416,7 +446,7 @@ class DatabaseReplacementDialog(QDialog):
         panel.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         layout = QVBoxLayout(panel)
 
-        self.recommendation_table = QTableWidget(0, 6)
+        self.recommendation_table = QTableWidget(0, 7)
         self.recommendation_table.setObjectName("database_replacement_table")
         self.recommendation_table.setHorizontalHeaderLabels(
             [
@@ -425,6 +455,7 @@ class DatabaseReplacementDialog(QDialog):
                 "Proposed Port",
                 "Category",
                 "Improvement",
+                "Current IL",
                 "Candidate IL",
             ]
         )
@@ -442,18 +473,26 @@ class DatabaseReplacementDialog(QDialog):
                     if recommendation.improvement_db is None
                     else f"{recommendation.improvement_db:.4f} dB"
                 ),
+                self._current_il_text(recommendation),
                 self._candidate_il_text(recommendation),
             )
             for column, value in enumerate(values):
                 self.recommendation_table.setItem(row, column, QTableWidgetItem(str(value)))
-            candidate_item = self.recommendation_table.item(row, 5)
+            current_item = self.recommendation_table.item(row, 5)
+            current_item.setToolTip(self._current_il_tooltip(recommendation))
+            candidate_item = self.recommendation_table.item(row, 6)
             candidate_item.setToolTip(self._candidate_il_tooltip(recommendation))
         layout.addWidget(self.recommendation_table)
         header = self.recommendation_table.horizontalHeader()
         for column in range(5):
             header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.Stretch)
-        header_item = self.recommendation_table.horizontalHeaderItem(5)
+        header.setSectionResizeMode(6, QHeaderView.Stretch)
+        current_header_item = self.recommendation_table.horizontalHeaderItem(5)
+        current_header_item.setToolTip(
+            "Accepted current-channel measurement at 1310 / 1550 nm."
+        )
+        header_item = self.recommendation_table.horizontalHeaderItem(6)
         header_item.setToolTip("Accepted candidate-port measurement at 1310 / 1550 nm.")
 
         action_row = QHBoxLayout()

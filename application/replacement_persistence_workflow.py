@@ -69,6 +69,9 @@ class ReplacementRecommendation:
     candidate_loss_1550_db: float | None = None
     candidate_worst_loss_db: float | None = None
     recommendation_id: int | None = None
+    current_loss_1310_db: float | None = None
+    current_loss_1550_db: float | None = None
+    current_worst_loss_db: float | None = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +183,21 @@ class ReplacementPersistenceWorkflow:
                         None
                         if item.get("recommendation_id") is None
                         else int(item["recommendation_id"])
+                    ),
+                    current_loss_1310_db=(
+                        None
+                        if item.get("current_loss_1310_db") is None
+                        else float(item["current_loss_1310_db"])
+                    ),
+                    current_loss_1550_db=(
+                        None
+                        if item.get("current_loss_1550_db") is None
+                        else float(item["current_loss_1550_db"])
+                    ),
+                    current_worst_loss_db=(
+                        None
+                        if item.get("current_worst_loss_db") is None
+                        else float(item["current_worst_loss_db"])
                     ),
                 )
             )

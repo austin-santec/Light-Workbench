@@ -287,6 +287,9 @@ class ReplacementPersistenceWorkflowTests(unittest.TestCase):
                     "candidate_loss_1310_db": 1.05,
                     "candidate_loss_1550_db": 1.15,
                     "candidate_worst_loss_db": 1.15,
+                    "current_loss_1310_db": 2.40,
+                    "current_loss_1550_db": 2.35,
+                    "current_worst_loss_db": 2.40,
                     "category": "required",
                     "improvement_db": 1.25,
                 }
@@ -307,6 +310,9 @@ class ReplacementPersistenceWorkflowTests(unittest.TestCase):
         self.assertEqual(recommendation.candidate_loss_1310_db, 1.05)
         self.assertEqual(recommendation.candidate_loss_1550_db, 1.15)
         self.assertEqual(recommendation.candidate_worst_loss_db, 1.15)
+        self.assertEqual(recommendation.current_loss_1310_db, 2.40)
+        self.assertEqual(recommendation.current_loss_1550_db, 2.35)
+        self.assertEqual(recommendation.current_worst_loss_db, 2.40)
         self.assertEqual(model.default_operator, "AT")
         self.assertEqual(model.recommended_spares, (3,))
 
