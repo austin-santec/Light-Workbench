@@ -281,6 +281,16 @@ attempt history, reference snapshot, and operator identity rules are unchanged.
 Extra rows are available to replacement analysis but are excluded from
 front-panel completion and direct COC rows.
 
+An explicitly selected `Extra channels only` run uses the same `IL_RUNS` and
+`IL_MEASUREMENTS` persistence path. Its `measurement_hardware_json` records
+`channel_mode: extra_channels_only`, the immutable front-panel boundary, and
+the selected extra routing method. It may contain only channels above that
+boundary; its completion status remains `in_progress`, `complete`, `stopped`,
+or `failed`, while the read-model result is `supplemental_run`. This avoids a
+fake missing-front-panel failure and keeps the readings available to later
+replacement analysis without treating the extra-only run itself as a direct
+COC source.
+
 The optional phase has a transient/support state of `not_offered`, `declined`,
 `in_progress`, `completed`, `stopped`, `failed`,
 `end_of_installed_ports_reported`, or `safety_ceiling_reached`. A phase failure

@@ -24,6 +24,7 @@ class ChannelMode(str, Enum):
     FULL_CONFIGURED_PASS = "Full configured pass"
     SINGLE_CHANNEL = "Single channel"
     SPECIFIC_CHANNELS = "Specific channels/ranges"
+    EXTRA_CHANNELS_ONLY = "Extra channels only"
 
 
 class RunState(str, Enum):

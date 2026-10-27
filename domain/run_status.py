@@ -191,6 +191,7 @@ def assess_run_status(
     compatible_run_numbers: Sequence[int] = (),
     completion_reason: str = "",
     completed_at_utc: str = "",
+    extra_only: bool = False,
     legacy=False,
 ) -> RunStatusAssessment:
     """Assess a run using accepted records and explicit workflow state.
@@ -211,6 +212,8 @@ def assess_run_status(
         completion = COMPLETION_IN_PROGRESS
     elif terminal_status in {COMPLETION_INCOMPLETE, COMPLETION_INTERRUPTED}:
         completion = terminal_status
+    elif extra_only and terminal_status == COMPLETION_COMPLETE:
+        completion = COMPLETION_COMPLETE
     elif planned and not missing:
         completion = COMPLETION_COMPLETE
     elif planned:
@@ -227,6 +230,8 @@ def assess_run_status(
             completion_reason = "The run ended before all planned channels were accepted."
         elif completion == COMPLETION_INTERRUPTED:
             completion_reason = "The run ended because of a hardware or software error."
+        elif completion == COMPLETION_COMPLETE and extra_only:
+            completion_reason = "The extra-channel run reached its configured endpoint."
         elif completion == COMPLETION_COMPLETE:
             completion_reason = "Every planned channel has an accepted reading."
 
@@ -353,7 +358,24 @@ def assess_run_status(
         result = RESULT_PASS
         detail = "All required front-panel readings are within the applicable fail limit."
 
-    if completion in {COMPLETION_IN_PROGRESS, COMPLETION_INCOMPLETE, COMPLETION_INTERRUPTED} and result == RESULT_PASS:
+    if extra_only:
+        if review_required:
+            result = RESULT_REVIEW
+            detail = "One or more accepted extra-channel readings requires review."
+        elif not records:
+            result = RESULT_NOT_EVALUATED
+            detail = "No extra-channel readings have been accepted."
+        else:
+            result = RESULT_SUPPLEMENTAL
+            detail = (
+                "This independent extra-channel run provides supplemental "
+                "measurements for replacement analysis; it is not a standalone COC."
+            )
+    elif (
+        completion
+        in {COMPLETION_IN_PROGRESS, COMPLETION_INCOMPLETE, COMPLETION_INTERRUPTED}
+        and result == RESULT_PASS
+    ):
         result = RESULT_NOT_EVALUATED
         detail = "The run has not completed its planned channel set."
 

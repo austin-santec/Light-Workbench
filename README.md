@@ -288,7 +288,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.35.12**; an existing executable keeps its prior
+current source version is **1.36.0**; an existing executable keeps its prior
 version until rebuilt.
 
 The desktop application opens maximized by default while retaining the normal
@@ -469,6 +469,11 @@ not written back to either run.
 Some 48-channel switches contain extra physical ports, such as ports 49 and
 50, while the finished switch is still designed to use only 48 channels. After
 a full front-panel pass, Light Workbench can optionally measure those spares.
+The `Extra channels only` channel mode is also available when the operator wants
+to run the supplemental phase independently. It starts at the first physical
+channel after the part-number front-panel count, can create a new database run,
+or can continue a stopped/incomplete extra-only run. It does not require a
+front-panel pass in the same run and is available for OSX-150 only.
 The administrator-selected routing method is fixed for the run:
 
 - `SCPI mapped channels` is the default. Extra channels must be temporarily
@@ -478,6 +483,12 @@ The administrator-selected routing method is fixed for the run:
 - `CLI direct physical ports (Experimental)` retains sequential unknown-capacity
   discovery over TCP port 2323. It is available only through Admin Config and
   requires the operator to identify the last installed port.
+
+  CLI direct uses raw TCP (not Telnet) and sends the fixed
+  `b0 writereg mems.ch <physical port>\r\n` payload. A short binary response is
+  captured and shown as hexadecimal, but remains unverified until the operator
+  explicitly confirms it. No bytes during the initial response timeout is a
+  failure; a short idle period after bytes arrive completes the response frame.
 
 Light Workbench never edits the switch mapping and never changes methods
 automatically during an extra-channel phase. The selected method and known

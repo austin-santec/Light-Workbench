@@ -94,7 +94,9 @@ def build_hardware_run_plan(
     Full configured passes intentionally use ``channels=None`` so the worker
     can discover the switch's configured channel count. Manual ordering is a
     full-pass option only; it is ignored for the single/specific-channel modes
-    because those modes already explicitly choose the next channel.
+    because those modes already explicitly choose the next channel. The
+    extra-only mode uses an empty explicit tuple so the worker can dispatch to
+    its supplemental phase without interpreting it as a full pass.
     """
     normalized_mode = _normalise_mode(mode)
     if normalized_mode is ChannelMode.FULL_CONFIGURED_PASS:
@@ -115,6 +117,13 @@ def build_hardware_run_plan(
         return HardwareRunPlan(
             mode=normalized_mode,
             channels=(channel,),
+            full_pass=False,
+        )
+
+    if normalized_mode is ChannelMode.EXTRA_CHANNELS_ONLY:
+        return HardwareRunPlan(
+            mode=normalized_mode,
+            channels=(),
             full_pass=False,
         )
 

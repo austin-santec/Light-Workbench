@@ -73,6 +73,7 @@ class MeasurementWorker(QObject):
         measurement_configuration_value: MeasurementConfiguration | None = None,
         front_panel_channel_count: int | None = None,
         offer_extra_ports=False,
+        extra_only=False,
         run_mode="new",
         retest=False,
         existing_extra_physical_ports: Sequence[int] | None = None,
@@ -107,6 +108,7 @@ class MeasurementWorker(QObject):
             else None
         )
         self.offer_extra_ports = bool(offer_extra_ports)
+        self.extra_only = bool(extra_only)
         self.run_mode = str(run_mode or "new")
         self.retest = bool(retest)
         self.existing_extra_physical_ports = {
@@ -154,6 +156,7 @@ class MeasurementWorker(QObject):
         self._highest_confirmed_extra_port = None
         self._last_confirmed_extra_physical_port = None
         self._configured_channel_count = None
+        self._extra_phase_outcome = None
 
     @pyqtSlot()
     def run(self):
@@ -179,7 +182,7 @@ class MeasurementWorker(QObject):
                 configured_count = self.switch.configured_channel_count()
                 planned_count = self.front_panel_channel_count or configured_count
                 channels = list(range(1, planned_count + 1))
-            if not channels:
+            if not channels and not self.extra_only:
                 raise RuntimeError("No channels were selected for measurement.")
             if hasattr(self.switch, "configured_channel_count"):
                 configured_count = self.switch.configured_channel_count()
@@ -213,7 +216,20 @@ class MeasurementWorker(QObject):
                 configured_count = max(channels)
             self._configured_channel_count = int(configured_count)
             self.channel_configuration_ready.emit(configured_count)
-            if self.manual_channel_order:
+            if self.extra_only:
+                completed_front_panel_channels = list(
+                    range(1, int(self.front_panel_channel_count or 0) + 1)
+                )
+                self._record(
+                    SupportEventCategory.WORKFLOW,
+                    "extra_ports.explicit_run_started",
+                    front_panel_channel_count=self.front_panel_channel_count,
+                    configured_channel_count=configured_count,
+                    routing_method=self.extra_channel_routing_method.value,
+                    status="started",
+                )
+                self._run_extra_only_phase(configured_count)
+            elif self.manual_channel_order:
                 completed_front_panel_channels = self._run_manual_channel_order(
                     configured_count,
                     self.existing_channels if self.resume_existing else None,
@@ -243,10 +259,11 @@ class MeasurementWorker(QObject):
                     start_channel,
                 )
 
-            self._evaluate_and_offer_extra_ports(
-                completed_front_panel_channels,
-                configured_count,
-            )
+            if not self.extra_only:
+                self._evaluate_and_offer_extra_ports(
+                    completed_front_panel_channels,
+                    configured_count,
+                )
 
             terminal_state = "completed"
         except InterruptedError:
@@ -819,13 +836,34 @@ class MeasurementWorker(QObject):
             return False
         return True
 
+    def _run_extra_only_phase(self, configured_count):
+        """Run the explicitly selected extra-only mode without a second offer."""
+        self._extra_phase_outcome = None
+        if self.extra_channel_routing_method is ExtraChannelRoutingMethod.SCPI_MAPPED:
+            self._offer_and_run_scpi_extra_channels(
+                configured_count,
+                self.existing_extra_logical_channels,
+                offer_phase=False,
+            )
+        else:
+            self._offer_and_run_cli_extra_ports(
+                self.existing_extra_physical_ports,
+                offer_phase=False,
+            )
+        if self._extra_phase_outcome == "stopped":
+            raise InterruptedError()
+        if self._extra_phase_outcome == "failed":
+            raise RuntimeError("Extra-channel testing failed before completion.")
+
     def _offer_and_run_scpi_extra_channels(
         self,
         configured_count,
         existing_extra_logical_channels=(),
+        *,
+        offer_phase=True,
     ):
         """Test the finite configured extra range through verified SCPI routing."""
-        if not self._offer_extra_phase(configured_count):
+        if offer_phase and not self._offer_extra_phase(configured_count):
             return
 
         count = int(self.front_panel_channel_count)
@@ -877,6 +915,9 @@ class MeasurementWorker(QObject):
                     else ExtraPortPhaseStatus.STOPPED
                 )
                 self._set_extra_phase(phase, candidate)
+                self._extra_phase_outcome = (
+                    "failed" if outcome == "failed" else "stopped"
+                )
                 self._record(
                     SupportEventCategory.WORKFLOW,
                     "extra_ports.phase_completed",
@@ -888,6 +929,7 @@ class MeasurementWorker(QObject):
                 return
 
         self._set_extra_phase(ExtraPortPhaseStatus.COMPLETED, configured_count)
+        self._extra_phase_outcome = "complete"
         self._record(
             SupportEventCategory.WORKFLOW,
             "extra_ports.phase_completed",
@@ -939,9 +981,14 @@ class MeasurementWorker(QObject):
             return "written"
         return measurement_outcome.get("extra_action", "retry")
 
-    def _offer_and_run_cli_extra_ports(self, existing_extra_physical_ports=()):
+    def _offer_and_run_cli_extra_ports(
+        self,
+        existing_extra_physical_ports=(),
+        *,
+        offer_phase=True,
+    ):
         """Pause once, then probe unknown physical capacity through the CLI."""
-        if not self._offer_extra_phase():
+        if offer_phase and not self._offer_extra_phase():
             return
 
         count = self.front_panel_channel_count
@@ -990,6 +1037,7 @@ class MeasurementWorker(QObject):
                     ExtraPortPhaseStatus.END_OF_INSTALLED_PORTS_REPORTED,
                     candidate,
                 )
+                self._extra_phase_outcome = "complete"
                 self._record(
                     SupportEventCategory.OPERATOR,
                     "extra_ports.end_of_installed_ports_reported",
@@ -1014,6 +1062,7 @@ class MeasurementWorker(QObject):
                 self._set_extra_phase(ExtraPortPhaseStatus.FAILED, candidate)
             else:
                 self._set_extra_phase(ExtraPortPhaseStatus.STOPPED, candidate)
+            self._extra_phase_outcome = "failed" if outcome == "failed" else "stopped"
             self._record(
                 SupportEventCategory.OPERATOR,
                 "extra_ports.phase_ended",
@@ -1041,6 +1090,7 @@ class MeasurementWorker(QObject):
             ExtraPortPhaseStatus.SAFETY_CEILING_REACHED,
             self._extra_port_safety_limit,
         )
+        self._extra_phase_outcome = "stopped"
         self._record(
             SupportEventCategory.WORKFLOW,
             "extra_ports.safety_ceiling_reached",
@@ -1089,6 +1139,11 @@ class MeasurementWorker(QObject):
             network_port=network_port,
             verification_status=route_status.value,
             response=response,
+            response_type=result.response_type,
+            response_hex=result.response_hex,
+            response_completion_reason=result.response_completion_reason,
+            response_length=result.response_length,
+            route_classification=route_status.value,
             details=detail,
             routing_method=self.extra_channel_routing_method.value,
             status=(

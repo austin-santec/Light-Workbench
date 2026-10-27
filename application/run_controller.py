@@ -39,6 +39,7 @@ class HardwareRunRequest:
     measurement_configuration: MeasurementConfiguration | None = None
     front_panel_channel_count: int | None = None
     offer_extra_ports: bool = False
+    extra_only: bool = False
     run_mode: str = "new"
     retest: bool = False
     existing_extra_physical_ports: Sequence[int] | None = None
@@ -131,6 +132,7 @@ class HardwareRunController(QObject):
                 measurement_configuration_value=request.measurement_configuration,
                 front_panel_channel_count=request.front_panel_channel_count,
                 offer_extra_ports=request.offer_extra_ports,
+                extra_only=request.extra_only,
                 run_mode=request.run_mode,
                 retest=request.retest,
                 existing_extra_physical_ports=request.existing_extra_physical_ports,

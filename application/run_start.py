@@ -7,6 +7,7 @@ from application.hardware_planning import HardwareRunPlan, build_hardware_run_pl
 from application.run_controller import HardwareRunRequest
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from domain.extra_ports import ExtraChannelRoutingMethod
+from domain.models import ChannelMode
 from hardware.interfaces import OpticalSwitch, PowerMeter
 from domain.wavelengths import MeasurementConfiguration
 
@@ -20,6 +21,13 @@ class HardwareRunPreparation:
     full_pass: bool
     manual_channel_order: bool
 
+    @property
+    def extra_only(self) -> bool:
+        return bool(
+            self.plan is not None
+            and self.plan.mode is ChannelMode.EXTRA_CHANNELS_ONLY
+        )
+
 
 @dataclass(frozen=True)
 class ExtraPortOfferEligibility:
@@ -32,7 +40,8 @@ class ExtraPortOfferEligibility:
 def evaluate_extra_port_offer_eligibility(
     *,
     full_pass: bool,
-    manual_channel_order: bool,
+    manual_channel_order: bool = False,
+    extra_only: bool = False,
     retest: bool,
     run_mode: str,
     has_part_number: bool,
@@ -44,9 +53,9 @@ def evaluate_extra_port_offer_eligibility(
     this decision covers the run configuration and required metadata.
     """
 
-    if not full_pass:
+    if not full_pass and not extra_only:
         return ExtraPortOfferEligibility(False, "not_a_full_pass")
-    if manual_channel_order:
+    if manual_channel_order and not extra_only:
         return ExtraPortOfferEligibility(False, "manual_channel_order")
     if retest:
         return ExtraPortOfferEligibility(False, "selected_retest")
@@ -141,6 +150,7 @@ def build_hardware_run_request(
         measurement_configuration=measurement_configuration,
         front_panel_channel_count=front_panel_channel_count,
         offer_extra_ports=offer_extra_ports,
+        extra_only=preparation.extra_only,
         run_mode=run_mode,
         retest=retest,
         existing_extra_physical_ports=existing_extra_physical_ports,

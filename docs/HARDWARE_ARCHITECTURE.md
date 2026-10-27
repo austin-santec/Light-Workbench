@@ -101,6 +101,14 @@ is a blocking configuration mismatch. Operators must temporarily configure
 the extra mappings outside Light Workbench; the application does not edit the
 module map.
 
+The Hardware test setup `Channel mode` also provides `Extra channels only`.
+This mode is independent of a completed front-panel pass, uses the part-number
+count as its boundary, and begins at `N + 1`. It supports a new database run or
+continuation of a stopped/incomplete extra-only run. New runs use the current
+Admin Config routing method; continuations use the saved method in run metadata.
+The mode is available only for OSX-150 and is stored as the stable metadata
+value `extra_channels_only`.
+
 The administrator-only `cli_direct` method is explicitly experimental and uses
 the separate `set_physical_port()` capability. The adapter first obtains the
 already-connected switch's configured IP through the existing LAN query, then
@@ -108,17 +116,22 @@ already-connected switch's configured IP through the existing LAN query, then
 on named TCP port 2323 and sends exactly:
 
 ```text
-writereg mems.ch <physical port>
+b0 writereg mems.ch <physical port>\r\n
 ```
 
 It does not scan the network, accept arbitrary commands, edit permanent
 mapping, or call `CLOSe?` as a direct-port readback. The raw-TCP default uses
-CRLF, a 2.0 s connection timeout, a 1.0 s bounded response timeout, and a 4096
-byte response limit. Recognized success is `acknowledged`; configured readback
-can produce `verified`, but no readback command is enabled by default. Unknown
-responses are `unverified` and require explicit operator confirmation. CLI
-errors, refused connections, socket errors, and timeouts are `failed` and
-cannot produce an accepted measurement for that attempt.
+CRLF, a 2.0 s connection timeout, a 1.0 s initial response timeout, a 100 ms
+post-byte idle timeout, and a 4096 byte response limit. The initial timeout
+means no response arrived. Once any bytes arrive, the idle timeout completes
+the bounded frame and is not itself a failure. Recognized success is
+`acknowledged`; configured readback can produce `verified`, but no readback
+command is enabled by default. Unknown text and binary responses are
+`unverified` and require explicit operator confirmation. Binary responses are
+retained as uppercase hexadecimal (for example `03 00 00 04`) for the
+operator and support log. CLI errors, refused connections, socket errors, and
+initial response timeouts are `failed` and cannot produce an accepted
+measurement for that attempt.
 
 These transport defaults and acknowledgement patterns have automated socket-
 seam coverage but still require validation against each supported OSX firmware.

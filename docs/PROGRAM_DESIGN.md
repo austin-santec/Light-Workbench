@@ -76,10 +76,22 @@ manual-order, retest-only, loaded-only, failed, and canceled runs do not make
 this offer; a continued full pass can offer it after completing all missing
 front-panel channels.
 
+The channel planner also supports `Extra channels only`. This explicit
+supplemental mode is independent of a completed front-panel pass: it starts at
+the first channel after the part-number front-panel count and bypasses
+front-panel coverage in that run. A new run uses the current administrator-
+selected SCPI or CLI method; a stopped or incomplete extra-only run continues
+with the method saved in its hardware metadata. A front-panel run cannot be
+continued as extra-only, and OSX-100 is rejected before hardware work begins.
+Extra-only completion uses the normal database lifecycle, while its result is
+supplemental rather than a standalone COC result.
+
 `domain/extra_ports.py` owns routing-method identity, route confidence,
 phase-state, and administrator safety values. `hardware/santec_cli.py` owns the
-bounded TCP/2323 transport for
-the fixed `writereg mems.ch <physical port>` command. The application worker
+bounded raw TCP/2323 transport for the fixed
+`b0 writereg mems.ch <physical port>\r\n` command. It separates the initial
+response timeout from a short post-byte idle timeout so short binary frames do
+not become false transport failures. The application worker
 owns method dispatch, finite SCPI sequencing, CLI sequential probing, and
 operator decisions; Qt owns only presentation.
 The normal `set_channel()` path remains logical VISA/SCPI routing; the distinct

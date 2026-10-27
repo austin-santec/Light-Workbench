@@ -48,15 +48,21 @@ class SantecCliRouterTests(unittest.TestCase):
         result = SantecCliRouter(profile, factory).route("192.0.2.15", 49, 64)
         return result, connection, factory
 
-    def test_exact_command_uses_port_2323_and_configured_termination(self):
+    def test_exact_command_uses_b0_prefix_and_configured_termination(self):
         profile = SantecCliProfile(line_termination="\n")
         result, connection, factory = self.route([b"OK\n"], profile)
 
         self.assertEqual(factory.calls[0][0], ("192.0.2.15", 2323))
-        self.assertEqual(connection.sent, [b"writereg mems.ch 49\n"])
+        self.assertEqual(connection.sent, [b"b0 writereg mems.ch 49\n"])
         self.assertNotIn(b"[", connection.sent[0])
         self.assertEqual(result.status, PhysicalPortRouteStatus.ACKNOWLEDGED)
         self.assertTrue(connection.closed)
+
+    def test_default_command_uses_raw_tcp_crlf_payload(self):
+        result, connection, _factory = self.route([b"OK\r\n"])
+
+        self.assertEqual(connection.sent, [b"b0 writereg mems.ch 49\r\n"])
+        self.assertEqual(result.status, PhysicalPortRouteStatus.ACKNOWLEDGED)
 
     def test_explicit_error_is_failed(self):
         result, _connection, _factory = self.route([b"ERROR invalid port\r\n"])
@@ -95,8 +101,63 @@ class SantecCliRouterTests(unittest.TestCase):
         self.assertEqual(result.status, PhysicalPortRouteStatus.VERIFIED)
         self.assertEqual(
             connection.sent,
-            [b"writereg mems.ch 49\r\n", b"readreg mems.ch 49\r\n"],
+            [b"b0 writereg mems.ch 49\r\n", b"readreg mems.ch 49\r\n"],
         )
+
+    def test_binary_response_is_unverified_after_idle_timeout(self):
+        result, _connection, _factory = self.route(
+            [b"\x03\x00\x00\x04", socket.timeout("idle")]
+        )
+
+        self.assertEqual(result.status, PhysicalPortRouteStatus.UNVERIFIED)
+        self.assertEqual(result.response_type, "binary")
+        self.assertEqual(result.response_hex, "03 00 00 04")
+        self.assertEqual(result.response_length, 4)
+        self.assertEqual(result.response_completion_reason, "idle_timeout")
+        self.assertIn("binary response", result.detail)
+
+    def test_fractionated_binary_response_is_combined_before_idle_timeout(self):
+        result, _connection, _factory = self.route(
+            [b"\x03\x00", b"\x00\x04", socket.timeout("idle")]
+        )
+
+        self.assertEqual(result.response_type, "binary")
+        self.assertEqual(result.response_hex, "03 00 00 04")
+        self.assertEqual(result.response_completion_reason, "idle_timeout")
+
+    def test_peer_close_after_binary_data_keeps_response(self):
+        result, _connection, _factory = self.route([b"\x03\x00\x00\x04", b""])
+
+        self.assertEqual(result.response_type, "binary")
+        self.assertEqual(result.response_hex, "03 00 00 04")
+        self.assertEqual(result.response_completion_reason, "peer_closed")
+
+    def test_binary_route_trace_retains_support_diagnostics(self):
+        connection = FakeSocket([b"\x03\x00\x00\x04", socket.timeout("idle")])
+        factory = SocketFactory(connection)
+        traces = []
+        router = SantecCliRouter(
+            socket_factory=factory,
+            trace_callback=lambda event, **fields: traces.append((event, fields)),
+        )
+
+        router.route("192.0.2.15", 49, 64)
+
+        completed = dict(traces)["switch_cli_route_completed"]
+        self.assertEqual(completed["command_name"], "b0 writereg mems.ch")
+        self.assertEqual(completed["response_type"], "binary")
+        self.assertEqual(completed["response_hex"], "03 00 00 04")
+        self.assertEqual(completed["response_length"], 4)
+        self.assertEqual(completed["response_completion_reason"], "idle_timeout")
+        self.assertEqual(completed["verification_status"], "unverified")
+
+    def test_response_is_bounded_at_configured_maximum(self):
+        profile = SantecCliProfile(max_response_bytes=4)
+        result, _connection, _factory = self.route([b"1234"], profile)
+
+        self.assertEqual(result.response_type, "text")
+        self.assertEqual(result.response_length, 4)
+        self.assertEqual(result.response_completion_reason, "max_size")
 
     def test_port_above_safety_ceiling_is_rejected_before_connect(self):
         factory = SocketFactory(FakeSocket([b"OK\n"]))

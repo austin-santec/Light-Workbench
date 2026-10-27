@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.35.12**. The single
+The current source release is **Light Workbench 1.36.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -341,12 +341,19 @@ not a larger temporary `CFG:SWT:END?` value, as its required logical plan. Once
 all required readings are written, the worker offers one safe-default Finish
 Run choice or an optional Test Extra Ports phase. The extra phase starts at
 `front_panel_count + 1` and routes through TCP/2323 with the fixed command
-`writereg mems.ch <port>`. Each candidate remains provisional until Write IL;
+`b0 writereg mems.ch <port>\r\n`. Each candidate remains provisional until Write IL;
 Retry, No More Physical Ports, Stop Extra Testing, invalid readings, and route
 failures create no database measurement. No More records an operator-reported
 endpoint, while Stop makes no capacity inference. Accepted extras remain
 replacement-analysis candidates and never become direct COC rows. The default
 administrator safety ceiling is 64.
+The `Extra channels only` channel mode starts that supplemental phase directly
+in an independent database run, without requiring front-panel readings in the
+same run. It can continue a stopped/incomplete extra-only run using its saved
+routing method; it cannot turn a front-panel run into an extra-only continuation,
+and it is blocked for OSX-100. Its stable hardware metadata value is
+`extra_channels_only`, and its result status is supplemental rather than a
+standalone COC result.
 9. Existing CSVs can be opened for analysis. The table highlights either
 wavelength over the warning limit and Select Over-Limit selects rows for
 retest.
@@ -492,10 +499,12 @@ map. A configured count below the front-panel count blocks a full pass.
 The optional `cli_direct` engineering path is deliberately separate and marked
 experimental. It queries
 the connected switch IP over VISA, opens only that address on raw TCP port 2323,
-and sends `writereg mems.ch <physical port>` with a default CRLF ending. It does
+and sends `b0 writereg mems.ch <physical port>\r\n` using raw TCP, not Telnet. It does
 not use `CLOSe?`, alter permanent mapping, scan the network, or accept arbitrary
-CLI input. Responses are bounded and classified as verified, acknowledged,
-unverified, or failed; unverified routing requires explicit operator
+CLI input. The initial response timeout is separate from a short post-byte idle
+timeout, so binary frames such as `03 00 00 04` are captured instead of being
+misclassified as timeouts. Responses are bounded and classified as verified,
+acknowledged, unverified, or failed; unverified routing requires explicit operator
 confirmation and failed routing cannot be accepted. The current timeout,
 framing, acknowledgement patterns, and absence of a default readback command
 still require physical firmware validation.

@@ -18,6 +18,7 @@ from domain.replacements import ReplacementReading, analyze_replacements
 from domain.limit_profiles import DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB
 from domain.run_data import analyze_measurements_with_profile
 from domain.run_status import (
+    COMPLETION_COMPLETE,
     COMPLETION_INCOMPLETE,
     COMPLETION_INTERRUPTED,
     assess_run_status,
@@ -152,6 +153,13 @@ class DatabaseRunSnapshot:
             "run_purpose": self.run.run_purpose,
             "analysis_status": self.run.analysis_status,
         }
+        channel_mode = self.run.measurement_hardware.get("channel_mode")
+        if channel_mode:
+            values["Channel mode"] = str(channel_mode)
+        planned = self.run.measurement_hardware.get("planned_channels", ())
+        if planned:
+            values["Planned channels"] = ",".join(str(value) for value in planned)
+            values["Planned channel count"] = str(len(planned))
         if self.run.front_panel_channel_count is not None:
             values["Front panel channel count"] = str(
                 self.run.front_panel_channel_count
@@ -205,6 +213,8 @@ class DatabaseRunSnapshot:
         compatible_run_numbers: Sequence[int] = (),
     ):
         terminal_status = None
+        if self.run.completion_status == "complete":
+            terminal_status = COMPLETION_COMPLETE
         if self.run.completion_status == "stopped":
             terminal_status = COMPLETION_INCOMPLETE
         elif self.run.completion_status == "failed":
@@ -221,6 +231,10 @@ class DatabaseRunSnapshot:
             effective_result=effective_result,
             effective_run_numbers=effective_run_numbers,
             compatible_run_numbers=compatible_run_numbers,
+            extra_only=(
+                str(self.run.measurement_hardware.get("channel_mode") or "")
+                in {"extra_channels_only", "Extra channels only"}
+            ),
             completed_at_utc=(
                 _timestamp(self.run.run_ended_at_utc)
                 if self.run.run_ended_at_utc is not None

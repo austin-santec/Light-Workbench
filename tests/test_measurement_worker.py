@@ -175,6 +175,33 @@ class MeasurementWorkerTests(unittest.TestCase):
         self.assertTrue(switch.connected)
         self.assertTrue(switch.closed)
 
+    def test_extra_only_scpi_mode_starts_at_front_panel_boundary(self):
+        meter = FakePowerMeter()
+        switch = ScpiExtraPortSwitch(configured_count=4)
+        worker = ApplicationMeasurementWorker(
+            meter,
+            switch,
+            [],
+            {1310: 0.72, 1550: 0.28},
+            front_panel_channel_count=2,
+            extra_only=True,
+            extra_channel_routing_method=ExtraChannelRoutingMethod.SCPI_MAPPED,
+        )
+        readings = []
+        completed = []
+        worker.operator_required.connect(
+            lambda _channel, _port: worker.continue_current()
+        )
+        worker.reading_ready.connect(lambda *values: readings.append(values))
+        worker.reading_ready.connect(lambda *_values: worker.write_current())
+        worker.completed.connect(lambda: completed.append(True))
+
+        worker.run()
+
+        self.assertEqual([value[0] for value in readings], [3, 4])
+        self.assertEqual(switch.logical_routes, [3, 4])
+        self.assertEqual(completed, [True])
+
     def test_completed_signal_is_emitted_after_hardware_cleanup(self):
         meter = FakePowerMeter()
         switch = FakeSwitch()

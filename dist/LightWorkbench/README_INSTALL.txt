@@ -106,7 +106,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.35.12; an existing executable keeps its prior version until rebuilt. The main
+1.36.0; an existing executable keeps its prior version until rebuilt. The main
 window opens maximized by default and can be restored with the normal Windows
 title-bar control.
 

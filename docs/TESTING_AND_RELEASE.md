@@ -72,14 +72,24 @@ Extra-channel coverage must remain hardware-free. Verify that missing admin
 configuration defaults to SCPI; SCPI extras use the exact finite configured
 range, call only `set_channel()`, retain returned physical ports separately,
 skip accepted continuation rows, hide No More Physical Ports, and never save a
-failed route. Preserve CLI coverage for exact `writereg mems.ch <port>`
-formatting, TCP port 2323, configured termination, bounded reads/timeouts,
-acknowledgement/error/unverified classification, optional readback, sequential
+failed route. Preserve CLI coverage for exact `b0 writereg mems.ch <port>\r\n`
+formatting, TCP port 2323, raw (not Telnet) transport, bounded reads, separate
+initial/idle timeouts, text and binary response classification, binary hex
+capture, acknowledgement/error/unverified classification, optional readback, sequential
 unknown-capacity probing, retry/discard behavior, and safety-ceiling
 enforcement. Both methods must verify routing serialization, part-number
 front-panel planning, explicit-write-only persistence, support provenance, and
 no automatic method fallback. Fake hardware/sockets must be used; CI must never
 require a reachable switch LAN interface.
+
+Extra-channel coverage must also verify the `Extra channels only` mode: a new
+OSX-150 database run starts at `N + 1` without front-panel readings, a stopped
+or incomplete extra-only run can resume while preserving its saved routing
+method, a front-panel run cannot be continued in that mode, OSX-100 is blocked,
+SCPI reaches its configured endpoint, CLI starts sequential probing, explicit
+Write IL is required for persistence, and the result is supplemental rather
+than a false missing-front-panel failure. No normal post-full-pass offer should
+be shown for an explicitly selected extra-only run.
 
 ### Manual hardware smoke tests
 

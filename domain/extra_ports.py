@@ -56,6 +56,10 @@ class PhysicalPortRouteResult:
     network_address: str = ""
     network_port: int = 2323
     readback_response: str = ""
+    response_type: str = "empty"
+    response_hex: str = ""
+    response_completion_reason: str = ""
+    response_length: int = 0
 
     @property
     def permits_provisional_measurement(self) -> bool:

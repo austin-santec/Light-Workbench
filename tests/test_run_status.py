@@ -69,6 +69,18 @@ class RunStatusTests(unittest.TestCase):
         self.assertEqual(status.completed_channel_count, 1)
         self.assertEqual(status.result_status, RESULT_PASS)
 
+    def test_extra_only_run_is_supplemental_and_does_not_require_front_panel_data(self):
+        status = assess_run_status(
+            records([(49, 1.0, 1.1), (50, 1.2, 1.3)]),
+            terminal_status=COMPLETION_COMPLETE,
+            profile=PROFILE,
+            front_panel_channel_count=48,
+            extra_only=True,
+        )
+        self.assertEqual(status.completion_status, COMPLETION_COMPLETE)
+        self.assertEqual(status.result_status, RESULT_SUPPLEMENTAL)
+        self.assertIn("not a standalone COC", status.detail)
+
     def test_optimization_and_failure_recovery_are_distinct(self):
         optimized = assess_run_status(
             records([(1, 2.3, 1.0)]),

@@ -89,6 +89,25 @@ class RunStartPreparationTests(unittest.TestCase):
             self.assertTrue(decision.eligible)
             self.assertEqual(decision.reason, "eligible")
 
+    def test_extra_only_preparation_and_offer_policy(self):
+        preparation = prepare_hardware_run(
+            retest=False,
+            requested_channels=None,
+            channel_mode="Extra channels only",
+        )
+        self.assertTrue(preparation.extra_only)
+        self.assertEqual(preparation.channels, [])
+        decision = evaluate_extra_port_offer_eligibility(
+            full_pass=False,
+            extra_only=True,
+            manual_channel_order=False,
+            retest=False,
+            run_mode="new",
+            has_part_number=True,
+            supports_extra_channels=True,
+        )
+        self.assertTrue(decision.eligible)
+
     def test_extra_port_offer_rejects_non_full_or_excluded_workflows(self):
         cases = (
             {"full_pass": False, "reason": "not_a_full_pass"},

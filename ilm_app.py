@@ -109,7 +109,7 @@ from domain.hardware_connection import (
     HardwareCapability,
     HardwareNotReadyError,
 )
-from domain.models import ConnectionState, DeviceCategory
+from domain.models import ChannelMode, ConnectionState, DeviceCategory
 from domain.extra_ports import (
     ExtraChannelRoutingMethod,
     ExtraPortPhaseStatus,
@@ -835,6 +835,7 @@ class MainWindow(QMainWindow):
         self._post_run_recommendation_prompted = False
         self._last_run_status_key = None
         self._active_planned_channels = None
+        self._active_extra_only = False
         self._run_terminal_status = None
         self._run_completion_reason = ""
         self._run_completed_at_utc = ""
@@ -1788,7 +1789,7 @@ class MainWindow(QMainWindow):
         hardware_setup_box.set_content_layout(hardware_setup_layout)
         hardware_setup_layout.addWidget(QLabel("Channel mode:"), 0, 0)
         self.hardware_channel_mode = QComboBox()
-        self.hardware_channel_mode.addItems(["Full configured pass", "Single channel", "Specific channels/ranges"])
+        self.hardware_channel_mode.addItems([mode.value for mode in ChannelMode])
         self.hardware_channel_mode.currentIndexChanged.connect(
             self.update_channel_mode_controls
         )
@@ -1818,6 +1819,16 @@ class MainWindow(QMainWindow):
             2,
             1,
             2,
+        )
+        self.extra_channel_routing_label = QLabel()
+        self.extra_channel_routing_label.setWordWrap(True)
+        self.extra_channel_routing_label.setStyleSheet("color: #d89b00;")
+        hardware_setup_layout.addWidget(
+            self.extra_channel_routing_label,
+            5,
+            0,
+            1,
+            4,
         )
         self.hardware_channel_ranges_label = QLabel("Channels/ranges:")
         hardware_setup_layout.addWidget(self.hardware_channel_ranges_label, 1, 0)
@@ -3579,15 +3590,63 @@ class MainWindow(QMainWindow):
 
     def update_channel_mode_controls(self, mode_index):
         """Show only the channel selector used by the selected run mode."""
-        single_channel_mode = mode_index == 1
-        channel_ranges_mode = mode_index == 2
-        full_pass_mode = mode_index == 0
+        mode = self.hardware_channel_mode.currentText().strip()
+        single_channel_mode = mode == ChannelMode.SINGLE_CHANNEL.value
+        channel_ranges_mode = mode == ChannelMode.SPECIFIC_CHANNELS.value
+        full_pass_mode = mode == ChannelMode.FULL_CONFIGURED_PASS.value
+        extra_only_mode = mode == ChannelMode.EXTRA_CHANNELS_ONLY.value
         self.hardware_channel_label.setVisible(single_channel_mode)
         self.hardware_single_channel.setVisible(single_channel_mode)
         self.hardware_channel_ranges_label.setVisible(channel_ranges_mode)
         self.hardware_channel_ranges.setVisible(channel_ranges_mode)
         self.manual_channel_order_checkbox.setVisible(full_pass_mode)
         self.channel_mode_context.setVisible(full_pass_mode or single_channel_mode)
+        self.extra_channel_routing_label.setVisible(extra_only_mode)
+        if extra_only_mode:
+            self._refresh_extra_channel_routing_hint()
+
+    def _is_extra_only_channel_mode(self, value=None):
+        """Recognize the UI and persisted forms of the extra-only mode."""
+        if value is None:
+            value = self.hardware_channel_mode.currentText()
+        return str(value or "").strip() in {
+            ChannelMode.EXTRA_CHANNELS_ONLY.value,
+            "extra_channels_only",
+        }
+
+    def _loaded_run_is_extra_only(self):
+        if self.database_run_context is not None:
+            value = self.database_run_context.run.measurement_hardware.get(
+                "channel_mode", ""
+            )
+            return self._is_extra_only_channel_mode(value)
+        if self.run_data is not None:
+            return self._is_extra_only_channel_mode(
+                self.run_data.metadata.get("Channel mode")
+            )
+        return False
+
+    def _refresh_extra_channel_routing_hint(self):
+        if not hasattr(self, "extra_channel_routing_label"):
+            return
+        method = self.extra_channel_routing_method
+        if self._loaded_run_is_extra_only():
+            method = self._extra_channel_routing_method_for_run("continue")
+        method_label = (
+            "SCPI mapped channels"
+            if method is ExtraChannelRoutingMethod.SCPI_MAPPED
+            else "CLI tunnel probing"
+        )
+        self.extra_channel_routing_label.setText(
+            "Extra-only run: %s. Testing starts after the part-number front-panel "
+            "channel count."
+            % method_label
+        )
+        self.extra_channel_routing_label.setToolTip(
+            "The routing method is controlled by Admin Config for a new run and "
+            "is restored from the run metadata when continuing an existing "
+            "extra-only run. OSX-150 only."
+        )
 
     def open_part_lookup_folder(self):
         """Open the fixed network folder used for part-number lookup."""
@@ -4678,7 +4737,9 @@ class MainWindow(QMainWindow):
                 "physical_channel_count": switch.configured_channel_count,
             },
             "channel_mode": (
-                preparation.plan.mode.value
+                "extra_channels_only"
+                if preparation.extra_only
+                else preparation.plan.mode.value
                 if preparation.plan is not None
                 else "Retest"
             ),
@@ -4859,6 +4920,7 @@ class MainWindow(QMainWindow):
         self.run_data.completed_replacements = list(self.completed_replacements)
         planned = context.run.measurement_hardware.get("planned_channels", ())
         self._active_planned_channels = tuple(int(value) for value in planned) or None
+        self._active_extra_only = self._loaded_run_is_extra_only()
         status = context.run.completion_status
         self._run_terminal_status = {
             "complete": COMPLETION_COMPLETE,
@@ -4879,6 +4941,19 @@ class MainWindow(QMainWindow):
             self._set_station_number(context.run.station_number, editable=False)
             self.hardware_run_number.setValue(context.run.run_number)
             self._set_wavelength_mode(context.run.wavelength_mode, invalidate=False)
+            saved_channel_mode = str(metadata.get("Channel mode") or "")
+            if saved_channel_mode in {
+                ChannelMode.FULL_CONFIGURED_PASS.value,
+                ChannelMode.SINGLE_CHANNEL.value,
+                ChannelMode.SPECIFIC_CHANNELS.value,
+                ChannelMode.EXTRA_CHANNELS_ONLY.value,
+                "extra_channels_only",
+            }:
+                self.hardware_channel_mode.setCurrentText(
+                    ChannelMode.EXTRA_CHANNELS_ONLY.value
+                    if saved_channel_mode == "extra_channels_only"
+                    else saved_channel_mode
+                )
         self._set_run_purpose(context.run.run_purpose, editable=False)
         self.file_label.setText(
             "Database: %s / Run %d"
@@ -5052,11 +5127,24 @@ class MainWindow(QMainWindow):
     def start_hardware(self, channels=None, retest=False):
         if self.hardware_run_active:
             return
+        selected_extra_only = self._is_extra_only_channel_mode()
         run_mode = "new"
         if not retest and self.run_data is not None:
             run_mode = self.choose_hardware_run_mode()
             if run_mode is None:
                 return
+        if (
+            selected_extra_only
+            and run_mode == "continue"
+            and not self._loaded_run_is_extra_only()
+        ):
+            QMessageBox.warning(
+                self,
+                "Start a separate extra-only run",
+                "Extra channels only is an independent run mode. Choose a new "
+                "run number instead of continuing a front-panel run.",
+            )
+            return
         if run_mode == "new" and not retest:
             self._restore_station_session_default()
         if not self._authorize_hardware_start(
@@ -5073,13 +5161,31 @@ class MainWindow(QMainWindow):
         if run_mode == "new":
             self._set_run_purpose_editable(True)
         purpose = str(self.hardware_run_purpose.currentData() or "production")
+        confirmation_routing_method = self._extra_channel_routing_method_for_run(
+            run_mode
+        )
+        confirmation_text = (
+            (
+                "This will create an extra-channel-only run using %s. Front-panel "
+                "channels will not be measured.\n\nRun purpose: %s\n\nStart "
+                "the hardware run?"
+                % (
+                    confirmation_routing_method.label,
+                    run_purpose_label(purpose),
+                )
+            )
+            if selected_extra_only
+            else (
+                "This will use the connected measurement hardware and optical "
+                "switch, and it will move the switch.\n\nRun purpose: %s\n\n"
+                "Start the hardware run?"
+                % run_purpose_label(purpose)
+            )
+        )
         confirmation = QMessageBox.question(
             self,
             "Start real hardware run",
-            "This will use the connected measurement hardware and optical "
-            "switch, and it will move the switch.\n\n"
-            "Run purpose: %s\n\nStart the hardware run?"
-            % run_purpose_label(purpose),
+            confirmation_text,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -5220,6 +5326,18 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid channel selection", str(error))
             return
 
+        if run_mode == "continue" and (
+            preparation.extra_only != self._loaded_run_is_extra_only()
+        ):
+            QMessageBox.warning(
+                self,
+                "Channel mode mismatch",
+                "Select the same channel mode used by the loaded run before "
+                "continuing it. Start a new run to use Extra channels only "
+                "after a front-panel run.",
+            )
+            return
+
         channels = preparation.channels
 
         part_details = None
@@ -5233,7 +5351,24 @@ class MainWindow(QMainWindow):
             # retained, but optional physical-port probing is not offered.
             part_details = None
 
-        if preparation.full_pass and part_details is not None:
+        connected_model = normalize_switch_model(self._connected_switch_model())
+        if preparation.extra_only and (
+            part_details is None
+            or normalize_switch_model(part_details.model) != "OSX-150"
+            or connected_model == "OSX-100"
+        ):
+            QMessageBox.warning(
+                self,
+                "Extra channels only is unavailable",
+                "Extra channels only is supported for OSX-150 units only. "
+                "OSX-100 does not have an extra-channel workflow.",
+            )
+            return
+
+        if (
+            (preparation.full_pass or preparation.extra_only)
+            and part_details is not None
+        ):
             connected_switch_info = self.hardware_connection_manager.snapshot(
                 HardwareCapability.OPTICAL_SWITCH
             ).device_info
@@ -5254,13 +5389,32 @@ class MainWindow(QMainWindow):
                     ),
                 )
                 return
+            if (
+                preparation.extra_only
+                and confirmation_routing_method
+                is ExtraChannelRoutingMethod.SCPI_MAPPED
+                and int(configured_count or 0)
+                <= part_details.front_panel_channel_count
+            ):
+                QMessageBox.warning(
+                    self,
+                    "No SCPI-mapped extra channels",
+                    "The connected switch has no configured SCPI channels above "
+                    "the %d front-panel channels. Configure the extra logical "
+                    "channels or select CLI direct routing in Admin Config."
+                    % part_details.front_panel_channel_count,
+                )
+                return
 
-        extra_routing_method = self._extra_channel_routing_method_for_run(run_mode)
+        extra_routing_method = confirmation_routing_method
 
+        self._active_extra_only = preparation.extra_only
         if retest:
             self._active_planned_channels = self._status_planned_channels()
         elif run_mode == "continue" and self.run_data is not None:
             self._active_planned_channels = self._status_planned_channels()
+        elif preparation.extra_only:
+            self._active_planned_channels = None
         else:
             self._active_planned_channels = (
                 tuple(int(channel) for channel in channels)
@@ -5529,7 +5683,9 @@ class MainWindow(QMainWindow):
                         or ""
                     ),
                     "Channel mode": (
-                        preparation.plan.mode.value
+                        "extra_channels_only"
+                        if preparation.extra_only
+                        else preparation.plan.mode.value
                         if preparation.plan is not None
                         else "Retest"
                     ),
@@ -5637,12 +5793,14 @@ class MainWindow(QMainWindow):
             measurement_configuration=self.measurement_configuration,
             front_panel_channel_count=(
                 part_details.front_panel_channel_count
-                if part_details is not None and preparation.full_pass
+                if part_details is not None
+                and (preparation.full_pass or preparation.extra_only)
                 else None
             ),
             offer_extra_ports=(
                 evaluate_extra_port_offer_eligibility(
                     full_pass=preparation.full_pass,
+                    extra_only=preparation.extra_only,
                     manual_channel_order=preparation.manual_channel_order,
                     retest=retest,
                     run_mode=run_mode,
@@ -6316,10 +6474,7 @@ class MainWindow(QMainWindow):
             "The command for physical port %d was sent, but the route was not verified."
             % candidate
         )
-        message.setInformativeText(
-            "%s\n\nProceed only if you have independently confirmed the route."
-            % (result.detail or "No recognized acknowledgement was received.")
-        )
+        message.setInformativeText(self._extra_port_confirmation_detail(result))
         proceed = message.addButton("Proceed Unverified", QMessageBox.ActionRole)
         retry = message.addButton("Retry Current Port", QMessageBox.ActionRole)
         no_more = message.addButton("No More Physical Ports", QMessageBox.DestructiveRole)
@@ -6338,6 +6493,13 @@ class MainWindow(QMainWindow):
             else "stop"
         )
         self._hardware_command("extra_port_action", action)
+
+    @staticmethod
+    def _extra_port_confirmation_detail(result):
+        detail = result.detail or "No recognized acknowledgement was received."
+        if result.response_type == "binary" and result.response_hex:
+            detail += "\nResponse: %s" % result.response_hex
+        return "%s\n\nProceed only if you have independently confirmed the route." % detail
 
     def hardware_extra_port_issue(self, candidate, issue_kind, detail):
         if issue_kind == "safety_ceiling":
@@ -7160,7 +7322,8 @@ class MainWindow(QMainWindow):
             if self.database_workflow is not None
             else "Hardware run complete. CSV and JSON are saved."
         )
-        self._schedule_post_run_replacement_offer()
+        if not self._active_extra_only:
+            self._schedule_post_run_replacement_offer()
 
     def hardware_stopped(self):
         self._finish_database_run("stopped")
@@ -7495,6 +7658,7 @@ class MainWindow(QMainWindow):
             or str(persisted_status.get("completion_reason") or ""),
             completed_at_utc=self._run_completed_at_utc
             or str(persisted_status.get("completed_at_utc") or ""),
+            extra_only=self._active_extra_only or self._loaded_run_is_extra_only(),
             legacy=legacy,
         )
 

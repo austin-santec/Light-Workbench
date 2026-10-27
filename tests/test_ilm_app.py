@@ -22,7 +22,12 @@ from PyQt5.QtTest import QTest
 from application.coc_workflow import CocRunOption
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
 from domain.coc_preparation import CocSourceRun, prepare_coc
-from domain.extra_ports import ExtraChannelRoutingMethod, ExtraPortPhaseStatus
+from domain.extra_ports import (
+    ExtraChannelRoutingMethod,
+    ExtraPortPhaseStatus,
+    PhysicalPortRouteResult,
+    PhysicalPortRouteStatus,
+)
 from domain.limit_profiles import default_limit_profiles
 from domain.run_status import (
     COMPLETION_COMPLETE,
@@ -1936,6 +1941,22 @@ class MainWindowTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_binary_extra_port_confirmation_detail_shows_hex_response(self):
+        result = PhysicalPortRouteResult(
+            49,
+            PhysicalPortRouteStatus.UNVERIFIED,
+            detail="The switch returned a binary response.",
+            response_type="binary",
+            response_hex="03 00 00 04",
+            response_length=4,
+        )
+
+        detail = MainWindow._extra_port_confirmation_detail(result)
+
+        self.assertIn("binary response", detail)
+        self.assertIn("Response: 03 00 00 04", detail)
+        self.assertIn("independently confirmed", detail)
+
     def test_cli_extra_port_controls_keep_unknown_capacity_action(self):
         window = MainWindow()
         try:
@@ -2014,6 +2035,22 @@ class MainWindowTests(unittest.TestCase):
             self.assertTrue(window.hardware_setup_box.content_widget.isVisible())
             self.assertEqual(window.hardware_main_board_serial.text(), "MB-123")
             self.assertEqual(window.hardware_single_channel.value(), 7)
+        finally:
+            window.close()
+
+    def test_extra_only_mode_hides_front_panel_selectors(self):
+        window = MainWindow()
+        try:
+            window.show()
+            self.application.processEvents()
+            window.hardware_channel_mode.setCurrentText("Extra channels only")
+            self.application.processEvents()
+
+            self.assertFalse(window.channel_mode_context.isVisible())
+            self.assertFalse(window.hardware_channel_ranges.isVisible())
+            self.assertFalse(window.manual_channel_order_checkbox.isVisible())
+            self.assertTrue(window.extra_channel_routing_label.isVisible())
+            self.assertIn("Extra-only run", window.extra_channel_routing_label.text())
         finally:
             window.close()
 
