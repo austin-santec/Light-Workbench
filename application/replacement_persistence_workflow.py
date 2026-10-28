@@ -261,6 +261,15 @@ class ReplacementPersistenceWorkflow:
         if overlap:
             raise ValueError("A spare port cannot be designated and undesignated together")
         active = set(snapshot.active_spares)
+        consumed_spares = {
+            int(spec.replacement_physical_port)
+            for spec in replacement_specs
+            if int(spec.replacement_physical_port) in active
+        }
+        # A designated spare stops being available as soon as it becomes an
+        # effective route. Preserve that state transition as another append-only
+        # spare event in the same transaction as the replacement.
+        undesignate.update(consumed_spares)
         if designate.intersection(active):
             raise ValueError("An existing designated spare was selected as new")
         if not undesignate.issubset(active):
@@ -272,7 +281,11 @@ class ReplacementPersistenceWorkflow:
                 action=action,
                 recorded_by=spare_operator,
                 recorded_at_utc=timestamp,
-                notes="Approved in Manage Port Replacements",
+                notes=(
+                    "Consumed by recorded replacement"
+                    if action == "undesignated" and port in consumed_spares
+                    else "Approved in Manage Port Replacements"
+                ),
             )
             for action, ports in (
                 ("designated", sorted(designate)),

@@ -94,9 +94,17 @@ class MigrationDiscoveryTests(unittest.TestCase):
     def test_bundled_migrations_are_discovered(self):
         migrations = discover_migrations()
 
-        self.assertEqual([item.migration_id for item in migrations], [1, 2, 3, 4])
+        self.assertEqual([item.migration_id for item in migrations], [1, 2, 3, 4, 5])
         self.assertEqual(migrations[0].name, "initial_schema")
         self.assertEqual(migrations[1].name, "nonnegative_measurement_losses")
+        self.assertEqual(migrations[-1].name, "iterative_replacement_analysis")
+        self.assertIn("void_info_json", migrations[-1].script)
+        self.assertIn("FOR JSON PATH, WITHOUT_ARRAY_WRAPPER", migrations[-1].script)
+        self.assertIn("DROP COLUMN analysis_exclusion_reason", migrations[-1].script)
+        self.assertIn("CK_IL_RUNS_void_info_json", migrations[-1].script)
+        self.assertIn("ISJSON(void_info_json) = 1", migrations[-1].script)
+        self.assertIn("verification_required", migrations[-1].script)
+        self.assertIn("review_required", migrations[-1].script)
         self.assertTrue(all(len(item.checksum) == 64 for item in migrations))
 
     def test_migration_ids_must_be_contiguous(self):
@@ -337,7 +345,7 @@ class SqlServerMigrationIntegrationTests(unittest.TestCase):
         ).apply()
 
         self.assertEqual(result.applied_ids, ())
-        self.assertEqual(result.current_version, 4)
+        self.assertEqual(result.current_version, 5)
 
     def test_invalid_json_and_nonpositive_counts_are_rejected(self):
         cursor = self.connection.cursor()

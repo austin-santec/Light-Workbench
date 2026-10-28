@@ -1411,6 +1411,7 @@ class MainWindow(QMainWindow):
             bool(self.run_data and self.run_data.measurements)
             and run_available
         )
+        self._refresh_void_run_control()
 
     def _set_run_purpose_editable(self, editable: bool):
         """Keep purpose immutable for loaded history and active runs."""
@@ -1462,8 +1463,8 @@ class MainWindow(QMainWindow):
             self.run_purpose_notice_label.hide()
         else:
             self.run_purpose_notice_label.setText(
-                "%s runs are retained for support and review but excluded from "
-                "production analysis." % run_purpose_label(purpose)
+                "%s is retained as run provenance. It does not block technically "
+                "eligible COC or replacement analysis." % run_purpose_label(purpose)
             )
             self.run_purpose_notice_label.show()
         if hasattr(self, "run_purpose_status_label"):
@@ -1943,8 +1944,8 @@ class MainWindow(QMainWindow):
         for label, value in RUN_PURPOSE_OPTIONS:
             self.hardware_run_purpose.addItem(label, value)
         self.hardware_run_purpose.setToolTip(
-            "Choose why this run is being performed. Engineering, training, and "
-            "calibration runs are retained but excluded from production analysis."
+            "Choose why this run is being performed. Purpose is retained for "
+            "reporting and does not replace technical eligibility checks."
         )
         self.hardware_run_purpose.currentIndexChanged.connect(
             self._run_purpose_selection_changed
@@ -2289,6 +2290,16 @@ class MainWindow(QMainWindow):
             self.show_completed_replacements
         )
         self.record_replacements_button.setEnabled(False)
+        self.start_verification_run_button = QPushButton(
+            "Start Replacement Verification Run..."
+        )
+        self.start_verification_run_button.setToolTip(
+            "Start a selected-channel run for replacements that still need retesting."
+        )
+        self.start_verification_run_button.clicked.connect(
+            self.start_replacement_verification_run
+        )
+        self.start_verification_run_button.setEnabled(False)
         self.copy_replacement_notes_button = QPushButton("Copy Replacement Notes")
         self.copy_replacement_notes_button.setToolTip(
             "Copy the completed port swaps in a format ready to paste into Unit Editor notes."
@@ -2305,6 +2316,7 @@ class MainWindow(QMainWindow):
         replacement_layout.addWidget(self.completed_replacements_label)
         replacement_buttons = QHBoxLayout()
         replacement_buttons.addWidget(self.record_replacements_button)
+        replacement_buttons.addWidget(self.start_verification_run_button)
         replacement_buttons.addWidget(self.copy_replacement_notes_button)
         replacement_layout.addLayout(replacement_buttons)
         info_layout.addWidget(replacement_box)
@@ -2321,6 +2333,8 @@ class MainWindow(QMainWindow):
             "Station number",
             "Run number",
             "Run purpose",
+            "Analysis status",
+            "Void details",
             "Source file",
         ):
             label = QLabel("-")
@@ -2334,6 +2348,13 @@ class MainWindow(QMainWindow):
         self.view_history_button.clicked.connect(self.show_reading_history)
         self.view_history_button.setEnabled(False)
         metadata_layout.addRow(self.view_history_button)
+        self.void_run_button = QPushButton("Void Run from Analysis...")
+        self.void_run_button.setToolTip(
+            "Administrator-only permanent exclusion of a retained database run."
+        )
+        self.void_run_button.clicked.connect(self.void_loaded_database_run)
+        self.void_run_button.setEnabled(False)
+        metadata_layout.addRow(self.void_run_button)
         info_layout.addWidget(metadata_box)
         info_layout.addStretch()
         self.info_scroll_area = QScrollArea()
@@ -2882,6 +2903,7 @@ class MainWindow(QMainWindow):
                 status="success",
             )
             self._refresh_reference_controls()
+            self._refresh_void_run_control()
             return
         dialog = AdminPasswordDialog(self)
         if dialog.exec_() != QDialog.Accepted:
@@ -2908,6 +2930,7 @@ class MainWindow(QMainWindow):
             status="success",
         )
         self._refresh_reference_controls()
+        self._refresh_void_run_control()
 
     def _refresh_admin_branding(self):
         """Show the white-eyes Lulu variant only during Admin Mode."""
@@ -4897,6 +4920,15 @@ class MainWindow(QMainWindow):
 
     def _apply_database_run_context(self, context, *, update_setup=True):
         """Publish one committed database snapshot to existing UI consumers."""
+        previous_analysis_id = (
+            self.database_run_context.replacement_analysis.record.analysis_id
+            if self.database_run_context is not None
+            and self.database_run_context.replacement_analysis is not None
+            else None
+        )
+        previous_freshness = (
+            "stale" if self.replacement_analysis_stale else "current"
+        )
         self.database_run_context = context
         self.database_pending_measurement = None
         self.hardware_pending_token = None
@@ -5002,11 +5034,34 @@ class MainWindow(QMainWindow):
             "Run purpose",
         ):
             self.metadata_labels[key].setText(metadata.get(key) or "Not recorded")
+        if context.run.analysis_status == "excluded":
+            self.metadata_labels["Analysis status"].setText(
+                "Voided - excluded from analysis"
+            )
+            info = context.run.void_info
+            self.metadata_labels["Void details"].setText(
+                "%s by %s: %s"
+                % (
+                    info.voided_at_utc.isoformat() if info else "Unknown time",
+                    info.voided_by if info else "Unknown operator",
+                    info.reason if info else "No reason recorded",
+                )
+            )
+        else:
+            self.metadata_labels["Analysis status"].setText(
+                str(context.run.analysis_status).title()
+            )
+            self.metadata_labels["Void details"].setText("Not voided")
         self.replacement_analysis_history = context.replacement_analysis_history
         self.replacement_analysis_stale = False
         if context.replacement_analysis is not None:
+            source_state = (
+                context.effective_projection.fingerprint
+                if context.effective_projection is not None
+                else context.snapshot.measurement_high_watermark_id
+            )
             self.replacement_analysis_stale = not context.replacement_analysis.is_current(
-                context.snapshot.measurement_high_watermark_id
+                source_state
             )
             self.replacement_analysis = (
                 None
@@ -5015,10 +5070,140 @@ class MainWindow(QMainWindow):
             )
         else:
             self.replacement_analysis = None
+        current_analysis_id = (
+            context.replacement_analysis.record.analysis_id
+            if context.replacement_analysis is not None
+            else None
+        )
+        current_freshness = (
+            "stale"
+            if context.replacement_analysis is not None
+            and self.replacement_analysis_stale
+            else "current"
+            if context.replacement_analysis is not None
+            else "not_analyzed"
+        )
+        if (
+            current_analysis_id != previous_analysis_id
+            or current_freshness != previous_freshness
+        ):
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "replacement.analysis_freshness_changed",
+                run_id=context.run.run_id,
+                analysis_id=current_analysis_id,
+                freshness=current_freshness,
+                status="updated",
+            )
         self.run_data.replacement_analysis = self.replacement_analysis
         self.clear_current_reading()
         self.refresh_comparison_runs()
         self.refresh_analysis()
+        self._refresh_void_run_control()
+
+    def _refresh_void_run_control(self):
+        if not hasattr(self, "void_run_button"):
+            return
+        context = self.database_run_context
+        enabled = bool(
+            context is not None
+            and self.admin_session.is_active
+            and not self.hardware_run_active
+            and context.run.analysis_status != "excluded"
+            and not self._database_write_request_in_flight
+            and self.database_pending_measurement is None
+        )
+        self.void_run_button.setEnabled(enabled)
+
+    def void_loaded_database_run(self):
+        """Collect an administrator reason and permanently void the loaded run."""
+        context = self.database_run_context
+        self._refresh_void_run_control()
+        if context is None or not self.void_run_button.isEnabled():
+            return
+        operator = (
+            self.hardware_tested_by.text().strip()
+            or context.run.tested_by
+            or "Administrator"
+        )
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Void Run from Analysis")
+        dialog.setMinimumWidth(560)
+        layout = QFormLayout(dialog)
+        for label, value in (
+            ("Unit serial:", context.unit.main_board_serial),
+            ("Switch serial:", context.switch.switch_serial),
+            ("Assignment ID:", context.assignment.assignment_id),
+            ("Run number:", context.run.run_number),
+            ("Completion status:", context.run.completion_status),
+            ("Accepted measurements:", len(context.snapshot.measurement_attempts)),
+            ("Administrator/operator:", operator),
+        ):
+            layout.addRow(label, QLabel(str(value)))
+        warning = QLabel(
+            "This run and its readings will remain in the database, but they "
+            "will no longer contribute to effective run status, replacement "
+            "analysis, or COC generation."
+        )
+        warning.setWordWrap(True)
+        layout.addRow(warning)
+        reason = QPlainTextEdit()
+        reason.setPlaceholderText("Required reason for voiding this entire run")
+        reason.setMaximumHeight(90)
+        layout.addRow("Reason:", reason)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        while dialog.exec_() == QDialog.Accepted:
+            value = reason.toPlainText().strip()
+            if not value:
+                QMessageBox.warning(dialog, "Reason required", "Enter a reason.")
+                continue
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "run.void_requested",
+                run_id=context.run.run_id,
+                assignment_id=context.run.assignment_id,
+                operator=operator,
+                status="requested",
+            )
+            try:
+                refreshed = self.database_workflow.void_run(
+                    context.run.run_id,
+                    voided_by=operator,
+                    reason=value,
+                )
+                self._apply_database_run_context(refreshed, update_setup=False)
+                self._record_support(
+                    SupportEventCategory.PERSISTENCE,
+                    "run.void_completed",
+                    run_id=context.run.run_id,
+                    assignment_id=context.run.assignment_id,
+                    operator=operator,
+                    status="success",
+                )
+                QMessageBox.information(
+                    self,
+                    "Run voided",
+                    "The run remains in the database and is now excluded from analysis.",
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as error:
+                self._record_support(
+                    SupportEventCategory.PERSISTENCE,
+                    "run.void_failed",
+                    level=SupportLogLevel.ERROR,
+                    run_id=context.run.run_id,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    status="error",
+                )
+                QMessageBox.critical(
+                    self,
+                    "Could not void run",
+                    "The database was not changed:\n%s" % error,
+                )
+            return
 
     def _restore_hardware_identity(self, metadata):
         """Restore loaded identity values after declining an update."""
@@ -8245,13 +8430,33 @@ class MainWindow(QMainWindow):
         """Refresh the replacement-analysis status shown beside the table."""
         has_measurements = bool(self.run_data and self.run_data.measurements)
         limits_available = self._uses_approved_limit_profile()
+        run_is_voided = bool(
+            self.database_run_context
+            and self.database_run_context.run.analysis_status == "excluded"
+        )
         self.replacement_analysis_button.setEnabled(
-            has_measurements and limits_available
+            has_measurements and limits_available and not run_is_voided
         )
         self.record_replacements_button.setEnabled(
             has_measurements
             or self.unit_directory is not None
             or self.database_run_context is not None
+        )
+        projection = (
+            self.database_run_context.effective_projection
+            if self.database_run_context is not None
+            else None
+        )
+        self.start_verification_run_button.setEnabled(
+            bool(
+                projection
+                and not self.hardware_run_active
+                and self.database_run_context.assignment.removed_at_utc is None
+                and any(
+                    item.state == "awaiting_retest"
+                    for item in projection.verifications
+                )
+            )
         )
         self.copy_replacement_notes_button.setEnabled(
             bool(self.completed_replacements)
@@ -8287,6 +8492,11 @@ class MainWindow(QMainWindow):
                 "Not available: no limit profile is configured for this model and mode."
             )
             return
+        if run_is_voided:
+            self.replacement_summary_label.setText(
+                "Voided - excluded from analysis. Saved analyses remain available in history."
+            )
+            return
 
         if self.replacement_analysis_stale:
             self.replacement_summary_label.setText(
@@ -8299,8 +8509,44 @@ class MainWindow(QMainWindow):
         if not result:
             self.replacement_summary_label.setText("Not run")
             return
+        iterative_status = result.get("analysis_result_status") or result.get(
+            "result_status"
+        )
+        if iterative_status:
+            verification = result.get("replacement_verification", ())
+            awaiting = sum(
+                1
+                for item in verification
+                if item.get("verification_state") == "awaiting_retest"
+            )
+            verified = sum(
+                1
+                for item in verification
+                if str(item.get("verification_state") or "").startswith("verified_")
+            )
+            source_runs = result.get("source_runs", ())
+            summary_lines = [
+                "Optimization: %s" % str(iterative_status).replace("_", " ").title(),
+                "Source runs: %s"
+                % (", ".join(str(value) for value in source_runs) or "current run"),
+                "Valid effective channels: %d"
+                % int(result.get("valid_effective_channel_count", 0)),
+                "Verified replacements: %d" % verified,
+                "Replacements awaiting retest: %d" % awaiting,
+                "Remaining measured extras: %d"
+                % len(result.get("remaining_extras", ())),
+            ]
+            if result.get("review_issues"):
+                summary_lines.append(
+                    "Review: " + "; ".join(result.get("review_issues", ()))
+                )
+            self.replacement_summary_label.setText("\n".join(summary_lines))
+            # Continue below so recommendation details remain visible.
         if not result.get("applicable"):
-            self.replacement_summary_label.setText(result.get("status", "Not applicable"))
+            if not iterative_status:
+                self.replacement_summary_label.setText(
+                    result.get("status", "Not applicable")
+                )
             return
 
         recommendations = result.get("recommendations", [])
@@ -8323,7 +8569,7 @@ class MainWindow(QMainWindow):
             for spare in result.get("bottom_spares", [])
             if spare.get("too_good")
         ]
-        lines = [
+        lines = ([self.replacement_summary_label.text()] if iterative_status else []) + [
             "Required replacements: %d" % len(required_recommendations),
             "Optional Replacements: %d" % len(optional_recommendations),
             "Recommended designated spares: %s"
@@ -8434,6 +8680,98 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "Completed replacements and designated spares saved to the unit record."
         )
+
+    def start_replacement_verification_run(self):
+        """Review and start a normal selected-channel run for recorded swaps."""
+        context = self.database_run_context
+        projection = context.effective_projection if context is not None else None
+        if context is None or projection is None:
+            QMessageBox.information(
+                self,
+                "Verification run unavailable",
+                "Load a database-backed run with recorded replacements first.",
+            )
+            return
+        if context.assignment.removed_at_utc is not None:
+            QMessageBox.information(
+                self,
+                "Historical switch assignment",
+                "This run belongs to a removed switch assignment. Its replacement "
+                "history is available for review, but it cannot start a verification run.",
+            )
+            return
+        pending = tuple(
+            item
+            for item in projection.verifications
+            if item.state == "awaiting_retest"
+        )
+        if not pending:
+            QMessageBox.information(
+                self,
+                "No verification required",
+                "All current replacement mappings already have valid retest evidence.",
+            )
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Start Replacement Verification Run")
+        dialog.resize(720, 360)
+        layout = QVBoxLayout(dialog)
+        message = QLabel(
+            "Only the logical channels for replacements awaiting verification "
+            "will be tested. Light Workbench will not change or verify switch mappings."
+        )
+        message.setWordWrap(True)
+        layout.addWidget(message)
+        table = QTableWidget(len(pending), 4)
+        table.setHorizontalHeaderLabels(
+            ["Logical", "Previous Port", "Current Port", "Source Analysis"]
+        )
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.horizontalHeader().setStretchLastSection(True)
+        for row, item in enumerate(pending):
+            replacement = item.replacement
+            values = (
+                replacement.logical_channel,
+                replacement.previous_physical_port,
+                replacement.replacement_physical_port,
+                replacement.source_recommendation_id or "Manual",
+            )
+            for column, value in enumerate(values):
+                table.setItem(row, column, QTableWidgetItem(str(value)))
+        layout.addWidget(table)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Start Run")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        channels = sorted(
+            {item.replacement.logical_channel for item in pending}
+        )
+        self.hardware_channel_mode.setCurrentText(ChannelMode.SPECIFIC_CHANNELS.value)
+        self.hardware_channel_ranges.setText(", ".join(str(value) for value in channels))
+        try:
+            next_run_number = 1 + max(
+                item.run.run_number
+                for item in self.database_workflow.list_for_unit(
+                    context.unit.unit_id
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            next_run_number = context.run.run_number + 1
+        self.hardware_run_number.setValue(next_run_number)
+        self._set_run_purpose_editable(True)
+        self._set_station_editable(True)
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "replacement.verification_run_started",
+            assignment_id=context.run.assignment_id,
+            source_run_id=context.run.run_id,
+            logical_channels=",".join(str(value) for value in channels),
+            status="requested",
+        )
+        self.start_hardware()
 
     def _show_database_replacements(self, recommendations):
         """Open the SQL-aware editor without converting audit rows to legacy events."""
@@ -8639,16 +8977,21 @@ class MainWindow(QMainWindow):
                 "only when a replacement record explicitly references it."
             )
         )
-        history_table = QTableWidget(0, 7, dialog)
+        history_table = QTableWidget(0, 12, dialog)
         history_table.setHorizontalHeaderLabels(
             [
                 "Analysis ID",
                 "Analyzed UTC",
                 "Operator",
                 "Result",
+                "Assignment",
+                "Context run",
+                "Source runs",
+                "State",
                 "Source measurement",
                 "Recommendations",
                 "Used",
+                "Verification",
             ]
         )
         history_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -8689,6 +9032,14 @@ class MainWindow(QMainWindow):
                         recommendation_row, column, QTableWidgetItem(str(value))
                     )
 
+        newest_analysis_id = max(
+            item.record.analysis_id for item in self.replacement_analysis_history
+        )
+        current_fingerprint = (
+            self.database_run_context.effective_projection.fingerprint
+            if self.database_run_context.effective_projection is not None
+            else self.database_run_context.snapshot.measurement_high_watermark_id
+        )
         for analysis in self.replacement_analysis_history:
             row = history_table.rowCount()
             history_table.insertRow(row)
@@ -8696,14 +9047,45 @@ class MainWindow(QMainWindow):
                 item.recommendation_id in used_recommendation_ids
                 for item in analysis.recommendations
             )
+            snapshot = analysis.record.result_details.get("source_snapshot", {})
+            source_runs = snapshot.get("included_run_numbers", ())
+            verification_rows = analysis.record.result_details.get(
+                "replacement_verification", ()
+            )
+            awaiting = sum(
+                item.get("verification_state") == "awaiting_retest"
+                for item in verification_rows
+            )
+            verified = sum(
+                str(item.get("verification_state", "")).startswith("verified_")
+                for item in verification_rows
+            )
+            verification_text = (
+                "%d verified; %d awaiting" % (verified, awaiting)
+                if verification_rows
+                else "None"
+            )
+            is_current = analysis.is_current(current_fingerprint)
+            state = (
+                "Current"
+                if is_current and analysis.record.analysis_id == newest_analysis_id
+                else "Stale"
+                if analysis.record.analysis_id == newest_analysis_id
+                else "Historical"
+            )
             values = (
                 analysis.record.analysis_id,
                 analysis.record.analyzed_at_utc.isoformat(),
                 analysis.record.analyzed_by,
                 analysis.record.result_status,
+                snapshot.get("assignment_id", "Legacy"),
+                snapshot.get("context_run_number", self.database_run_context.run.run_number),
+                ", ".join(str(value) for value in source_runs) or "Legacy",
+                state,
                 analysis.record.source_measurement_high_watermark_id,
                 len(analysis.recommendations),
                 "%d/%d" % (used, len(analysis.recommendations)),
+                verification_text,
             )
             for column, value in enumerate(values):
                 history_table.setItem(row, column, QTableWidgetItem(str(value)))
@@ -8815,13 +9197,24 @@ class MainWindow(QMainWindow):
         layout.addRow("Measured extra ports:", detected_extras_label)
 
         def update_detected_extras():
-            ports = [
-                record.physical_port
-                if record.physical_port is not None
-                else record.channel
-                for record in self.run_data.measurements
-                if record.channel > part_context["front_panel_channel_count"]
-            ]
+            projection = (
+                self.database_run_context.effective_projection
+                if self.database_run_context is not None
+                else None
+            )
+            if projection is not None:
+                ports = [
+                    item.record.physical_port or item.record.logical_channel
+                    for item in projection.extra_measurements
+                ]
+            else:
+                ports = [
+                    record.physical_port
+                    if record.physical_port is not None
+                    else record.channel
+                    for record in self.run_data.measurements
+                    if record.channel > part_context["front_panel_channel_count"]
+                ]
             detected_extras_label.setText(
                 ", ".join(str(port) for port in sorted(ports))
                 if ports
@@ -8854,39 +9247,105 @@ class MainWindow(QMainWindow):
                 )
                 return
             try:
-                production_records = [
-                    record
-                    for record in self.run_data.measurements
-                    if record.channel
-                    <= part_context["front_panel_channel_count"]
-                ]
-                readings = [
-                    ReplacementReading(
-                        record.physical_port
-                        if record.physical_port is not None
-                        else record.channel,
-                        record.ordered_losses[0],
-                        record.ordered_losses[1],
+                if self.database_run_context is not None:
+                    projection = self.database_workflow.build_replacement_projection(
+                        self.database_run_context.run.run_id,
+                        self.active_limit_profile,
+                        bottom_spare_count=bottom_spare_count.value(),
                     )
-                    for record in self.run_data.measurements
-                    if record.channel
-                    > part_context["front_panel_channel_count"]
-                ]
-                result = analyze_replacements(
-                    production_records,
-                    readings,
-                    part_context["front_panel_channel_count"],
-                    self.active_limit_profile.warning_above_db
-                    if self.active_limit_profile.warning_enabled
-                    else self.active_limit_profile.fail_above_db,
-                    self.active_limit_profile.minimum_replacement_improvement_db,
-                    bottom_spare_count.value(),
-                    fail_limit=self.active_limit_profile.fail_above_db,
-                    model=self.active_limit_profile.model,
-                    too_good_limit=self.active_limit_profile.too_good_below_db,
-                    wavelengths=self.run_data.opm_wavelengths_nm,
-                )
+                    result = projection.to_result_dict()
+                    self._record_support(
+                        SupportEventCategory.WORKFLOW,
+                        "replacement.effective_projection_built",
+                        assignment_id=projection.context_run.assignment_id,
+                        context_run_id=projection.context_run.run_id,
+                        included_run_count=len(projection.included_runs),
+                        excluded_run_count=len(projection.excluded_runs),
+                        effective_measurement_count=len(projection.front_measurements),
+                        extra_measurement_count=len(projection.extra_measurements),
+                        state_fingerprint=projection.fingerprint,
+                        status="success",
+                    )
+                    for source_run in projection.included_runs:
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            "replacement.source_run_included",
+                            context_run_id=projection.context_run.run_id,
+                            source_run_id=source_run.run_id,
+                            source_run_number=source_run.run_number,
+                            status="included",
+                        )
+                    for source_run, reason in projection.excluded_runs:
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            "replacement.source_run_excluded",
+                            context_run_id=projection.context_run.run_id,
+                            source_run_id=source_run.run_id,
+                            source_run_number=source_run.run_number,
+                            reason=reason,
+                            status="excluded",
+                        )
+                    for verification in projection.verifications:
+                        event_name = (
+                            "replacement.awaiting_verification"
+                            if verification.state == "awaiting_retest"
+                            else "replacement.verified"
+                        )
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            event_name,
+                            replacement_id=verification.replacement.replacement_id,
+                            logical_channel=verification.replacement.logical_channel,
+                            physical_port=verification.replacement.replacement_physical_port,
+                            verification_state=verification.state,
+                            status="evaluated",
+                        )
+                else:
+                    production_records = [
+                        record
+                        for record in self.run_data.measurements
+                        if record.channel
+                        <= part_context["front_panel_channel_count"]
+                    ]
+                    readings = [
+                        ReplacementReading(
+                            record.physical_port
+                            if record.physical_port is not None
+                            else record.channel,
+                            record.ordered_losses[0],
+                            record.ordered_losses[1],
+                        )
+                        for record in self.run_data.measurements
+                        if record.channel
+                        > part_context["front_panel_channel_count"]
+                    ]
+                    result = analyze_replacements(
+                        production_records,
+                        readings,
+                        part_context["front_panel_channel_count"],
+                        self.active_limit_profile.warning_above_db
+                        if self.active_limit_profile.warning_enabled
+                        else self.active_limit_profile.fail_above_db,
+                        self.active_limit_profile.minimum_replacement_improvement_db,
+                        bottom_spare_count.value(),
+                        fail_limit=self.active_limit_profile.fail_above_db,
+                        model=self.active_limit_profile.model,
+                        too_good_limit=self.active_limit_profile.too_good_below_db,
+                        wavelengths=self.run_data.opm_wavelengths_nm,
+                    )
                 self._record_replacement_analysis_result(result, launch_source)
+                self._record_support(
+                    SupportEventCategory.WORKFLOW,
+                    "replacement.iterative_analysis_completed",
+                    result_status=(
+                        result.get("analysis_result_status")
+                        or result.get("result_status")
+                        or result.get("status")
+                    ),
+                    recommendation_count=len(result.get("recommendations", ())),
+                    source_run_count=len(result.get("source_runs", ())),
+                    status="success",
+                )
                 if self.database_run_context is not None:
                     try:
                         run = self.database_run_context.run
@@ -8914,7 +9373,12 @@ class MainWindow(QMainWindow):
                             ],
                             wavelengths=tuple(self.run_data.opm_wavelengths_nm),
                             criteria=criteria,
-                            measurement_count=len(self.run_data.measurements),
+                            measurement_count=int(
+                                result.get(
+                                    "valid_effective_channel_count",
+                                    len(self.run_data.measurements),
+                                )
+                            ),
                         )
                         refreshed = self.database_workflow.refresh(run.run_id)
                         self._apply_database_run_context(
@@ -8922,6 +9386,15 @@ class MainWindow(QMainWindow):
                         )
                         self.statusBar().showMessage(
                             "Replacement analysis saved to SQL Server."
+                        )
+                        self._record_support(
+                            SupportEventCategory.PERSISTENCE,
+                            "replacement.analysis_saved",
+                            analysis_id=persisted.record.analysis_id,
+                            run_id=run.run_id,
+                            result_status=persisted.record.result_status,
+                            recommendation_count=len(persisted.recommendations),
+                            status="success",
                         )
                     except (OSError, RuntimeError, TypeError, ValueError) as error:
                         self._record_support(
@@ -8943,6 +9416,9 @@ class MainWindow(QMainWindow):
                         return
                 else:
                     self.apply_replacement_analysis(result)
+                self.show_iterative_analysis_result(
+                    self.replacement_analysis or result
+                )
                 return
             except (OSError, ValueError, TypeError) as error:
                 self._record_support(
@@ -8971,6 +9447,171 @@ class MainWindow(QMainWindow):
             "Replacement analysis calculated for the current run."
         )
 
+    def show_iterative_analysis_result(self, result):
+        """Present effective-state summary, advice, verification, and provenance."""
+        if not result:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Replacement Analysis Result")
+        dialog.resize(980, 760)
+        root = QVBoxLayout(dialog)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+
+        source_snapshot = result.get("source_snapshot", {})
+        status = result.get("analysis_result_status") or result.get(
+            "result_status", result.get("status", "Unknown")
+        )
+        verification_rows = tuple(result.get("replacement_verification", ()))
+        verified_count = sum(
+            str(item.get("verification_state", "")).startswith("verified_")
+            for item in verification_rows
+        )
+        awaiting_count = sum(
+            item.get("verification_state") == "awaiting_retest"
+            for item in verification_rows
+        )
+        recommendation_rows = tuple(result.get("recommendations", ()))
+        required_count = sum(
+            str(item.get("category", "")).lower() == "required"
+            for item in recommendation_rows
+        )
+        optional_count = len(recommendation_rows) - required_count
+        composite, _compatible = self._status_composite_candidate()
+        coc_text = "Unavailable"
+        if composite is not None:
+            if composite.eligible:
+                coc_text = "Available"
+            else:
+                reasons = []
+                if composite.missing_channels:
+                    reasons.append("missing channels")
+                if composite.failures:
+                    reasons.append("failing measurements")
+                if composite.invalid_readings or composite.validation_issues:
+                    reasons.append("validation review")
+                coc_text = "Blocked - " + ", ".join(reasons or ["requirements not met"])
+        summary = QGroupBox("Summary")
+        summary_layout = QFormLayout(summary)
+        summary_values = (
+            ("Context run", source_snapshot.get("context_run_number", "Current")),
+            ("Source runs", ", ".join(str(value) for value in result.get("source_runs", ())) or "Current"),
+            ("Assignment", source_snapshot.get("assignment_id", "Not recorded")),
+            ("Switch serial", source_snapshot.get("switch_serial") or "Not recorded"),
+            ("Front-panel channels", result.get("designed_channel_count", "Not recorded")),
+            ("Valid effective channels", result.get("valid_effective_channel_count", 0)),
+            ("Missing channels", ", ".join(str(value) for value in result.get("missing_channels", ())) or "None"),
+            ("Verified replacements", verified_count),
+            ("Replacements awaiting retest", awaiting_count),
+            ("Remaining measured extras", len(result.get("remaining_extras", ()))),
+            ("Required recommendations", required_count),
+            ("Optional recommendations", optional_count),
+            ("Optimization", str(status).replace("_", " ").title()),
+            ("COC", coc_text),
+            ("Snapshot state", "Stale" if self.replacement_analysis_stale else "Current"),
+        )
+        for label, value in summary_values:
+            summary_layout.addRow(label + ":", QLabel(str(value)))
+        layout.addWidget(summary)
+
+        recommendations = QGroupBox("Recommendations")
+        recommendation_layout = QVBoxLayout(recommendations)
+        recommendation_table = QTableWidget(len(recommendation_rows), 7)
+        recommendation_table.setHorizontalHeaderLabels(
+            ["Logical", "Current", "Proposed", "Category", "Improvement", "Current IL", "Candidate IL"]
+        )
+        recommendation_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        for row, item in enumerate(recommendation_rows):
+            current_il = "%.4f / %.4f" % (
+                item["current_loss_1310_db"], item["current_loss_1550_db"]
+            )
+            candidate_il = "%.4f / %.4f" % (
+                item["candidate_loss_1310_db"], item["candidate_loss_1550_db"]
+            )
+            values = (
+                item["logical_channel"], item["current_physical_port"],
+                item["candidate_physical_port"], item.get("category", "optional"),
+                "%.4f" % item["improvement_db"], current_il, candidate_il,
+            )
+            provenance = (
+                "Current: Run %s, Measurement %s; Candidate: Run %s, Measurement %s"
+                % (
+                    item.get("current_source_run_number", "?"),
+                    item.get("current_measurement_id", "?"),
+                    item.get("candidate_source_run_number", "?"),
+                    item.get("candidate_measurement_id", "?"),
+                )
+            )
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+                cell.setToolTip(provenance)
+                recommendation_table.setItem(row, column, cell)
+        recommendation_table.horizontalHeader().setStretchLastSection(True)
+        recommendation_layout.addWidget(recommendation_table)
+        layout.addWidget(recommendations)
+
+        verification = QGroupBox("Replacement verification")
+        verification_layout = QVBoxLayout(verification)
+        verification_table = QTableWidget(len(verification_rows), 8)
+        verification_table.setHorizontalHeaderLabels(
+            [
+                "Logical", "Previous", "Current", "Replaced UTC", "Operator",
+                "Retest run", "State", "Current IL",
+            ]
+        )
+        verification_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        for row, item in enumerate(verification_rows):
+            retest = item.get("retest") or {}
+            current_il = (
+                "%.4f / %.4f"
+                % (
+                    float(retest["wavelength_1_il_db"]),
+                    float(retest["wavelength_2_il_db"]),
+                )
+                if retest
+                else "-"
+            )
+            values = (
+                item.get("logical_channel"), item.get("previous_physical_port"),
+                item.get("current_physical_port"), item.get("replaced_at_utc"),
+                item.get("replaced_by"), item.get("retest_run_number", "-"),
+                str(item.get("verification_state", "")).replace("_", " ").title(),
+                current_il,
+            )
+            for column, value in enumerate(values):
+                verification_table.setItem(row, column, QTableWidgetItem(str(value)))
+        verification_table.horizontalHeader().setStretchLastSection(True)
+        verification_layout.addWidget(verification_table)
+        layout.addWidget(verification)
+
+        provenance_box = QGroupBox("Source provenance")
+        provenance_layout = QVBoxLayout(provenance_box)
+        provenance_lines = [
+            "Included runs: %s" % (", ".join(str(value) for value in result.get("source_runs", ())) or "Current run"),
+            "Selected measurements: %s" % (", ".join(str(value) for value in source_snapshot.get("selected_measurement_ids", ())) or "Not recorded"),
+            "Effective measurements used: %s" % result.get("valid_effective_channel_count", 0),
+            "Attempts superseded by newer measurements: %s" % source_snapshot.get("superseded_attempt_count", 0),
+            "State fingerprint: %s" % source_snapshot.get("state_fingerprint_sha256", "Legacy analysis"),
+        ]
+        for item in result.get("excluded_runs", ()):
+            provenance_lines.append(
+                "Excluded Run %s: %s" % (item.get("run_number"), item.get("reason"))
+            )
+        provenance_label = QLabel("\n".join(provenance_lines))
+        provenance_label.setWordWrap(True)
+        provenance_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        provenance_layout.addWidget(provenance_label)
+        layout.addWidget(provenance_box)
+
+        scroll.setWidget(content)
+        root.addWidget(scroll)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        root.addWidget(buttons)
+        dialog.exec_()
+
     def refresh_coc_controls(self):
         """Enable current-run and persisted-unit outputs independently."""
         current_readings = bool(self.run_data and self.run_data.measurements)
@@ -8981,7 +9622,10 @@ class MainWindow(QMainWindow):
         persisted_readings = bool(
             current_readings
             and self.run_data is not None
-            and Path(self.run_data.source_path).is_file()
+            and (
+                self.database_run_context is not None
+                or Path(self.run_data.source_path).is_file()
+            )
         )
         if self.unit_directory is not None:
             try:
@@ -9016,6 +9660,10 @@ class MainWindow(QMainWindow):
             persisted_readings
             and coc_profile_supported
             and self._uses_approved_limit_profile()
+            and not (
+                self.database_run_context is not None
+                and self.database_run_context.run.analysis_status == "excluded"
+            )
         )
         self.write_coc_button.setEnabled(coc_eligible)
         self.copy_raw_data_button.setEnabled(current_readings)
@@ -9070,8 +9718,16 @@ class MainWindow(QMainWindow):
     def _coc_run_options(self):
         """Return persisted runs for the active unit, including legacy context."""
         if self.database_run_context is not None and self.database_workflow is not None:
-            contexts = self.database_workflow.list_for_unit(
-                self.database_run_context.unit.unit_id
+            current = self.database_run_context.run
+            contexts = tuple(
+                context
+                for context in self.database_workflow.list_for_assignment(
+                    current.assignment_id
+                )
+                if context.run.analysis_status not in {"excluded", "superseded"}
+                and context.run.superseded_by_run_id is None
+                and (context.run.run_started_at_utc, context.run.run_id)
+                <= (current.run_started_at_utc, current.run_id)
             )
             return [
                 CocRunOption(self._database_coc_source(context))

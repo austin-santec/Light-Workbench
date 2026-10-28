@@ -58,11 +58,18 @@ port compatibility, strict 2.5000 dB publication blocking, optimization
 confirmation, 45/48 template selection, row trimming, merged ranges, print
 area, source-template immutability, and preservation of source run readings.
 
-Run-purpose coverage must verify the Production default, non-production
-exclusion from production analysis, terminal completion policy, purpose display
-for loaded runs, continuation/retest preservation, and purpose-neutral COC
-eligibility. Legacy file-backed runs without a purpose remain loadable for
-historical review.
+Run-purpose coverage must verify the Production default, production-report
+filtering, terminal completion policy, purpose display for loaded runs,
+continuation/retest preservation, and purpose-neutral COC/replacement-analysis
+eligibility. Purpose alone must never create a void record. Legacy file-backed
+runs without a purpose remain loadable for historical review.
+
+Iterative replacement coverage must verify assignment isolation, newest
+whole-pair selection, current-map matching, unused-extra carry-forward,
+replacement chains and verification states, every persisted result state,
+deterministic source fingerprints, permanent run voiding, and COC/status
+consistency. Migration tests must discover migration 0005, preserve old rows,
+convert excluded reasons to valid JSON, and retain legacy analysis statuses.
 
 Persistent-connection tests must verify partial connection success, duplicate
 session prevention, exclusive lease conflicts, release without disconnect,

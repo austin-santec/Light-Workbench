@@ -41,7 +41,7 @@ rules.
 ## Milestone 1 - SQL Server foundation
 
 Status: complete. Forward-only migrations through
-`0004_replacement_analysis_history.sql`, checksum/history validation, the
+`0005_iterative_replacement_analysis.sql`, checksum/history validation, the
 ten tables, three views, least-privilege database roles,
 guarded reset tooling, and isolated SQL integration tests are implemented. The
 local `LWBTestDB_Integration` database has been reset, migrated, backed up,
@@ -231,8 +231,8 @@ runs now require a successful readiness result, receive a caller-generated
 retry UUID, and obtain a per-unit run number while the SQL repository holds a
 unit-scoped transaction lock. Runs preserve their setup, hardware, and limit
 snapshots and support explicit complete, stopped, and failed endings.
-Purpose and analysis eligibility are separate, non-production purposes default
-to exclusion, and stale runs remain in progress until an explicit resume,
+Purpose and analysis eligibility are separate, no purpose is implicitly voided,
+and stale runs remain in progress until an explicit resume,
 close-stopped, or close-failed decision. Production Start Run is wired to this
 workflow; the UI defaults new runs to Production and records the selected
 purpose.
@@ -259,7 +259,8 @@ purpose.
 - A complete run may contain formally failing measurements.
 - A stopped run retains accepted measurements.
 - A failed run records the technical end state.
-- Engineering/training data is excluded from normal production analysis.
+- Engineering/training data remains distinguishable in production-only reports
+  without being implicitly voided from technical analysis.
 - A stale run is not silently marked complete.
 - Purpose is preserved through loaded-run continuation and retest workflows.
 
@@ -382,10 +383,15 @@ change the external mapping.
   latest replacement per logical channel.
 - Persist each completed replacement-analysis snapshot and its normalized
   recommendations.
-- Store the source measurement high-watermark so older results become visibly
-  stale after a retest.
+- Store a compact assignment-wide source snapshot and deterministic fingerprint
+  so measurement, mapping, replacement, spare, or criteria changes make an
+  older result visibly stale.
 - Link an approved replacement to its source recommendation when selected.
 - Do not command or verify external switch mapping changes.
+- Derive post-replacement verification from accepted measurements on the
+  recorded effective physical port.
+- Support iterative selected-channel verification runs and subsequent analysis
+  using unchanged channels and unused extras from compatible earlier runs.
 
 ### Tests
 
@@ -483,6 +489,14 @@ queries do not mutate authoritative records.
 
 ## Milestone 10A - Persistent replacement-analysis history
 
+Status: complete, including migration 0005. Analyses now use an immutable,
+assignment-scoped effective projection and classify optimized,
+recommendations-available, verification-required, pass-without-viable-
+optimization, fail-without-viable-recovery, incomplete, and review-required
+states. Administrators can permanently void an invalid entire run without
+deleting its readings or saved analyses. Switch-assignment boundaries prevent
+old switch data from contributing to a new installation period.
+
 Status: complete. Every database-backed Analyze Replacements action saves an
 immutable analysis header and normalized recommendation rows. Loading a run
 restores the latest snapshot and its full history; a newer accepted measurement
@@ -579,7 +593,8 @@ The implementation is successful when:
 - Every accepted reading is a complete, atomic two-wavelength record.
 - Retests remain append-only and the current projection is deterministic.
 - Replacement and spare history cannot leak across switch assignments.
-- Non-production and excluded runs do not contaminate normal analysis.
+- Production-only reports remain purpose-filtered, while explicitly voided and
+  superseded runs cannot contaminate technical analysis or COC preparation.
 - Local support logs remain independent from analytical storage.
 - Database failures are visible and cannot silently lose or falsely accept a
   reading.

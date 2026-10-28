@@ -235,6 +235,14 @@ class DatabaseReportingService:
                 result_label = RESULT_LABELS[result_status]
                 failing_count = 0
                 optimization_count = 0
+        saved_analysis = self._repositories.latest_analysis_for_run(run.run_id)
+        analysis_record = saved_analysis[0] if saved_analysis is not None else None
+        analysis_recommendations = saved_analysis[1] if saved_analysis is not None else ()
+        used_recommendation_ids = {
+            item.source_recommendation_id
+            for item in replacements
+            if item.source_recommendation_id is not None
+        }
         return RunReportRow(
             run_id=run.run_id,
             assignment_id=run.assignment_id,
@@ -254,6 +262,11 @@ class DatabaseReportingService:
             completion_status=run.completion_status,
             run_purpose=run.run_purpose,
             analysis_status=run.analysis_status,
+            voided_at_utc=(
+                run.void_info.voided_at_utc if run.void_info is not None else None
+            ),
+            voided_by=(run.void_info.voided_by if run.void_info is not None else ""),
+            void_reason=(run.void_info.reason if run.void_info is not None else ""),
             result_status=result_status,
             result_label=result_label,
             current_channel_count=len(snapshot.measurements),
@@ -264,6 +277,14 @@ class DatabaseReportingService:
             optimization_channel_count=optimization_count,
             replacement_count=sum(
                 1 for replacement in replacements if replacement.related_run_id == run.run_id
+            ),
+            replacement_analysis_status=(
+                analysis_record.result_status if analysis_record is not None else ""
+            ),
+            replacement_recommendation_count=len(analysis_recommendations),
+            replacement_recommendations_used=sum(
+                item.recommendation_id in used_recommendation_ids
+                for item in analysis_recommendations
             ),
         )
 

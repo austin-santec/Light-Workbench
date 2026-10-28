@@ -20,7 +20,7 @@ from typing import Mapping
 from uuid import UUID, uuid5
 
 from domain.coc_preparation import prepare_coc
-from domain.database_records import SwitchSpec, UnitSpec
+from domain.database_records import RunVoidInfo, SwitchSpec, UnitSpec
 from domain.limit_profiles import LimitProfile
 from domain.reference import ReferenceSnapshot
 from domain.run_purpose import normalize_run_purpose
@@ -42,7 +42,7 @@ class SampleRun:
     purpose: str
     completion_status: str
     analysis_status: str
-    analysis_exclusion_reason: str | None
+    void_info: RunVoidInfo | None
     started_at_utc: datetime
     ended_at_utc: datetime
     reference_snapshot: Mapping[str, object]
@@ -388,7 +388,7 @@ class SampleDatabaseSeeder:
                 run_purpose=run.purpose,
                 station_number=scenario.station_number,
                 analysis_status=run.analysis_status,
-                analysis_exclusion_reason=run.analysis_exclusion_reason,
+                void_info=run.void_info,
                 notes=scenario.tag,
                 client_run_uuid=scenario.run_uuid(run),
                 started_at_utc=run.started_at_utc,
@@ -436,17 +436,23 @@ class SampleDatabaseSeeder:
                 )
                 self.workflow.commit_measurement(pending)
                 measurement_count += 1
-            self.workflow.lifecycle.finish_run(
+            finished = self.workflow.lifecycle.finish_run(
                 record.run_id,
                 run.completion_status,
                 run.ended_at_utc,
             )
-            if run.analysis_status != "included":
-                self.workflow.lifecycle.set_analysis_status(
-                    record.run_id,
-                    run.analysis_status,
-                    exclusion_reason=run.analysis_exclusion_reason,
-                )
+            if finished.analysis_status != run.analysis_status:
+                if run.analysis_status == "excluded":
+                    self.workflow.lifecycle.void_run(
+                        record.run_id,
+                        voided_by=run.void_info.voided_by,
+                        reason=run.void_info.reason,
+                        voided_at_utc=run.void_info.voided_at_utc,
+                    )
+                else:
+                    self.workflow.lifecycle.set_analysis_status(
+                        record.run_id, run.analysis_status
+                    )
         self.verify(scenario)
         return SeedResult(
             scenario.scenario_id,
@@ -647,8 +653,18 @@ def _parse_run(values: Mapping[str, object]) -> SampleRun:
         purpose=purpose,
         completion_status=str(values.get("completion_status", "complete")),
         analysis_status=analysis_status,
-        analysis_exclusion_reason=(
-            str(values.get("analysis_exclusion_reason") or "").strip() or None
+        void_info=(
+            RunVoidInfo(
+                _parse_utc(values.get("voided_at_utc", values["ended_at_utc"])),
+                str(values.get("voided_by") or "Sample Seeder"),
+                str(
+                    values.get("void_reason")
+                    or values.get("analysis_exclusion_reason")
+                    or "Sample run excluded from analysis"
+                ),
+            )
+            if analysis_status == "excluded"
+            else None
         ),
         started_at_utc=_parse_utc(values["started_at_utc"]),
         ended_at_utc=_parse_utc(values["ended_at_utc"]),

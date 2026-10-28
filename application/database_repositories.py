@@ -20,6 +20,7 @@ from domain.database_records import (
     ReplacementRecord,
     ReplacementSpec,
     RunRecord,
+    RunVoidInfo,
     RunStartSpec,
     RunSpec,
     SpareEventRecord,
@@ -90,7 +91,7 @@ class RunRepository(Protocol):
         run_ended_at_utc: datetime,
         *,
         analysis_status: str | None = None,
-        analysis_exclusion_reason: str | None = None,
+        void_info: RunVoidInfo | None = None,
     ) -> RunRecord: ...
 
     def resume(self, run_id: int) -> RunRecord: ...
@@ -111,9 +112,11 @@ class RunRepository(Protocol):
         self,
         run_id: int,
         analysis_status: str,
-        exclusion_reason: str | None = None,
+        void_info: RunVoidInfo | None = None,
         superseded_by_run_id: int | None = None,
     ) -> RunRecord: ...
+
+    def void_run(self, run_id: int, void_info: RunVoidInfo) -> RunRecord: ...
 
 
 class MeasurementRepository(Protocol):

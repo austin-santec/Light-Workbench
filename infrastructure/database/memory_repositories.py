@@ -24,6 +24,7 @@ from domain.database_records import (
     RunRecord,
     RunStartSpec,
     RunSpec,
+    RunVoidInfo,
     SpareEventRecord,
     SpareEventSpec,
     SwitchRecord,
@@ -298,7 +299,7 @@ class InMemoryRepositories:
             limit_snapshot=spec.limit_snapshot,
             run_purpose=spec.run_purpose,
             analysis_status=spec.analysis_status,
-            analysis_exclusion_reason=spec.analysis_exclusion_reason,
+            void_info=spec.void_info,
             part_number_snapshot=spec.part_number_snapshot,
             front_panel_channel_count=spec.front_panel_channel_count,
             notes=spec.notes,
@@ -439,7 +440,7 @@ class InMemoryRepositories:
         run_ended_at_utc: datetime,
         *,
         analysis_status: str | None = None,
-        analysis_exclusion_reason: str | None = None,
+        void_info: RunVoidInfo | None = None,
     ) -> RunRecord:
         if completion_status not in {"complete", "stopped", "failed"}:
             raise ValueError("Invalid terminal completion status")
@@ -456,12 +457,12 @@ class InMemoryRepositories:
             completion_status=completion_status,
             run_ended_at_utc=ended,
             analysis_status=analysis_status or current.analysis_status,
-            analysis_exclusion_reason=(
-                analysis_exclusion_reason
+            void_info=(
+                void_info
                 if analysis_status == "excluded"
                 else None
                 if analysis_status is not None
-                else current.analysis_exclusion_reason
+                else current.void_info
             ),
         )
         self.runs[updated.run_id] = updated
@@ -483,13 +484,13 @@ class InMemoryRepositories:
         self,
         run_id: int,
         analysis_status: str,
-        exclusion_reason: str | None = None,
+        void_info: RunVoidInfo | None = None,
         superseded_by_run_id: int | None = None,
     ) -> RunRecord:
         if analysis_status not in {"pending", "included", "excluded", "superseded"}:
             raise ValueError("Invalid analysis status")
-        if analysis_status == "excluded" and not str(exclusion_reason or "").strip():
-            raise ValueError("Excluded runs require an analysis exclusion reason")
+        if analysis_status == "excluded" and void_info is None:
+            raise ValueError("Voided runs require run void information")
         if analysis_status == "superseded":
             if superseded_by_run_id is None or int(superseded_by_run_id) == int(run_id):
                 raise ValueError("Superseded runs require a different replacement run")
@@ -501,12 +502,23 @@ class InMemoryRepositories:
         updated = replace(
             current,
             analysis_status=analysis_status,
-            analysis_exclusion_reason=(
-                str(exclusion_reason).strip() if analysis_status == "excluded" else None
-            ),
+            void_info=(void_info if analysis_status == "excluded" else None),
             superseded_by_run_id=(
                 int(superseded_by_run_id) if analysis_status == "superseded" else None
             ),
+        )
+        self.runs[updated.run_id] = updated
+        return updated
+
+    def void_run(self, run_id: int, void_info: RunVoidInfo) -> RunRecord:
+        current = self.runs[int(run_id)]
+        if current.analysis_status == "excluded":
+            raise ValueError("Run is already voided")
+        updated = replace(
+            current,
+            analysis_status="excluded",
+            void_info=void_info,
+            superseded_by_run_id=None,
         )
         self.runs[updated.run_id] = updated
         return updated

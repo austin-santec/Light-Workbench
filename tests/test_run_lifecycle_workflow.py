@@ -153,14 +153,14 @@ class RunLifecycleWorkflowTests(unittest.TestCase):
         self.assertEqual(failed.completion_status, "failed")
         self.assertEqual(failed.run_ended_at_utc, NOW + timedelta(minutes=1))
 
-    def test_nonproduction_runs_are_excluded_from_production_analysis(self):
+    def test_nonproduction_runs_are_retained_without_being_implicitly_voided(self):
         for purpose in ("engineering", "training", "calibration"):
             run = self.start(run_purpose=purpose, client_run_uuid=uuid4())
-            self.assertEqual(run.analysis_status, "excluded")
-            self.assertEqual(run.analysis_exclusion_reason, f"Run purpose: {purpose}")
+            self.assertEqual(run.analysis_status, "pending")
+            self.assertIsNone(run.void_info)
             self.assertFalse(is_normal_production_analysis_eligible(run))
-            with self.assertRaisesRegex(ValueError, "Only production"):
-                self.workflow.set_analysis_status(run.run_id, "included")
+            included = self.workflow.set_analysis_status(run.run_id, "included")
+            self.assertEqual(included.analysis_status, "included")
 
     def test_terminal_status_updates_analysis_policy_atomically(self):
         production = self.start()
@@ -177,11 +177,8 @@ class RunLifecycleWorkflowTests(unittest.TestCase):
         engineering = self.workflow.finish_run(
             engineering.run_id, "complete", NOW + timedelta(minutes=1)
         )
-        self.assertEqual(engineering.analysis_status, "excluded")
-        self.assertEqual(
-            engineering.analysis_exclusion_reason,
-            "Run purpose: engineering",
-        )
+        self.assertEqual(engineering.analysis_status, "included")
+        self.assertIsNone(engineering.void_info)
 
     def test_completed_included_production_run_is_analysis_eligible(self):
         run = self.start()
@@ -206,17 +203,48 @@ class RunLifecycleWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(closed.completion_status, "stopped")
 
-    def test_exclusion_requires_a_reason_and_superseding_run_must_differ(self):
+    def test_void_requires_a_reason_and_superseding_run_must_differ(self):
         first = self.start()
         second = self.start(client_run_uuid=uuid4())
-        with self.assertRaisesRegex(ValueError, "exclusion reason"):
-            self.workflow.set_analysis_status(first.run_id, "excluded")
-        superseded = self.workflow.set_analysis_status(
+        with self.assertRaisesRegex(ValueError, "required"):
+            self.workflow.void_run(first.run_id, voided_by="AT", reason="")
+        voided = self.workflow.void_run(
             first.run_id,
-            "superseded",
-            superseded_by_run_id=second.run_id,
+            voided_by="AT",
+            reason="Incorrect reference",
+            voided_at_utc=NOW,
         )
-        self.assertEqual(superseded.superseded_by_run_id, second.run_id)
+        self.assertEqual(voided.analysis_status, "excluded")
+        self.assertEqual(voided.void_info.reason, "Incorrect reference")
+        with self.assertRaisesRegex(ValueError, "already voided"):
+            self.workflow.void_run(first.run_id, voided_by="AT", reason="Again")
+        superseded = self.workflow.set_analysis_status(
+            second.run_id,
+            "superseded",
+            superseded_by_run_id=first.run_id,
+        )
+        self.assertEqual(superseded.superseded_by_run_id, first.run_id)
+
+    def test_void_retains_completion_and_accepted_measurements(self):
+        run = self.start()
+        accepted = self.repository.append_attempt(
+            MeasurementSpec(
+                uuid4(), run.run_id, 1, 1, 1310, Decimal("0.6500"),
+                1550, Decimal("0.5000"), {"snapshot_id": "ref-1"},
+                NOW + timedelta(seconds=1), "AT", 1,
+            )
+        )
+        completed = self.workflow.finish_run(
+            run.run_id, "complete", NOW + timedelta(minutes=1)
+        )
+        voided = self.workflow.void_run(
+            run.run_id,
+            voided_by="AT",
+            reason="Incorrect reference",
+            voided_at_utc=NOW + timedelta(minutes=2),
+        )
+        self.assertEqual(voided.completion_status, completed.completion_status)
+        self.assertEqual(self.repository.history_for_run(run.run_id), (accepted,))
 
     def test_new_run_cannot_start_as_already_superseded(self):
         with self.assertRaisesRegex(ValueError, "cannot begin in superseded"):

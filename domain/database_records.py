@@ -102,6 +102,24 @@ class AssignmentRecord:
 
 
 @dataclass(frozen=True)
+class RunVoidInfo:
+    """Immutable audit information for a permanently voided run."""
+
+    voided_at_utc: datetime
+    voided_by: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "voided_at_utc",
+            require_utc(self.voided_at_utc, "Run void time"),
+        )
+        object.__setattr__(self, "voided_by", require_text(self.voided_by, "Run void operator"))
+        object.__setattr__(self, "reason", require_text(self.reason, "Run void reason"))
+
+
+@dataclass(frozen=True)
 class RunRecord:
     run_id: int
     assignment_id: int
@@ -119,7 +137,7 @@ class RunRecord:
     run_ended_at_utc: datetime | None = None
     run_purpose: str = "production"
     analysis_status: str = "pending"
-    analysis_exclusion_reason: str | None = None
+    void_info: RunVoidInfo | None = None
     superseded_by_run_id: int | None = None
     part_number_snapshot: str | None = None
     front_panel_channel_count: int | None = None
@@ -136,6 +154,15 @@ class RunRecord:
             immutable_mapping(self.measurement_hardware),
         )
         object.__setattr__(self, "limit_snapshot", immutable_mapping(self.limit_snapshot))
+        if self.analysis_status == "excluded" and self.void_info is None:
+            raise ValueError("Voided runs require run void information")
+        if self.analysis_status != "excluded" and self.void_info is not None:
+            raise ValueError("Only voided runs may contain run void information")
+
+    @property
+    def analysis_exclusion_reason(self) -> str | None:
+        """Compatibility view for older read-only callers."""
+        return self.void_info.reason if self.void_info is not None else None
 
 
 @dataclass(frozen=True)
@@ -287,7 +314,7 @@ class RunSpec:
     station_number: int | None = None
     run_purpose: str = "production"
     analysis_status: str = "pending"
-    analysis_exclusion_reason: str | None = None
+    void_info: RunVoidInfo | None = None
     part_number_snapshot: str | None = None
     front_panel_channel_count: int | None = None
     notes: str | None = None
@@ -312,10 +339,10 @@ class RunSpec:
         object.__setattr__(self, "run_purpose", normalize_run_purpose(self.run_purpose))
         if self.analysis_status not in {"pending", "included", "excluded", "superseded"}:
             raise ValueError("Invalid analysis status")
-        if self.analysis_status == "excluded" and not str(
-            self.analysis_exclusion_reason or ""
-        ).strip():
-            raise ValueError("Excluded runs require an analysis exclusion reason")
+        if self.analysis_status == "excluded" and self.void_info is None:
+            raise ValueError("Voided runs require run void information")
+        if self.analysis_status != "excluded" and self.void_info is not None:
+            raise ValueError("Only voided runs may contain run void information")
         if self.front_panel_channel_count is not None:
             require_positive(self.front_panel_channel_count, "Front-panel channel count")
         object.__setattr__(
@@ -342,7 +369,7 @@ class RunStartSpec:
     station_number: int | None = None
     run_purpose: str = "production"
     analysis_status: str = "pending"
-    analysis_exclusion_reason: str | None = None
+    void_info: RunVoidInfo | None = None
     part_number_snapshot: str | None = None
     front_panel_channel_count: int | None = None
     notes: str | None = None
@@ -376,7 +403,7 @@ class RunStartSpec:
             limit_snapshot=self.limit_snapshot,
             run_purpose=self.run_purpose,
             analysis_status=self.analysis_status,
-            analysis_exclusion_reason=self.analysis_exclusion_reason,
+            void_info=self.void_info,
             part_number_snapshot=self.part_number_snapshot,
             front_panel_channel_count=self.front_panel_channel_count,
             notes=self.notes,

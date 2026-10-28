@@ -51,7 +51,7 @@ class SampleDatabaseSeedingTests(unittest.TestCase):
         self.assertEqual(result.spare_count, 2)
         context = workflow.load_for_unit(scenario.unit.main_board_serial, 2)
         self.assertEqual(context.run.run_purpose, "engineering")
-        self.assertEqual(context.run.analysis_status, "excluded")
+        self.assertEqual(context.run.analysis_status, "included")
         self.assertEqual(context.routing.effective_channel_map[9], 43)
         self.assertEqual(context.routing.effective_channel_map[20], 41)
         self.assertEqual(

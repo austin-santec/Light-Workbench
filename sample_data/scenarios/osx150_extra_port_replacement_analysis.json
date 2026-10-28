@@ -41,8 +41,7 @@
       "run_number": 1,
       "run_purpose": "engineering",
       "completion_status": "complete",
-      "analysis_status": "excluded",
-      "analysis_exclusion_reason": "Synthetic engineering sample for replacement-analysis demonstrations.",
+      "analysis_status": "included",
       "started_at_utc": "2026-10-23T20:00:00Z",
       "ended_at_utc": "2026-10-23T20:30:00Z",
       "reference_snapshot": {

@@ -361,6 +361,28 @@ class ReplacementPersistenceWorkflowTests(unittest.TestCase):
         self.assertEqual(snapshot.replacement_history, ())
         self.assertEqual(snapshot.effective_channel_map, {1: 1, 2: 2})
 
+    def test_consumed_designated_spare_is_undesignated_atomically(self):
+        self.workflow.designate_spare(
+            self.assignment.assignment_id,
+            4,
+            "AT",
+            recorded_at_utc=NOW,
+        )
+        snapshot = self.workflow.apply_changes(
+            assignment_id=self.assignment.assignment_id,
+            related_run_id=self.run.run_id,
+            replacements=(ReplacementChangeRequest(1, 4, "High loss", "AT"),),
+            spare_operator="AT",
+            recorded_at_utc=NOW + timedelta(seconds=1),
+        )
+
+        self.assertEqual(snapshot.active_spares, ())
+        self.assertEqual(snapshot.spare_history[-1].action, "undesignated")
+        self.assertEqual(
+            snapshot.spare_history[-1].notes,
+            "Consumed by recorded replacement",
+        )
+
     def test_atomic_correction_or_reversal_appends_instead_of_deleting(self):
         first = self.workflow.apply_changes(
             assignment_id=self.assignment.assignment_id,

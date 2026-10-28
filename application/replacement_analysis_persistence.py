@@ -22,6 +22,11 @@ RESULT_RECOMMENDATIONS_AVAILABLE = "recommendations_available"
 RESULT_NO_VIABLE_RECOMMENDATIONS = "no_viable_recommendations"
 RESULT_NOT_APPLICABLE = "not_applicable_no_extra_ports"
 RESULT_INCOMPLETE_INPUT = "incomplete_input"
+RESULT_OPTIMIZED = "optimized"
+RESULT_VERIFICATION_REQUIRED = "verification_required"
+RESULT_PASS_NO_VIABLE_OPTIMIZATION = "pass_no_viable_optimization"
+RESULT_FAIL_NO_VIABLE_RECOVERY = "fail_no_viable_recovery"
+RESULT_REVIEW_REQUIRED = "review_required"
 
 
 def _json_safe(value):
@@ -36,6 +41,21 @@ def _json_safe(value):
 
 def classify_result(result: Mapping) -> str:
     """Classify a completed calculation without introducing mutable state."""
+    explicit = str(
+        result.get("result_status") or result.get("analysis_result_status") or ""
+    )
+    if explicit in {
+        RESULT_OPTIMIZED,
+        RESULT_RECOMMENDATIONS_AVAILABLE,
+        RESULT_VERIFICATION_REQUIRED,
+        RESULT_PASS_NO_VIABLE_OPTIMIZATION,
+        RESULT_FAIL_NO_VIABLE_RECOVERY,
+        RESULT_INCOMPLETE_INPUT,
+        RESULT_REVIEW_REQUIRED,
+        RESULT_NO_VIABLE_RECOMMENDATIONS,
+        RESULT_NOT_APPLICABLE,
+    }:
+        return explicit
     if result.get("missing_channels"):
         return RESULT_INCOMPLETE_INPUT
     if not result.get("extra_ports"):
@@ -50,7 +70,12 @@ class PersistedReplacementAnalysis:
     record: ReplacementAnalysisRecord
     recommendations: tuple[ReplacementAnalysisRecommendationRecord, ...]
 
-    def is_current(self, current_measurement_high_watermark: int | None) -> bool:
+    def is_current(self, current_source_state) -> bool:
+        saved_snapshot = self.record.result_details.get("source_snapshot", {})
+        saved_fingerprint = saved_snapshot.get("state_fingerprint_sha256")
+        if isinstance(current_source_state, str) and saved_fingerprint:
+            return saved_fingerprint == current_source_state
+        current_measurement_high_watermark = current_source_state
         return (
             current_measurement_high_watermark is not None
             and self.record.source_measurement_high_watermark_id
@@ -114,7 +139,10 @@ class ReplacementAnalysisPersistenceWorkflow:
         analyzed_at_utc: datetime | None = None,
     ) -> PersistedReplacementAnalysis:
         """Persist one complete result and return its authoritative snapshot."""
-        high_watermark = self._repository.current_measurement_high_watermark(run_id)
+        snapshot = result.get("source_snapshot", {})
+        high_watermark = snapshot.get("measurement_high_watermark_id")
+        if high_watermark is None:
+            high_watermark = self._repository.current_measurement_high_watermark(run_id)
         if high_watermark is None:
             raise ValueError("Replacement analysis requires an accepted measurement")
         result_status = classify_result(result)
@@ -183,8 +211,13 @@ __all__ = [
     "PersistedReplacementAnalysis",
     "ReplacementAnalysisPersistenceWorkflow",
     "RESULT_INCOMPLETE_INPUT",
+    "RESULT_FAIL_NO_VIABLE_RECOVERY",
+    "RESULT_OPTIMIZED",
     "RESULT_NO_VIABLE_RECOMMENDATIONS",
     "RESULT_NOT_APPLICABLE",
     "RESULT_RECOMMENDATIONS_AVAILABLE",
+    "RESULT_PASS_NO_VIABLE_OPTIMIZATION",
+    "RESULT_REVIEW_REQUIRED",
+    "RESULT_VERIFICATION_REQUIRED",
     "classify_result",
 ]

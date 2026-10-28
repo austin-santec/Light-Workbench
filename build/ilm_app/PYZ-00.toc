@@ -370,6 +370,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\diagnostic_trace.py',
    'PYMODULE'),
+  ('domain.effective_replacement_analysis',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\effective_replacement_analysis.py',
+   'PYMODULE'),
   ('domain.extra_ports',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\extra_ports.py',

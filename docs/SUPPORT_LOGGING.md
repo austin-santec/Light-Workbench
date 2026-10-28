@@ -206,8 +206,15 @@ change the validation or persistence decision.
   session trace selected by the operator.
 - **Support logs**: always-on, local engineering evidence that includes
   temporary measurements and workflow/hardware context.
-- **Future audit history**: a controlled, immutable, attributable record that
-  has not yet been implemented.
+- **Database audit history**: run voids, accepted attempts, replacements,
+  spares, and saved replacement analyses are authoritative database records;
+  support events only provide bounded troubleshooting correlation.
+
+Iterative replacement workflows emit bounded events for void requests/results,
+effective projection summaries, included/excluded source-run decisions,
+replacement verification, verification-run startup, completed analyses, saved
+analysis identity, and freshness changes. Events contain IDs, counts, states,
+and concise reasons, not complete database records or raw measurement history.
 
 A future release may add controlled central collection, authentication,
 authorization, and database ingestion. Version 1.16.1 performs no upload and

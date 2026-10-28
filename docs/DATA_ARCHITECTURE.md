@@ -187,6 +187,18 @@ The context run metadata records the COC output path, front-panel count, all
 compatible runs considered, contributing runs, excluded-run reasons, and each
 effective logical-channel/physical-port source. This provenance does not
 change any source run's accepted measurement list.
+
+For database runs, compatibility is additionally scoped to one immutable
+unit/switch assignment. Voided (`analysis_status = excluded`) and superseded
+runs cannot contribute. Replacement analysis, status assessment, and COC
+preparation use the same newest whole-pair/current-map selection rules, so an
+older passing attempt cannot override a newer accepted failure. A replacement
+is considered verified only by a later accepted reading for the same logical
+channel on its recorded replacement physical port.
+
+Run voiding is non-destructive. `void_info_json` records UTC time, operator,
+and reason while all measurements, retests, replacements, and saved analyses
+remain queryable. The application offers no unvoid action.
 Each approved model/mode uses separate templates for capacities 1-45 and
 46-48; the exporter removes unused rows and updates merged ranges and print
 area on the copied workbook only. Output files use the local-time name format

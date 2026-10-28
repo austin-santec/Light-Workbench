@@ -36,6 +36,10 @@ from domain.database_records import (
     UnitSpec,
     utc_now,
 )
+from domain.effective_replacement_analysis import (
+    build_effective_replacement_projection,
+)
+from domain.limit_profiles import LimitProfile
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,7 @@ class DatabaseRunContext:
     routing: AssignmentRoutingSnapshot
     replacement_analysis: object | None = None
     replacement_analysis_history: tuple[object, ...] = ()
+    effective_projection: object | None = None
 
     @property
     def run(self) -> RunRecord:
@@ -165,6 +170,15 @@ class DatabasePrimaryRunWorkflow:
             for run in self.repositories.list_for_unit(int(unit_id))
         )
 
+    def list_for_assignment(
+        self, assignment_id: int
+    ) -> tuple[DatabaseRunContext, ...]:
+        self._require_ready()
+        return tuple(
+            self._context(run)
+            for run in self.repositories.list_for_assignment(int(assignment_id))
+        )
+
     def commit_measurement(
         self, pending: MeasurementWriteSpec
     ) -> tuple[MeasurementRecord, DatabaseRunContext]:
@@ -179,6 +193,60 @@ class DatabasePrimaryRunWorkflow:
         self._require_ready()
         run = self.lifecycle.resume_run(run_id)
         return self._context(run)
+
+    def void_run(
+        self,
+        run_id: int,
+        *,
+        voided_by: str,
+        reason: str,
+    ) -> DatabaseRunContext:
+        """Permanently exclude a retained run and refresh authoritative state."""
+        self._require_ready()
+        run = self.lifecycle.void_run(
+            run_id,
+            voided_by=voided_by,
+            reason=reason,
+        )
+        return self._context(run)
+
+    def build_replacement_projection(
+        self,
+        run_id: int,
+        profile,
+        *,
+        bottom_spare_count: int = 2,
+    ):
+        """Coordinate assignment data for the pure effective-state projector."""
+        run = self.repositories.get(int(run_id))
+        if run is None:
+            raise ValueError("Run was not found")
+        routing = self.replacements.load_assignment(run.assignment_id)
+        runs = self.repositories.list_for_assignment(run.assignment_id)
+        histories = {
+            item.run_id: self.repositories.snapshot_for_run(item.run_id)[1]
+            for item in runs
+        }
+        return build_effective_replacement_projection(
+            context_run=run,
+            runs=runs,
+            measurements_by_run=histories,
+            # Rebuild the effective map inside the projection from the assignment
+            # baseline plus only replacement records visible to the context run.
+            # Passing today's map would leak later replacement activity into a
+            # historical analysis.
+            effective_channel_map={
+                item.logical_channel: item.initial_physical_port
+                for item in routing.channel_map
+            },
+            replacements=routing.replacement_history,
+            active_spares=routing.active_spares,
+            spare_event_ids=tuple(
+                event.spare_event_id for event in routing.spare_history
+            ),
+            profile=profile,
+            bottom_spare_count=bottom_spare_count,
+        )
 
     def _require_ready(self) -> None:
         result = self.check_ready()
@@ -202,14 +270,23 @@ class DatabasePrimaryRunWorkflow:
             switch = assignment_result.switch
         if unit is None or switch is None:
             raise ValueError("Run hardware identity is incomplete")
+        snapshot = self.queries.load(run.run_id)
+        routing = self.replacements.load_assignment(assignment.assignment_id)
+        projection = None
+        try:
+            profile = LimitProfile.from_mapping(run.limit_snapshot)
+            projection = self.build_replacement_projection(run.run_id, profile)
+        except (KeyError, TypeError, ValueError):
+            pass
         return DatabaseRunContext(
             unit,
             switch,
             assignment,
-            self.queries.load(run.run_id),
-            self.replacements.load_assignment(assignment.assignment_id),
+            snapshot,
+            routing,
             self.replacement_analyses.latest_for_run(run.run_id),
             self.replacement_analyses.history_for_run(run.run_id),
+            projection,
         )
 
 

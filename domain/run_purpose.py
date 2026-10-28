@@ -43,10 +43,10 @@ def run_purpose_label(value: str | RunPurpose | None) -> str:
 def default_analysis_policy(value: str | RunPurpose | None) -> tuple[str, str | None]:
     """Return the initial analysis state and reason for a new run."""
 
-    purpose = normalize_run_purpose(value)
-    if purpose == RunPurpose.PRODUCTION.value:
-        return "pending", None
-    return "excluded", "Run purpose: %s" % purpose
+    normalize_run_purpose(value)
+    # Run purpose is descriptive.  It must not silently void otherwise valid
+    # measurements from assignment-wide analysis or COC preparation.
+    return "pending", None
 
 
 __all__ = [

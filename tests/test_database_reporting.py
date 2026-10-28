@@ -13,6 +13,7 @@ from domain.database_records import (
     AssignmentSpec,
     ReplacementSpec,
     RunSpec,
+    RunVoidInfo,
     SwitchSpec,
     UnitSpec,
 )
@@ -217,6 +218,24 @@ class DatabaseReportingTests(unittest.TestCase):
         self.assertEqual(replacement.related_run_number, 1)
         self.assertEqual(replacement.notes, "Operator replacement details")
         self.assertEqual(replacement.outcome, "Pass")
+
+    def test_voided_run_remains_reportable_with_audit_details(self):
+        run = self.create_run(1, analysis="included")
+        info = RunVoidInfo(
+            run.run_started_at_utc + timedelta(minutes=2),
+            "AT",
+            "Incorrect reference was used",
+        )
+        self.repository.void_run(run.run_id, info)
+
+        report = self.service.search(ReportFilters(include_all_records=True))
+
+        row = next(item for item in report.runs if item.run_id == run.run_id)
+        self.assertEqual(row.analysis_status, "excluded")
+        self.assertEqual(row.voided_at_utc, info.voided_at_utc)
+        self.assertEqual(row.voided_by, "AT")
+        self.assertEqual(row.void_reason, "Incorrect reference was used")
+        self.assertIn("Voided", run_report_rows(report)[0])
 
     def test_report_csv_uses_application_rows_and_quotes_values(self):
         self.populate_included_run()

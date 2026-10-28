@@ -63,6 +63,9 @@ class RunReportRow:
     completion_status: str
     run_purpose: str
     analysis_status: str
+    voided_at_utc: datetime | None
+    voided_by: str
+    void_reason: str
     result_status: str
     result_label: str
     current_channel_count: int
@@ -72,6 +75,9 @@ class RunReportRow:
     failing_channel_count: int
     optimization_channel_count: int
     replacement_count: int
+    replacement_analysis_status: str = ""
+    replacement_recommendation_count: int = 0
+    replacement_recommendations_used: int = 0
 
 
 @dataclass(frozen=True)

@@ -24,6 +24,7 @@ from domain.database_records import (
     RunRecord,
     RunStartSpec,
     RunSpec,
+    RunVoidInfo,
     SpareEventRecord,
     SpareEventSpec,
     SwitchRecord,
@@ -53,6 +54,32 @@ def _utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _void_json(value: RunVoidInfo | None) -> str | None:
+    if value is None:
+        return None
+    return _json(
+        {
+            "voided_at_utc": value.voided_at_utc.isoformat(timespec="milliseconds").replace(
+                "+00:00", "Z"
+            ),
+            "voided_by": value.voided_by,
+            "reason": value.reason,
+        }
+    )
+
+
+def _void_info(value: str | None) -> RunVoidInfo | None:
+    if value is None:
+        return None
+    data = _mapping(value)
+    timestamp = str(data["voided_at_utc"]).replace("Z", "+00:00")
+    return RunVoidInfo(
+        datetime.fromisoformat(timestamp),
+        str(data["voided_by"]),
+        str(data["reason"]),
+    )
 
 
 class SqlRepositories:
@@ -416,7 +443,7 @@ class SqlRepositories:
                     assignment_id, run_number, client_run_uuid,
                     run_started_at_utc, tested_by, wavelength_mode,
                     operating_band, application_version, run_purpose,
-                    analysis_status, analysis_exclusion_reason,
+                    analysis_status, void_info_json,
                     part_number_snapshot, front_panel_channel_count,
                     station_number,
                     measurement_hardware_json, limit_snapshot_json, notes
@@ -433,7 +460,7 @@ class SqlRepositories:
                 spec.application_version,
                 spec.run_purpose,
                 spec.analysis_status,
-                spec.analysis_exclusion_reason,
+                _void_json(spec.void_info),
                 spec.part_number_snapshot,
                 spec.front_panel_channel_count,
                 spec.station_number,
@@ -579,7 +606,7 @@ class SqlRepositories:
         run_ended_at_utc: datetime,
         *,
         analysis_status: str | None = None,
-        analysis_exclusion_reason: str | None = None,
+        void_info: RunVoidInfo | None = None,
     ) -> RunRecord:
         if completion_status not in {"complete", "stopped", "failed"}:
             raise ValueError("Invalid terminal completion status")
@@ -599,15 +626,15 @@ class SqlRepositories:
                 raise ValueError("Run end time cannot precede its start")
             if analysis_status not in {None, "pending", "included", "excluded", "superseded"}:
                 raise ValueError("Invalid analysis status")
-            if analysis_status == "excluded" and not str(analysis_exclusion_reason or "").strip():
-                raise ValueError("Excluded runs require an analysis exclusion reason")
+            if analysis_status == "excluded" and void_info is None:
+                raise ValueError("Voided runs require run void information")
             changed = cursor.execute(
                 """
                 UPDATE dbo.IL_RUNS SET completion_status = ?, run_ended_at_utc = ?,
                     analysis_status = COALESCE(?, analysis_status),
-                    analysis_exclusion_reason = CASE
+                    void_info_json = CASE
                         WHEN ? = 'excluded' THEN ?
-                        WHEN ? IS NULL THEN analysis_exclusion_reason
+                        WHEN ? IS NULL THEN void_info_json
                         ELSE NULL
                     END,
                     updated_at_utc = SYSUTCDATETIME()
@@ -617,7 +644,7 @@ class SqlRepositories:
                 ended,
                 analysis_status,
                 analysis_status,
-                analysis_exclusion_reason,
+                _void_json(void_info),
                 analysis_status,
                 run_id,
             ).rowcount
@@ -651,35 +678,52 @@ class SqlRepositories:
         self,
         run_id: int,
         analysis_status: str,
-        exclusion_reason: str | None = None,
+        void_info: RunVoidInfo | None = None,
         superseded_by_run_id: int | None = None,
     ) -> RunRecord:
         if analysis_status not in {"pending", "included", "excluded", "superseded"}:
             raise ValueError("Invalid analysis status")
-        if analysis_status == "excluded" and not str(exclusion_reason or "").strip():
-            raise ValueError("Excluded runs require an analysis exclusion reason")
+        if analysis_status == "excluded" and void_info is None:
+            raise ValueError("Voided runs require run void information")
         if analysis_status == "superseded":
             if superseded_by_run_id is None or int(superseded_by_run_id) == int(run_id):
                 raise ValueError("Superseded runs require a different replacement run")
         elif superseded_by_run_id is not None:
             raise ValueError("Only superseded runs may identify a superseding run")
-        reason = str(exclusion_reason).strip() if analysis_status == "excluded" else None
+        void_json = _void_json(void_info) if analysis_status == "excluded" else None
         target = int(superseded_by_run_id) if analysis_status == "superseded" else None
         with self._factory.transaction() as cursor:
             changed = cursor.execute(
                 """
                 UPDATE dbo.IL_RUNS SET analysis_status = ?,
-                    analysis_exclusion_reason = ?, superseded_by_run_id = ?,
+                    void_info_json = ?, superseded_by_run_id = ?,
                     updated_at_utc = SYSUTCDATETIME()
                 WHERE run_id = ?
                 """,
                 analysis_status,
-                reason,
+                void_json,
                 target,
                 int(run_id),
             ).rowcount
             if changed != 1:
                 raise ValueError("Run was not found")
+            return self._run_by_id(cursor, run_id)
+
+    def void_run(self, run_id: int, void_info: RunVoidInfo) -> RunRecord:
+        """Atomically and permanently mark a retained run as voided."""
+        with self._factory.transaction() as cursor:
+            changed = cursor.execute(
+                """
+                UPDATE dbo.IL_RUNS
+                SET analysis_status = 'excluded', void_info_json = ?,
+                    superseded_by_run_id = NULL, updated_at_utc = SYSUTCDATETIME()
+                WHERE run_id = ? AND analysis_status <> 'excluded'
+                """,
+                _void_json(void_info),
+                int(run_id),
+            ).rowcount
+            if changed != 1:
+                raise ValueError("Run was not found or is already voided")
             return self._run_by_id(cursor, run_id)
 
     def find_stale_in_progress(self, before_utc: datetime) -> tuple[RunRecord, ...]:
@@ -1305,7 +1349,7 @@ class SqlRepositories:
             application_version=row[8], measurement_hardware=_mapping(row[19]),
             limit_snapshot=_mapping(row[20]), station_number=row[17], completion_status=row[9],
             run_ended_at_utc=_utc(row[10]), run_purpose=row[11],
-            analysis_status=row[12], analysis_exclusion_reason=row[13],
+            analysis_status=row[12], void_info=_void_info(row[13]),
             superseded_by_run_id=row[14], part_number_snapshot=row[15],
             front_panel_channel_count=row[16], notes=row[18],
         )
@@ -1387,7 +1431,7 @@ class SqlRepositories:
             run.run_started_at_utc, run.tested_by, run.wavelength_mode,
             run.operating_band, run.application_version, run.completion_status,
             run.run_ended_at_utc, run.run_purpose, run.analysis_status,
-            run.analysis_exclusion_reason, run.superseded_by_run_id,
+            run.void_info_json, run.superseded_by_run_id,
             run.part_number_snapshot, run.front_panel_channel_count,
             run.station_number, run.notes,
             run.measurement_hardware_json, run.limit_snapshot_json

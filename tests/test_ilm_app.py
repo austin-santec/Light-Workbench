@@ -304,7 +304,7 @@ class MainWindowTests(unittest.TestCase):
         window.hardware_run_purpose.setCurrentIndex(
             window.hardware_run_purpose.findData("engineering")
         )
-        self.assertIn("excluded from production analysis", window.run_purpose_notice_label.text())
+        self.assertIn("does not block", window.run_purpose_notice_label.text())
         self.assertFalse(window.run_purpose_notice_label.isHidden())
         self.assertIn("Engineering", window.run_purpose_status_label.text())
         window.close()
@@ -1018,6 +1018,80 @@ class MainWindowTests(unittest.TestCase):
         window = MainWindow()
         self.assertFalse(window.admin_config_action.isEnabled())
         self.assertFalse(window.admin_session.is_active)
+        window.close()
+
+    def test_void_run_control_requires_admin_and_safe_idle_database_context(self):
+        window = MainWindow()
+        context = MagicMock()
+        context.run.analysis_status = "included"
+        window.database_run_context = context
+
+        window._refresh_void_run_control()
+        self.assertFalse(window.void_run_button.isEnabled())
+
+        window.admin_session.authenticate("lwb")
+        window._refresh_void_run_control()
+        self.assertTrue(window.void_run_button.isEnabled())
+
+        window.hardware_thread = MagicMock()
+        window._refresh_void_run_control()
+        self.assertFalse(window.void_run_button.isEnabled())
+
+        window.hardware_thread = None
+        window._database_write_request_in_flight = True
+        window._refresh_void_run_control()
+        self.assertFalse(window.void_run_button.isEnabled())
+
+        window._database_write_request_in_flight = False
+        context.run.analysis_status = "excluded"
+        window._refresh_void_run_control()
+        self.assertFalse(window.void_run_button.isEnabled())
+        window.close()
+
+    def test_verification_run_preselects_only_awaiting_replacement_channels(self):
+        window = MainWindow()
+        awaiting_20 = MagicMock()
+        awaiting_20.state = "awaiting_retest"
+        awaiting_20.replacement.logical_channel = 20
+        awaiting_20.replacement.previous_physical_port = 20
+        awaiting_20.replacement.replacement_physical_port = 49
+        awaiting_20.replacement.source_recommendation_id = 12
+        awaiting_21 = MagicMock()
+        awaiting_21.state = "awaiting_retest"
+        awaiting_21.replacement.logical_channel = 21
+        awaiting_21.replacement.previous_physical_port = 21
+        awaiting_21.replacement.replacement_physical_port = 50
+        awaiting_21.replacement.source_recommendation_id = 13
+        verified = MagicMock()
+        verified.state = "verified_passing"
+        context = MagicMock()
+        context.assignment.removed_at_utc = None
+        context.effective_projection.verifications = (
+            awaiting_20,
+            awaiting_21,
+            verified,
+        )
+        context.run.run_number = 4
+        context.run.run_id = 44
+        context.run.assignment_id = 5
+        context.unit.unit_id = 7
+        historical_context = MagicMock()
+        historical_context.run.run_number = 4
+        window.database_run_context = context
+        window.database_workflow = MagicMock()
+        window.database_workflow.list_for_unit.return_value = (historical_context,)
+
+        with patch.object(QDialog, "exec_", return_value=QDialog.Accepted), patch.object(
+            window, "start_hardware"
+        ) as start_hardware:
+            window.start_replacement_verification_run()
+
+        self.assertEqual(
+            window.hardware_channel_mode.currentText(), "Specific channels/ranges"
+        )
+        self.assertEqual(window.hardware_channel_ranges.text(), "20, 21")
+        self.assertEqual(window.hardware_run_number.value(), 5)
+        start_hardware.assert_called_once_with()
         window.close()
 
     def test_admin_mode_switches_lulu_icon_and_restores_it_on_exit(self):
@@ -2117,6 +2191,24 @@ class MainWindowTests(unittest.TestCase):
             self.assertTrue(window.write_coc_button.isEnabled())
             self.assertTrue(window.write_coc_action.isEnabled())
             window.close()
+
+    def test_coc_controls_treat_database_measurements_as_persisted(self):
+        window = MainWindow()
+        criteria = default_limit_profiles()["OSX-150"].as_dict()
+        window.run_data = RunData(
+            Path("database-run-42"),
+            [MeasurementRecord(1, 1.0, 1.1)],
+            {"Wavelength mode": "SM"},
+            criteria_snapshot=criteria,
+        )
+        window.database_run_context = MagicMock()
+        window.database_run_context.run.analysis_status = "included"
+
+        window.refresh_coc_controls()
+
+        self.assertTrue(window.write_coc_button.isEnabled())
+        self.assertTrue(window.write_coc_action.isEnabled())
+        window.close()
 
     def test_coc_controls_enable_for_osx100_mm_runs(self):
         with tempfile.TemporaryDirectory() as directory:

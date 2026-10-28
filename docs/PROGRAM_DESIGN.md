@@ -408,10 +408,21 @@ storage option may be evaluated here without changing domain reporting.
 - Replacements and designated spares are device-level information and are
   shared across runs for that unit.
 - Database-backed replacement analysis is saved as an append-only snapshot with
-  normalized recommendation rows, criteria, operator, and source measurement
-  high-watermark. A newer accepted measurement marks the saved analysis stale.
+  normalized recommendation rows, criteria, operator, assignment-wide source
+  provenance, and a deterministic source-state fingerprint. New measurements,
+  replacements, spare events, run dispositions, or criteria mark an older
+  analysis stale.
   Manually recorded replacements remain authoritative, and may reference the
   recommendation that informed them for usage reporting.
+- Replacement analysis, run status, and database COC preparation share the
+  same assignment boundary, latest-whole-pair rule, and effective recorded
+  physical mapping. No analysis action commands or queries switch routing.
+- A replacement is verified only by a compatible accepted post-replacement
+  measurement on the recorded new physical port. The UI can start an ordinary
+  selected-channel run for replacements still awaiting that evidence.
+- Admin Mode may permanently mark an inactive database run `excluded`
+  (displayed as Voided). Its rows and analysis history remain visible, but it
+  cannot contribute to later effective calculations.
 - Existing run formats should remain readable when storage changes.
 
 ## Refactoring strategy
@@ -436,9 +447,10 @@ run persistence. Live Write Mode keeps sampling without repeated modal dialogs.
 New runs explicitly record one of four purposes: `production`, `engineering`,
 `training`, or `calibration`. Production is the default. Purpose is part of the
 run record rather than a hardware identity field, so it does not create a new
-unit folder or alter channel measurements. Non-production runs are retained for
-support and review but are automatically excluded from normal production
-analysis. A completed production run becomes eligible for normal analysis;
-stopped or failed production runs remain pending. The selector is disabled for
+unit folder or alter channel measurements. Purpose does not automatically void
+a run; production-only reports still filter by purpose, while purpose-neutral
+COC and replacement analysis use technical compatibility and explicit run
+disposition. A completed run becomes included; stopped or failed runs remain
+pending. The selector is disabled for
 active and loaded historical runs, and continuation/retest operations retain the
 original purpose.

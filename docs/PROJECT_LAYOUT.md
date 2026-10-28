@@ -67,6 +67,9 @@ be used as source locations. The release scripts keep deployment output in
   repository coordination: `application/coc_workflow.py`; operator selection:
   `ui/coc_export_dialog.py`; workbook mechanics: `infrastructure/coc_export.py`.
 - Model-specific insertion-loss criteria: `domain/limit_profiles.py`.
+- Assignment-wide effective measurement selection, replacement verification,
+  iterative result classification, and source fingerprints:
+  `domain/effective_replacement_analysis.py`.
 - Stable run-purpose values and production-analysis policy:
   `domain/run_purpose.py`.
 - Vendor-neutral contracts and composed hardware lifecycle: `hardware/`.

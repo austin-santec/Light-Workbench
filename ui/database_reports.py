@@ -41,11 +41,16 @@ RUN_HEADERS = (
     "Completion",
     "Purpose",
     "Analysis",
+    "Voided At (UTC)",
+    "Voided By",
+    "Void Reason",
     "Result",
     "Channels",
     "Attempts",
     "Retests",
     "Replacements",
+    "Replacement Analysis",
+    "Recommendations Used",
 )
 ASSIGNMENT_HEADERS = (
     "Unit Serial",
@@ -208,12 +213,21 @@ def run_report_rows(report) -> list[list[str]]:
             row.wavelength_mode,
             row.completion_status,
             row.run_purpose,
-            row.analysis_status,
+            "Voided" if row.analysis_status == "excluded" else row.analysis_status.title(),
+            _timestamp(row.voided_at_utc),
+            row.voided_by,
+            row.void_reason,
             row.result_label,
             str(row.current_channel_count),
             str(row.attempt_count),
             str(row.retest_attempt_count),
             str(row.replacement_count),
+            row.replacement_analysis_status.replace("_", " ").title(),
+            "%d/%d"
+            % (
+                row.replacement_recommendations_used,
+                row.replacement_recommendation_count,
+            ),
         ]
         for row in report.runs
     ]

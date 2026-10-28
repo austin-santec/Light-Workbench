@@ -154,6 +154,17 @@ Each item already has useful behavior, but the noted work remains.
 
 ## Not implemented
 
+## Recently completed database replacement workflow
+
+- [x] Scope replacement analysis and COC source data to the current switch assignment.
+- [x] Combine compatible full and partial runs using the newest accepted whole wavelength pair.
+- [x] Keep unused measured extras available for later iterative analyses.
+- [x] Derive replacement verification from post-replacement readings without querying or changing switch mappings.
+- [x] Provide a selected-channel replacement verification run action.
+- [x] Persist immutable analysis snapshots, recommendation usage, source provenance, and freshness fingerprints.
+- [x] Allow administrators to permanently void an invalid entire run while retaining its audit history.
+- [x] Show void details in loaded-run information and database reports.
+
 - [ ] **FUN-022 — Define criteria by family, channel-count range, and wavelength.** `[MVP]`
 - [ ] **FUN-032 — Force a new two-wavelength test after a mapping change.** `[MVP]`
 - [ ] **FUN-036 — Link and retain pre- and post-optimization measurements.** `[R1]`

@@ -446,6 +446,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\database\\sql_migrations\\0004_replacement_analysis_history.sql',
    'DATA'),
+  ('infrastructure\\database\\sql_migrations\\0005_iterative_replacement_analysis.sql',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\sql_migrations\\0005_iterative_replacement_analysis.sql',
+   'DATA'),
   ('libcrypto-3.dll',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\DLLs\\libcrypto-3.dll',
    'BINARY'),

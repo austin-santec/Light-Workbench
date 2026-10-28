@@ -2,9 +2,10 @@
 
 ## Status and purpose
 
-Status: implemented through persistent replacement-analysis history and
-read-only database reporting (Milestone 10), with analysis history added by
-forward-only migration `0004_replacement_analysis_history.sql`.
+Status: implemented through assignment-scoped iterative replacement analysis,
+permanent run voiding, persistent analysis history, and read-only database
+reporting. The current schema includes forward-only migration
+`0005_iterative_replacement_analysis.sql`.
 Database-neutral repositories and the unit, assignment, run-lifecycle,
 atomic-measurement, current/history query, and assignment-scoped routing
 boundaries are connected to the production hardware workflow.
@@ -86,7 +87,8 @@ is explicitly requested.
 - Preserve every accepted retest attempt while exposing a simple current-value
   view.
 - Keep production, engineering, training, and calibration runs distinguishable
-  so non-production data cannot silently enter normal analysis.
+  so production-only reporting remains intentional without conflating purpose
+  with technical validity or run voiding.
 - Keep UI, hardware communication, domain rules, and SQL access separated by
   repository boundaries.
 - Keep local support logs outside the analytical database.
@@ -263,7 +265,7 @@ One record per Light Workbench test run.
 | `completion_status` | `VARCHAR(20)` | Run lifecycle status |
 | `run_purpose` | `VARCHAR(30)` | Purpose of the run |
 | `analysis_status` | `VARCHAR(20)` | Analysis eligibility |
-| `analysis_exclusion_reason` | `NVARCHAR(1000) NULL` | Reason for exclusion |
+| `void_info_json` | `NVARCHAR(MAX) NULL` | Required immutable void timestamp, operator, and reason when status is `excluded` |
 | `superseded_by_run_id` | `BIGINT NULL` | Preferred replacement run |
 | `part_number_snapshot` | `NVARCHAR(100) NULL` | Part number at test time |
 | `front_panel_channel_count` | `INT NULL` | Required channels at test time |
@@ -302,10 +304,16 @@ Controlled values:
 | `wavelength_mode` | `SM`, `MM` |
 
 Recommended defaults are `in_progress`, `production`, and `pending`.
-`analysis_exclusion_reason` is required when analysis status is `excluded`.
-Engineering, training, and calibration runs default to `excluded`; only a
-completed production run explicitly marked `included` is eligible for normal
-production analysis.
+`excluded` is displayed to operators as **Voided**. Voided rows require valid
+`void_info_json` containing nonblank `voided_at_utc`, `voided_by`, and `reason`;
+non-voided rows must keep that field null. Run purpose is descriptive and does
+not implicitly void engineering, training, or calibration data. Purpose still
+controls production-report filtering, while COC and assignment analysis apply
+the same technical eligibility rules to every purpose.
+
+Migration 0005 converts legacy exclusion reasons using the run's
+`updated_at_utc` and `tested_by`, removes the obsolete reason column, and
+expands the saved replacement-analysis result-state constraint.
 
 Example hardware snapshot:
 
@@ -469,12 +477,16 @@ history remains available for support and trend review.
 | `result_status` | `VARCHAR(40)` | Classification of the saved calculation |
 | `result_details_json` | `NVARCHAR(MAX)` | Bounded result details excluding normalized recommendations |
 
-`result_status` is one of `recommendations_available`,
-`no_viable_recommendations`, `not_applicable_no_extra_ports`, or
-`incomplete_input`. The measurement high-watermark prevents a saved result
-from being presented as current after a retest or new accepted reading. The
-analysis remains in history, but the UI marks it stale and requires a new
-calculation.
+New `result_status` values are `optimized`, `recommendations_available`,
+`verification_required`, `pass_no_viable_optimization`,
+`fail_no_viable_recovery`, `incomplete_input`, and `review_required`. Legacy
+`no_viable_recommendations` and `not_applicable_no_extra_ports` values remain
+loadable. `result_details_json.source_snapshot` contains assignment/context
+identity, included runs, selected measurement IDs, replacement/spare event
+IDs, watermarks, and a deterministic state fingerprint. The scalar measurement
+high-watermark remains for compatibility and referential integrity; freshness
+uses the full fingerprint. A changed source state makes the snapshot stale but
+never mutates or removes it from history.
 
 ### `REPLACEMENT_ANALYSIS_RECOMMENDATIONS`
 
@@ -560,6 +572,15 @@ Data, status, analysis, COC preparation, and replacement analysis always use
 the complete unfiltered current projection. Reading History alone uses every
 accepted attempt. Database-origin COC inputs carry a stable run identifier
 rather than inventing a local source-file path.
+
+For replacement decisions, `domain/effective_replacement_analysis.py` builds
+an assignment-scoped projection across compatible runs no later than the
+selected context run. It selects one newest whole wavelength pair per logical
+channel, requires the recorded effective physical port, carries forward unused
+measured extras, derives replacement verification, and creates a deterministic
+SHA-256 source-state fingerprint. The fingerprint and source IDs are stored in
+the existing analysis JSON, so append-only analyses can be labeled current,
+stale, or historical without adding mutable watermark columns.
 
 ### `vw_CurrentChannelMap`
 
@@ -755,11 +776,9 @@ Remaining before production:
 - `docs/TESTING_AND_RELEASE.md` - required validation and release checks.
 Run purpose is selected when a new run begins and is persisted in `IL_RUNS`.
 Production is the default; Engineering, Training, and Calibration are retained
-for support/review but are excluded from normal production analysis. Completion
-and analysis are separate: a completed production run is finalized as included,
-while stopped or failed production runs remain pending. Non-production runs stay
-excluded even after completion. Continuations and retests inherit the original
-purpose. COC export is purpose-neutral: production, engineering, training,
-calibration, and legacy sources without a purpose may be selected when they
-satisfy the same measurement, compatibility, routing, and limit requirements.
-Run purpose remains stored for provenance and reporting classification.
+for provenance and reporting but are not implicitly voided. Completion and
+analysis are separate: a completed run is finalized as included, while stopped
+or failed runs remain pending. Continuations and retests inherit the original
+purpose. COC export is purpose-neutral: all purposes may contribute when they
+satisfy the same assignment, measurement, compatibility, routing, and limit
+requirements.

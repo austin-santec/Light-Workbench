@@ -8,7 +8,7 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 from application.database_repositories import RunRepository
-from domain.database_records import RunRecord, RunStartSpec, utc_now
+from domain.database_records import RunRecord, RunStartSpec, RunVoidInfo, utc_now
 from domain.database_run_lifecycle import StaleRunDecision
 from domain.run_purpose import default_analysis_policy, normalize_run_purpose
 
@@ -52,7 +52,7 @@ class RunLifecycleWorkflow:
         station_number: int | None = None,
         run_purpose: str = "production",
         analysis_status: str | None = None,
-        analysis_exclusion_reason: str | None = None,
+        void_info: RunVoidInfo | None = None,
         notes: str | None = None,
         client_run_uuid: UUID | None = None,
         started_at_utc: datetime | None = None,
@@ -63,10 +63,7 @@ class RunLifecycleWorkflow:
 
         purpose = normalize_run_purpose(run_purpose)
         if analysis_status is None:
-            analysis_status, default_reason = default_analysis_policy(purpose)
-            analysis_exclusion_reason = analysis_exclusion_reason or default_reason
-        if purpose != "production" and analysis_status == "included":
-            raise ValueError("Only production runs may enter normal production analysis")
+            analysis_status, _default_reason = default_analysis_policy(purpose)
         spec = RunStartSpec(
             assignment_id=assignment_id,
             client_run_uuid=client_run_uuid or uuid4(),
@@ -80,7 +77,7 @@ class RunLifecycleWorkflow:
             limit_snapshot=limit_snapshot,
             run_purpose=purpose,
             analysis_status=analysis_status,
-            analysis_exclusion_reason=analysis_exclusion_reason,
+            void_info=void_info,
             part_number_snapshot=part_number_snapshot,
             front_panel_channel_count=front_panel_channel_count,
             notes=notes,
@@ -96,21 +93,15 @@ class RunLifecycleWorkflow:
         current = self._repository.get(run_id)
         if current is None:
             raise ValueError("Run was not found")
-        if current.run_purpose == "production" and completion_status == "complete":
+        if completion_status == "complete":
             analysis_status = "included"
-            exclusion_reason = None
-        elif current.run_purpose != "production":
-            analysis_status = "excluded"
-            exclusion_reason = "Run purpose: %s" % current.run_purpose
         else:
             analysis_status = "pending"
-            exclusion_reason = None
         return self._repository.finish(
             run_id,
             completion_status,
             ended_at_utc or utc_now(),
             analysis_status=analysis_status,
-            analysis_exclusion_reason=exclusion_reason,
         )
 
     def resume_run(self, run_id: int) -> RunRecord:
@@ -122,19 +113,36 @@ class RunLifecycleWorkflow:
         run_id: int,
         analysis_status: str,
         *,
-        exclusion_reason: str | None = None,
+        void_info: RunVoidInfo | None = None,
         superseded_by_run_id: int | None = None,
     ) -> RunRecord:
         current = self._repository.get(run_id)
         if current is None:
             raise ValueError("Run was not found")
-        if analysis_status == "included" and current.run_purpose != "production":
-            raise ValueError("Only production runs may enter normal production analysis")
         return self._repository.set_analysis_status(
             run_id,
             analysis_status,
-            exclusion_reason,
+            void_info,
             superseded_by_run_id,
+        )
+
+    def void_run(
+        self,
+        run_id: int,
+        *,
+        voided_by: str,
+        reason: str,
+        voided_at_utc: datetime | None = None,
+    ) -> RunRecord:
+        """Permanently exclude one retained run from effective analysis."""
+        current = self._repository.get(run_id)
+        if current is None:
+            raise ValueError("Run was not found")
+        if current.analysis_status == "excluded":
+            raise ValueError("Run is already voided")
+        return self._repository.void_run(
+            run_id,
+            RunVoidInfo(voided_at_utc or utc_now(), voided_by, reason),
         )
 
     def find_stale_runs(self, before_utc: datetime) -> tuple[RunRecord, ...]:
