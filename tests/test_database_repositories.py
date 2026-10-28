@@ -10,6 +10,7 @@ from domain.database_records import (
     AssignmentSpec,
     MeasurementSpec,
     MeasurementWriteSpec,
+    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
     ReplacementSpec,
     RunStartSpec,
     RunSpec,
@@ -77,6 +78,7 @@ class RepositoryContractMixin:
                 application_version="test",
                 measurement_hardware={"ilm": {"model": "OP815"}},
                 limit_snapshot={"too_good_db": 0.5, "failure_db": 2.5},
+                front_panel_channel_count=48,
             )
         )
         self.assertEqual(repository.create(
@@ -232,6 +234,25 @@ class RepositoryContractMixin:
             sorted(item.attempt_number for item in parallel_records),
             list(range(1, 7)),
         )
+
+        for offset, physical_port in enumerate((49, 50, 51), start=10):
+            repository.append_attempt(
+                MeasurementSpec(
+                    uuid4(),
+                    run.run_id,
+                    None,
+                    1,
+                    1310,
+                    Decimal("0.8000"),
+                    1550,
+                    Decimal("0.7000"),
+                    {"snapshot_id": "ref-extra"},
+                    NOW + timedelta(seconds=offset),
+                    "AT",
+                    physical_port,
+                    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
+                )
+            )
 
         replacement = repository.append(
             ReplacementSpec(

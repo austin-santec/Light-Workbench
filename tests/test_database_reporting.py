@@ -11,6 +11,7 @@ from application.database_reporting import DatabaseReportingService
 from application.measurement_persistence_workflow import MeasurementPersistenceWorkflow
 from domain.database_records import (
     AssignmentSpec,
+    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
     ReplacementSpec,
     RunSpec,
     RunVoidInfo,
@@ -93,12 +94,15 @@ class DatabaseReportingTests(unittest.TestCase):
         )
         return run
 
-    def write(self, run, channel, first, second, seconds, physical=None):
+    def write(self, run, channel, first, second, seconds, physical=None, *, extra=False):
         return self.writer.commit(
             self.writer.prepare_measurement(
                 run_id=run.run_id,
-                logical_channel=channel,
+                logical_channel=None if extra else channel,
                 physical_port=physical or channel,
+                measurement_role=(
+                    MEASUREMENT_ROLE_EXTRA_CANDIDATE if extra else "logical_channel"
+                ),
                 wavelength_1_nm=1310,
                 wavelength_1_il_db=first,
                 wavelength_2_nm=1550,
@@ -112,13 +116,8 @@ class DatabaseReportingTests(unittest.TestCase):
     def populate_included_run(self):
         run = self.create_run(1, analysis="included")
         self.write(run, 1, 2.7, 2.6, 1)
-        self.write(run, 1, 0.7, 0.6, 2, physical=3)
+        self.write(run, 3, 0.7, 0.6, 2, physical=3, extra=True)
         self.write(run, 2, 2.3, 2.2, 3)
-        self.repository.finish(
-            run.run_id,
-            "complete",
-            run.run_started_at_utc + timedelta(seconds=4),
-        )
         self.repository.append(
             ReplacementSpec(
                 assignment_id=self.assignment.assignment_id,
@@ -132,11 +131,18 @@ class DatabaseReportingTests(unittest.TestCase):
                 notes="Operator replacement details",
             )
         )
+        self.write(run, 1, 0.7, 0.6, 6, physical=3)
+        self.repository.finish(
+            run.run_id,
+            "complete",
+            run.run_started_at_utc + timedelta(seconds=7),
+        )
         return run
 
     def test_default_scope_excludes_pending_and_nonproduction_runs(self):
         included = self.populate_included_run()
         pending = self.create_run(2, analysis="pending")
+        self.write(pending, 4, 0.8, 0.7, 0, physical=4, extra=True)
         self.repository.append(
             ReplacementSpec(
                 assignment_id=self.assignment.assignment_id,
@@ -155,7 +161,7 @@ class DatabaseReportingTests(unittest.TestCase):
 
         self.assertEqual(tuple(row.run_id for row in report.runs), (included.run_id,))
         self.assertEqual(report.summary.run_count, 1)
-        self.assertEqual(report.summary.attempt_count, 3)
+        self.assertEqual(report.summary.attempt_count, 4)
         self.assertEqual(report.summary.retest_attempt_count, 1)
         self.assertEqual(report.summary.retested_channel_count, 1)
         self.assertEqual(report.summary.replacement_count, 1)
@@ -263,7 +269,7 @@ class DatabaseReportingTests(unittest.TestCase):
         app.processEvents()
 
         self.assertEqual(dialog.run_table.rowCount(), 1)
-        self.assertEqual(dialog.channel_table.rowCount(), 3)
+        self.assertEqual(dialog.channel_table.rowCount(), 4)
         self.assertEqual(
             dialog.run_table.editTriggers(),
             QTableWidget.NoEditTriggers,

@@ -112,6 +112,8 @@ class PersistedReplacementAnalysis:
                 "current_worst_loss_db": float(item.current_worst_loss_db),
                 "candidate_worst_loss_db": float(item.candidate_worst_loss_db),
                 "improvement_db": float(item.improvement_db),
+                "current_measurement_id": item.current_measurement_id,
+                "candidate_measurement_id": item.candidate_measurement_id,
             }
             for item in self.recommendations
         ]
@@ -204,6 +206,16 @@ class ReplacementAnalysisPersistenceWorkflow:
             current_worst_loss_db=decimal("current_worst_loss_db"),
             candidate_worst_loss_db=decimal("candidate_worst_loss_db"),
             improvement_db=decimal("improvement_db"),
+            current_measurement_id=(
+                None
+                if item.get("current_measurement_id") is None
+                else int(item["current_measurement_id"])
+            ),
+            candidate_measurement_id=(
+                None
+                if item.get("candidate_measurement_id") is None
+                else int(item["candidate_measurement_id"])
+            ),
         )
 
 

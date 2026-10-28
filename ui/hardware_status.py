@@ -100,7 +100,9 @@ class HardwareStatusPanel(QGroupBox):
         if info.firmware_version:
             identity_details.append("FW %s" % info.firmware_version)
         if info.configured_channel_count is not None:
-            identity_details.append("%d channels" % info.configured_channel_count)
+            identity_details.append(
+                "SCPI-configured: %d channels" % info.configured_channel_count
+            )
         if info.category == DeviceCategory.POWER_METER and self._test_mode_text:
             identity_details.append("Test mode: %s" % self._test_mode_text)
         if identity_details:

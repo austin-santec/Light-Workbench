@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from application.database_repositories import MeasurementRepository, RunRepository
 from domain.coc_preparation import CocSourceRun
 from domain.database_records import (
+    MEASUREMENT_ROLE_LOGICAL_CHANNEL,
     MeasurementRecord as DatabaseMeasurementRecord,
     RunRecord,
 )
@@ -61,8 +62,13 @@ def _domain_measurement(
     record: DatabaseMeasurementRecord,
 ) -> MeasurementRecord:
     classification, source_wavelengths, source_ids = _measurement_context(run)
+    display_channel = (
+        int(record.logical_channel)
+        if record.measurement_role == MEASUREMENT_ROLE_LOGICAL_CHANNEL
+        else int(record.physical_port)
+    )
     return MeasurementRecord.from_wavelengths(
-        record.logical_channel,
+        display_channel,
         {
             record.wavelength_1_nm: float(record.wavelength_1_il_db),
             record.wavelength_2_nm: float(record.wavelength_2_il_db),
@@ -86,7 +92,13 @@ def _history_attempts(
 ) -> tuple[MeasurementAttempt, ...]:
     classification, source_wavelengths, source_ids = _measurement_context(run)
     attempt_ids = {
-        (record.logical_channel, record.attempt_number): str(record.measurement_uuid)
+        (
+            record.measurement_role,
+            record.logical_channel
+            if record.logical_channel is not None
+            else record.physical_port,
+            record.attempt_number,
+        ): str(record.measurement_uuid)
         for record in records
     }
     attempts = []
@@ -100,7 +112,11 @@ def _history_attempts(
             MeasurementAttempt(
                 attempt_id=attempt_id,
                 run_id=str(run.client_run_uuid),
-                channel=record.logical_channel,
+                channel=(
+                    record.logical_channel
+                    if record.logical_channel is not None
+                    else record.physical_port
+                ),
                 physical_port=record.physical_port,
                 attempt_number=record.attempt_number,
                 loss_1310_db=losses.get(1310),
@@ -111,7 +127,13 @@ def _history_attempts(
                     "initial" if record.attempt_number == 1 else "retest"
                 ),
                 replaces_attempt_id=attempt_ids.get(
-                    (record.logical_channel, record.attempt_number - 1)
+                    (
+                        record.measurement_role,
+                        record.logical_channel
+                        if record.logical_channel is not None
+                        else record.physical_port,
+                        record.attempt_number - 1,
+                    )
                 ),
                 reference_snapshot=dict(record.reference_snapshot),
                 wavelength_mode=run.wavelength_mode,
@@ -212,6 +234,12 @@ class DatabaseRunSnapshot:
         effective_run_numbers: Sequence[int] = (),
         compatible_run_numbers: Sequence[int] = (),
     ):
+        if (
+            replacement_analysis is None
+            and profile is not None
+            and self.run.front_panel_channel_count is not None
+        ):
+            replacement_analysis = self.replacement_analysis(profile)
         terminal_status = None
         if self.run.completion_status == "complete":
             terminal_status = COMPLETION_COMPLETE
@@ -244,11 +272,17 @@ class DatabaseRunSnapshot:
         )
 
     def coc_source(self) -> CocSourceRun:
+        count = self.run.front_panel_channel_count
+        logical_measurements = tuple(
+            measurement
+            for measurement in self.measurements
+            if count is None or measurement.channel <= int(count)
+        )
         return CocSourceRun(
             run_number=self.run.run_number,
             source_path=None,
             source_identifier=f"database-run:{self.run.run_id}",
-            measurements=self.measurements,
+            measurements=logical_measurements,
             metadata=self.metadata,
             criteria=dict(self.run.limit_snapshot),
             run_purpose=self.run.run_purpose,
@@ -275,6 +309,9 @@ class DatabaseRunSnapshot:
         production = tuple(
             record for record in self.measurements if record.channel <= count
         )
+        assigned_physical_ports = {
+            int(record.physical_port or record.channel) for record in production
+        }
         extras = tuple(
             ReplacementReading(
                 record.physical_port or record.channel,
@@ -283,6 +320,8 @@ class DatabaseRunSnapshot:
             )
             for record in self.measurements
             if record.channel > count
+            and int(record.physical_port or record.channel)
+            not in assigned_physical_ports
         )
         optimization_limit = (
             profile.warning_above_db
@@ -312,12 +351,24 @@ def build_database_run_snapshot(
     """Build current/history projections from one accepted-attempt snapshot."""
     current_by_channel = {}
     for record in history_rows:
-        prior = current_by_channel.get(record.logical_channel)
+        identity = (
+            record.measurement_role,
+            record.logical_channel
+            if record.logical_channel is not None
+            else record.physical_port,
+        )
+        prior = current_by_channel.get(identity)
         if prior is None or _measurement_recency_key(record) > _measurement_recency_key(prior):
-            current_by_channel[record.logical_channel] = record
+            current_by_channel[identity] = record
     current = tuple(
-        _domain_measurement(run, current_by_channel[channel])
-        for channel in sorted(current_by_channel)
+        _domain_measurement(run, current_by_channel[identity])
+        for identity in sorted(
+            current_by_channel,
+            key=lambda value: (
+                0 if value[0] == MEASUREMENT_ROLE_LOGICAL_CHANNEL else 1,
+                value[1],
+            ),
+        )
     )
     return DatabaseRunSnapshot(run, current, _history_attempts(run, history_rows))
 

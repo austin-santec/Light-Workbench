@@ -4,8 +4,14 @@
 
 Status: implemented through assignment-scoped iterative replacement analysis,
 permanent run voiding, persistent analysis history, and read-only database
-reporting. The current schema includes forward-only migration
-`0005_iterative_replacement_analysis.sql`.
+reporting. The current schema includes forward-only migrations through
+`0006_authoritative_channel_roles.sql`.
+
+Migration `0006` reclassifies only legacy measurements that are unambiguously
+extra candidates: both their stored logical channel and physical port exceed
+the run's front-panel channel count. Ambiguous development/test rows remain
+logical-channel measurements rather than having a role fabricated during
+migration.
 Database-neutral repositories and the unit, assignment, run-lifecycle,
 atomic-measurement, current/history query, and assignment-scoped routing
 boundaries are connected to the production hardware workflow.
@@ -136,13 +142,23 @@ The assignment table is required because a unit may receive a replacement
 switch while the unit remains the same. Runs continue to identify the exact
 unit/switch installation that produced their data.
 
-Assignment resolution is explicit. Reconnecting the same unit and switch
-reuses their active assignment. A different switch cannot silently replace an
-active one: the application requires a removal reason and operator, then closes
-the old assignment and opens the replacement in one transaction. A switch
-already active in another unit is rejected. Baseline maps must contain every
-front-panel logical channel exactly once and may route those channels to any
-unique physical port within the switch's physical capacity.
+Assignment resolution is automatic for the normal same-pairing case and uses
+one confirmation for a genuinely new hardware pairing. Reconnecting the same
+unit and switch reuses their active assignment. If a switch is moved to a
+different main board, a main board receives a different switch, or both sides
+have conflicting active assignments, Light Workbench closes the affected active
+assignments, marks their unfinished runs `stopped`, and creates one new
+assignment. The operation is atomic with creation of the first run, so a
+canceled confirmation or failed transaction leaves the prior assignments
+unchanged. The operator does not enter a transfer reason.
+
+Every new main-board/switch pairing starts from a fresh identity baseline:
+logical channel 1 maps to physical port 1 through the unit's front-panel
+count. The application does not command, delete, query, or verify the physical
+module map; it assumes the required external module-map reset was completed
+before installation. Baseline maps contain every front-panel logical channel
+exactly once. The normal fresh-pairing map is the identity map; any later
+mapping change is append-only replacement documentation.
 
 ## SQL Server conventions
 
@@ -196,7 +212,7 @@ One record per physical optical switch.
 | `switch_serial` | `NVARCHAR(100)` | Unique switch serial |
 | `switch_model` | `NVARCHAR(30)` | OSX-100, OSX-150, or another supported model |
 | `firmware_version` | `NVARCHAR(50) NULL` | Detected switch firmware |
-| `physical_channel_count` | `INT` | Physical switch capacity |
+| `last_reported_scpi_channel_count` | `INT` | Latest SCPI/configuration count; diagnostic routing information, not physical capacity |
 | `notes` | `NVARCHAR(MAX) NULL` | Switch notes |
 | `created_at_utc` | `DATETIME2(3)` | Creation time |
 | `updated_at_utc` | `DATETIME2(3)` | Last update time |
@@ -204,7 +220,9 @@ One record per physical optical switch.
 Rules:
 
 - `switch_serial` is unique.
-- `physical_channel_count` is greater than zero.
+- `last_reported_scpi_channel_count` is greater than zero.
+- `UNITS.front_panel_channel_count`, derived from the part number, is the
+  customer-channel boundary. No assumed total physical capacity is stored.
 - The logical channel map does not belong here because it applies to a
   particular installation, not permanently to the switch.
 
@@ -350,8 +368,9 @@ One append-only row per accepted Write IL operation, including retests.
 | `measurement_id` | `BIGINT IDENTITY(1,1)` | Primary key |
 | `measurement_uuid` | `UNIQUEIDENTIFIER` | Retry-safe measurement identity |
 | `run_id` | `BIGINT` | Foreign key to `IL_RUNS` |
-| `logical_channel` | `INT` | Operator-facing channel |
-| `physical_port` | `INT NULL` | Physical port when known |
+| `logical_channel` | `INT NULL` | Customer-facing channel; null for unassigned extra candidates |
+| `physical_port` | `INT` | Positive tested physical port |
+| `measurement_role` | `VARCHAR(20)` | `logical_channel` or `extra_candidate` |
 | `attempt_number` | `INT` | Accepted attempt number |
 | `wavelength_1_nm` | `SMALLINT` | First wavelength |
 | `wavelength_1_il_db` | `DECIMAL(9,4)` | First insertion-loss value |
@@ -426,8 +445,9 @@ unit so records from a removed switch cannot alter a later switch's map.
 
 New replacement records are accepted only for an active assignment. The
 reported previous port must match that logical channel's current effective
-port, the replacement must fit the assigned switch's physical capacity, and it
-cannot already route another logical channel in the same assignment. An
+port. A normal replacement port must be a confirmed committed extra candidate
+for the same assignment, and it cannot already route another logical channel.
+It is never compared with the SCPI-reported count. An
 optional related run must belong to the same assignment. Replacing an already
 replaced channel appends another row; earlier rows are never updated or
 deleted.
@@ -510,6 +530,8 @@ the result JSON.
 | `current_worst_loss_db` | `DECIMAL(9,4)` | Current worst loss |
 | `candidate_worst_loss_db` | `DECIMAL(9,4)` | Candidate worst loss |
 | `improvement_db` | `DECIMAL(9,4)` | Projected improvement |
+| `current_measurement_id` | `BIGINT NULL` | Exact logical-channel evidence used by a new recommendation |
+| `candidate_measurement_id` | `BIGINT NULL` | Exact confirmed-extra evidence used by a new recommendation |
 
 The unique analysis/rank, analysis/channel, and analysis/candidate-port
 constraints prevent duplicate recommendations inside one snapshot.
@@ -532,9 +554,11 @@ The active spare set is derived from the newest event for each assignment and
 physical port.
 
 Designation and undesignation events are accepted only for an active
-assignment and a port within the assigned switch's physical capacity. Repeating
-the already-current action is rejected rather than adding a meaningless audit
-row. Spare history remains readable after an assignment is removed.
+assignment. A normal designation requires a confirmed extra measurement above
+the assignment's front-panel boundary and the port must not be actively mapped.
+Repeating the already-current action is rejected rather than adding a
+meaningless audit row. Spare history remains readable after an assignment is
+removed.
 
 ### `SCHEMA_MIGRATIONS`
 
@@ -555,7 +579,9 @@ silently ignoring fields.
 
 ### `vw_CurrentILMeasurements`
 
-Returns the highest `attempt_number` for each `(run_id, logical_channel)`.
+Returns the highest attempt for each run and measurement identity: logical
+channel for `logical_channel` rows, or physical port for `extra_candidate`
+rows.
 The main readings table, limits, run status, COC preparation, Copy Raw Data,
 and replacement recommendations use this view. Reading History and retest
 reports query all `IL_MEASUREMENTS` rows.
@@ -602,6 +628,14 @@ generation nor opening the editor writes an event. An existing spare is
 undesignated only by an explicit operator selection saved as a new append-only
 event.
 
+### `vw_ConfirmedExtraPorts`
+
+Returns the newest eligible `extra_candidate` measurement for each
+`(assignment_id, physical_port)`. Voided and superseded runs are excluded. The
+view is the read-only source for normal replacement-candidate and spare
+validation. Stopping discovery does not assert that every higher port is
+absent.
+
 ### `vw_ReplacementRecommendationUsage`
 
 Joins each normalized recommendation to any replacement record that cites it
@@ -636,10 +670,18 @@ prevention key.
 Before a production run begins, the application must:
 
 1. Confirm database connectivity and supported schema version.
-2. Resolve the unit, switch, and active assignment.
+2. Resolve the unit, switch, and active assignment. A conflicting pairing is
+   confirmed once and then handled atomically with run creation.
 3. Validate required setup and reference state.
 4. Generate `client_run_uuid`.
 5. Insert the `in_progress` run and its historical snapshots.
+
+When a new hardware pairing is confirmed, the same transaction also stops any
+unfinished runs on the assignments being closed, records their end timestamp,
+closes those assignments, creates the fresh identity map, and inserts the new
+`in_progress` run. Historical runs, accepted measurements, replacement events,
+spare events, and saved analyses remain attached to their original assignment;
+none are carried into the new pairing.
 
 Red Light Test and Power Measurement Diagnostics do not create production run
 records and may remain usable when the database is unavailable.
@@ -754,7 +796,7 @@ Resolved:
 - The database starts with future data; no historical bulk import is planned.
 - SQL Server becomes authoritative for new run data on the database branch.
 - Support logs remain local.
-- The simplified eight-table schema and two read-only views are the approved
+- The ten-table schema and four read-only views are the approved
   baseline.
 - Read-only reporting lives in Light Workbench and uses application/repository
   boundaries rather than SQL in Qt presentation code.

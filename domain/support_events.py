@@ -124,6 +124,7 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "current_operation_id",
         "current_measurement_uuid",
         "run_id",
+        "assignment_id",
         "database_run_id",
         "attempt_number",
         "acknowledged_operation_id",
@@ -241,6 +242,14 @@ ALLOWED_EVENT_FIELDS = frozenset(
         "database_error_category",
         "database_schema_version",
         "database_expected_schema_version",
+        "replacement_request_count",
+        "spare_designation_count",
+        "spare_undesignation_count",
+        "replacement_save_plan",
+        "expected_previous_physical_port",
+        "actual_previous_physical_port",
+        "proposed_replacement_physical_port",
+        "committed",
     }
 )
 

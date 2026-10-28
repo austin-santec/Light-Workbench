@@ -15,9 +15,10 @@ represents one switch test of that unit.
 
 - Main board serial
 - Part number
-- Append-only replacement audit history and its current effective projection
-- Designated spare channels
-- Other information that should remain consistent when the switch changes
+- Main-board identity and product metadata
+- Historical assignments that connect a specific switch installation to the unit
+- Replacement and spare history scoped to each assignment
+- Other information that should remain consistent for the main board
 
 ### Run-level data
 
@@ -265,6 +266,11 @@ replace the active session reference.
   does not use `CLOSe?`, change switch mappings, identify routed logical
   channels, or verify a manually performed hardware change. General
   `CLOSe?` behavior elsewhere remains a separate hardware concern.
+- A new main-board/switch pairing is confirmed once during Start Run. The
+  application assumes the required external module-map reset, creates a fresh
+  identity map, automatically stops unfinished runs on affected assignments,
+  and preserves all prior data under its original assignment. No mapping,
+  replacement, spare, extra-port, analysis, or COC state crosses the pairing.
 - Database replacement analyses are append-only snapshots tied to the run and
   the highest accepted measurement included. The latest snapshot is restored
   when a database run is loaded; a newer retest marks it stale and requires a
@@ -301,12 +307,13 @@ CLI-only No More Physical Ports action remain local support evidence. The
 program never updates authoritative switch capacity from one of these outcomes.
 
 An extra candidate enters `IL_MEASUREMENTS` only after a complete valid
-two-wavelength sample and explicit Write IL. Its commanded logical channel and
-returned physical port are stored separately; CLI direct candidates normally
-use the same number for both, while SCPI mappings may not. Its spare-candidate
-meaning is derived because its logical channel or physical port is greater than
-the run's immutable front-panel count. The normal atomic commit, append-only
-attempt history, reference snapshot, and operator identity rules are unchanged.
+two-wavelength sample and explicit Write IL. It is stored with
+`measurement_role = extra_candidate`, `logical_channel = NULL`, and the tested
+positive `physical_port`. Normal and post-replacement readings use
+`measurement_role = logical_channel`; after a replacement, the customer-facing
+logical channel is retained while its new effective physical port is recorded.
+The normal atomic commit, append-only attempt history, reference snapshot, and
+operator identity rules are unchanged.
 Extra rows are available to replacement analysis but are excluded from
 front-panel completion and direct COC rows.
 
@@ -327,8 +334,11 @@ does not delete or invalidate accepted front-panel data, and final required-run
 quality remains based on front-panel channels.
 
 `IL_RUNS.measurement_hardware_json` snapshots `extra_channel_routing.method`,
-the immutable front-panel count, and the configured SCPI channel count when
-known. Old runs without this object remain readable and use the safe historical
+the immutable front-panel count, and the last reported SCPI-configured channel
+count when known. SCPI count is diagnostic and never defines replacement
+capacity. Confirmed extras, their count, and the highest confirmed physical
+port are derived from committed measurements through `vw_ConfirmedExtraPorts`.
+Old runs without this object remain readable and use the safe historical
 default. The selected method is run provenance and is not replaced by a later
 administrator-setting change. Engineering support events additionally retain
 the method, commanded channel or port, returned physical port, route outcome,

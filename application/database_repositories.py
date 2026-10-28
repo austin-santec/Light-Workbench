@@ -10,6 +10,7 @@ from domain.database_records import (
     AssignmentRecord,
     AssignmentSpec,
     ChannelMapRecord,
+    ConfirmedExtraPortRecord,
     MeasurementRecord,
     MeasurementSpec,
     MeasurementWriteSpec,
@@ -20,6 +21,7 @@ from domain.database_records import (
     ReplacementRecord,
     ReplacementSpec,
     RunRecord,
+    PendingRunStartSpec,
     RunVoidInfo,
     RunStartSpec,
     RunSpec,
@@ -76,11 +78,26 @@ class AssignmentRepository(Protocol):
         removal_reason: str,
     ) -> AssignmentRecord: ...
 
+    def install_fresh_pairing(
+        self,
+        spec: AssignmentSpec,
+        removed_at_utc: datetime,
+        removed_by: str,
+    ) -> tuple[AssignmentRecord, tuple[AssignmentRecord, ...], tuple[int, ...]]: ...
+
 
 class RunRepository(Protocol):
     def create(self, spec: RunSpec) -> RunRecord: ...
 
     def create_next(self, spec: RunStartSpec) -> RunRecord: ...
+
+    def create_next_with_fresh_pairing(
+        self,
+        assignment: AssignmentSpec,
+        run: PendingRunStartSpec,
+        changed_at_utc: datetime,
+        changed_by: str,
+    ): ...
 
     def get(self, run_id: int) -> RunRecord | None: ...
 
@@ -189,6 +206,10 @@ class SpareRepository(Protocol):
 
 
 class RoutingRepository(ReplacementRepository, SpareRepository, Protocol):
+    def confirmed_extra_ports_for_assignment(
+        self, assignment_id: int
+    ) -> tuple[ConfirmedExtraPortRecord, ...]: ...
+
     def apply_routing_changes(
         self,
         replacement_specs: tuple[ReplacementSpec, ...],

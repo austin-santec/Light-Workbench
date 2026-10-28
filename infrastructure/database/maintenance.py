@@ -232,7 +232,7 @@ def verify_backup_restore(
                 "WHERE is_ms_shipped = 0"
             ).fetchone()[0]
         )
-        if migration_count < 1 or table_count != 10 or view_count != 3:
+        if migration_count < 1 or table_count != 10 or view_count != 4:
             raise DatabaseMaintenanceError(
                 "Restored schema validation failed: "
                 f"migrations={migration_count}, tables={table_count}, "

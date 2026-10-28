@@ -159,14 +159,23 @@ Each item already has useful behavior, but the noted work remains.
 - [x] Scope replacement analysis and COC source data to the current switch assignment.
 - [x] Combine compatible full and partial runs using the newest accepted whole wavelength pair.
 - [x] Keep unused measured extras available for later iterative analyses.
+- [x] Store unassigned extras as `extra_candidate` measurements and derive the
+  latest assignment-scoped candidate set through `vw_ConfirmedExtraPorts`.
 - [x] Derive replacement verification from post-replacement readings without querying or changing switch mappings.
+- [x] Invalidate prior-port readings for status and COC purposes after a
+  documented mapping change; require a new logical-channel reading on the
+  effective replacement port.
 - [x] Provide a selected-channel replacement verification run action.
 - [x] Persist immutable analysis snapshots, recommendation usage, source provenance, and freshness fingerprints.
 - [x] Allow administrators to permanently void an invalid entire run while retaining its audit history.
 - [x] Show void details in loaded-run information and database reports.
+- [x] Validate replacement save batches against the authoritative assignment
+  map, prevent duplicate pending logical channels, preserve failed-save queues,
+  and log precise replacement validation diagnostics.
+- [x] Validate normal replacements and spare designations against committed
+  assignment-scoped extra evidence rather than the diagnostic SCPI count.
 
 - [ ] **FUN-022 — Define criteria by family, channel-count range, and wavelength.** `[MVP]`
-- [ ] **FUN-032 — Force a new two-wavelength test after a mapping change.** `[MVP]`
 - [ ] **FUN-036 — Link and retain pre- and post-optimization measurements.** `[R1]`
 
 ## Decisions still needed

@@ -4,6 +4,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from domain.database_records import (
+    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
     MeasurementRecord,
     ReplacementRecord,
     RunRecord,
@@ -65,11 +66,12 @@ def run(run_id, number, *, assignment=5, status="included", started=None):
 
 
 def measurement(mid, source_run, logical, physical, loss, *, minute=1):
+    extra = int(logical) > int(source_run.front_panel_channel_count)
     return MeasurementRecord(
         measurement_id=mid,
         measurement_uuid=uuid4(),
         run_id=source_run.run_id,
-        logical_channel=logical,
+        logical_channel=None if extra else logical,
         physical_port=physical,
         attempt_number=1,
         wavelength_1_nm=1310,
@@ -79,6 +81,9 @@ def measurement(mid, source_run, logical, physical, loss, *, minute=1):
         reference_snapshot={"reference_id": "ref-1"},
         written_at_utc=source_run.run_started_at_utc + timedelta(minutes=minute),
         written_by="AT",
+        measurement_role=(
+            MEASUREMENT_ROLE_EXTRA_CANDIDATE if extra else "logical_channel"
+        ),
     )
 
 

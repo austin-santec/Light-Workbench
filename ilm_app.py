@@ -82,6 +82,9 @@ from application.part_number_lookup import (
 )
 from application.coc_workflow import CocRunOption, CocWorkflow
 from application.database_primary_workflow import DatabaseRunContext
+from application.replacement_persistence_workflow import (
+    ReplacementBatchValidationError,
+)
 from application.run_lifecycle_workflow import DatabaseRunUnavailableError
 from application.reference_session import ReferenceSession
 from infrastructure.database.connection import DatabaseConnectionError
@@ -138,8 +141,16 @@ from domain.measurement_attempts import (
 )
 from domain.raw_export import format_raw_measurements
 from domain.part_numbers import parse_osx_part_number
-from domain.database_records import SwitchSpec, UnitSpec
-from domain.unit_switch_assignments import AssignmentChangeRequiredError
+from domain.database_records import (
+    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
+    MEASUREMENT_ROLE_LOGICAL_CHANNEL,
+    SwitchSpec,
+    UnitSpec,
+)
+from domain.unit_switch_assignments import (
+    AssignmentChangeRequiredError,
+    NewHardwarePairingConfirmationRequired,
+)
 from domain.coc_preparation import CocSourceRun
 from domain.run_purpose import (
     RUN_PURPOSE_OPTIONS,
@@ -2245,7 +2256,7 @@ class MainWindow(QMainWindow):
         self.metric_title_labels = {}
         for row, (key, display) in enumerate(
             (
-                ("total", "Total channels"),
+                ("total", "Front-panel channels"),
                 ("over_limit", "Failed channels"),
                 ("over_1310", "1310 nm failed"),
                 ("over_1550", "1550 nm failed"),
@@ -4786,7 +4797,7 @@ class MainWindow(QMainWindow):
                 "model": switch.model,
                 "serial": switch.serial_number,
                 "firmware": switch.firmware_version,
-                "physical_channel_count": switch.configured_channel_count,
+                "scpi_configured_channel_count": switch.configured_channel_count,
             },
             "channel_mode": (
                 "extra_channels_only"
@@ -4816,7 +4827,7 @@ class MainWindow(QMainWindow):
             "extra_channel_routing": {
                 "method": routing_method.value,
                 "front_panel_channel_count": front_panel_channel_count,
-                "configured_channel_count": switch.configured_channel_count,
+                "scpi_configured_channel_count": switch.configured_channel_count,
             },
         }
 
@@ -4895,8 +4906,10 @@ class MainWindow(QMainWindow):
                 "Extra channel routing method": str(
                     routing.get("method") or ""
                 ),
-                "Configured channel count": str(
-                    routing.get("configured_channel_count") or ""
+                "SCPI-configured channels": str(
+                    routing.get("scpi_configured_channel_count")
+                    or routing.get("configured_channel_count")
+                    or ""
                 ),
             }
         )
@@ -4906,11 +4919,18 @@ class MainWindow(QMainWindow):
         return metadata
 
     def _database_coc_source(self, context):
+        front_panel_count = context.run.front_panel_channel_count
+        logical_measurements = tuple(
+            record
+            for record in context.snapshot.measurements
+            if front_panel_count is None
+            or int(record.channel) <= int(front_panel_count)
+        )
         return CocSourceRun(
             run_number=context.run.run_number,
             source_path=None,
             source_identifier="database-run:%d" % context.run.run_id,
-            measurements=tuple(context.snapshot.measurements),
+            measurements=logical_measurements,
             metadata=self._database_metadata(context),
             criteria=dict(context.run.limit_snapshot),
             run_purpose=context.run.run_purpose,
@@ -5568,6 +5588,14 @@ class MainWindow(QMainWindow):
             part_details = None
 
         connected_model = normalize_switch_model(self._connected_switch_model())
+        if part_details is not None:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "run.front_panel_count_resolved",
+                part_number=part_details.value,
+                front_panel_channel_count=part_details.front_panel_channel_count,
+                status="resolved_from_part_number",
+            )
         if preparation.extra_only and (
             part_details is None
             or normalize_switch_model(part_details.model) != "OSX-150"
@@ -5593,6 +5621,15 @@ class MainWindow(QMainWindow):
                 configured_count is not None
                 and int(configured_count) < part_details.front_panel_channel_count
             ):
+                self._record_support(
+                    SupportEventCategory.HARDWARE,
+                    "switch.scpi_channel_count_mismatch",
+                    level=SupportLogLevel.WARNING,
+                    front_panel_channel_count=part_details.front_panel_channel_count,
+                    configured_channel_count=int(configured_count),
+                    reason_code="scpi_count_below_front_panel_count",
+                    status="blocked",
+                )
                 QMessageBox.warning(
                     self,
                     "Switch configuration is too small",
@@ -5605,6 +5642,19 @@ class MainWindow(QMainWindow):
                     ),
                 )
                 return
+            if (
+                configured_count is not None
+                and int(configured_count) > part_details.front_panel_channel_count
+            ):
+                self._record_support(
+                    SupportEventCategory.HARDWARE,
+                    "switch.scpi_channel_count_mismatch",
+                    level=SupportLogLevel.WARNING,
+                    front_panel_channel_count=part_details.front_panel_channel_count,
+                    configured_channel_count=int(configured_count),
+                    reason_code="scpi_count_above_front_panel_count",
+                    status="diagnostic_only",
+                )
             if (
                 preparation.extra_only
                 and confirmation_routing_method
@@ -5701,7 +5751,7 @@ class MainWindow(QMainWindow):
                     "switch_spec": SwitchSpec(
                         switch_serial=selected_identity.get("Switch serial", ""),
                         switch_model=self._connected_switch_model(),
-                        physical_channel_count=int(physical_count),
+                        last_reported_scpi_channel_count=int(physical_count),
                         firmware_version=switch_info.firmware_version or None,
                     ),
                     "installed_by": self.hardware_tested_by.text().strip(),
@@ -5738,6 +5788,154 @@ class MainWindow(QMainWindow):
                 try:
                     context = self.database_workflow.start_new_run(
                         **database_run_args
+                    )
+                except NewHardwarePairingConfirmationRequired as conflict:
+                    self._record_support(
+                        SupportEventCategory.WORKFLOW,
+                        "hardware_pairing.conflict_detected",
+                        destination_main_board_serial=(
+                            conflict.destination_main_board_serial
+                        ),
+                        requested_switch_serial=conflict.requested_switch_serial,
+                        source_main_board_serial=conflict.source_main_board_serial,
+                        destination_switch_serial=conflict.destination_switch_serial,
+                        source_assignment_id=conflict.source_assignment_id,
+                        destination_assignment_id=conflict.destination_assignment_id,
+                        status="confirmation_required",
+                    )
+                    if conflict.source_main_board_serial:
+                        pairing_summary = (
+                            "Switch %s is currently assigned to main board %s."
+                            % (
+                                conflict.requested_switch_serial,
+                                conflict.source_main_board_serial,
+                            )
+                        )
+                    else:
+                        pairing_summary = (
+                            "Switch %s is not currently assigned to another main "
+                            "board, but the destination main board has a different "
+                            "active switch."
+                            % conflict.requested_switch_serial
+                        )
+                    message = (
+                        "%s\n\nIt will now be associated with main board %s as a "
+                        "new hardware pairing. Any unfinished run on an assignment "
+                        "that must be closed will be marked stopped.\n\n"
+                        "Light Workbench assumes the required external module-map "
+                        "reset was completed before installing the switch."
+                        % (pairing_summary, conflict.destination_main_board_serial)
+                    )
+                    if conflict.destination_switch_serial:
+                        message += (
+                            "\n\nThe destination main board is currently paired "
+                            "with switch %s; that pairing will also be closed."
+                            % conflict.destination_switch_serial
+                        )
+                    self._record_support(
+                        SupportEventCategory.OPERATOR,
+                        "hardware_pairing.confirmation_shown",
+                        destination_main_board_serial=(
+                            conflict.destination_main_board_serial
+                        ),
+                        requested_switch_serial=conflict.requested_switch_serial,
+                        status="shown",
+                    )
+                    confirmation = QMessageBox.question(
+                        self,
+                        "Use switch with this main board?",
+                        message,
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if confirmation != QMessageBox.Yes:
+                        self._record_support(
+                            SupportEventCategory.OPERATOR,
+                            "hardware_pairing.confirmation_cancelled",
+                            destination_main_board_serial=(
+                                conflict.destination_main_board_serial
+                            ),
+                            requested_switch_serial=conflict.requested_switch_serial,
+                        source_assignment_id=conflict.source_assignment_id,
+                        destination_assignment_id=conflict.destination_assignment_id,
+                            status="cancelled",
+                        )
+                        return
+                    self._record_support(
+                        SupportEventCategory.OPERATOR,
+                        "hardware_pairing.confirmation_accepted",
+                        destination_main_board_serial=(
+                            conflict.destination_main_board_serial
+                        ),
+                        requested_switch_serial=conflict.requested_switch_serial,
+                        source_assignment_id=conflict.source_assignment_id,
+                        destination_assignment_id=conflict.destination_assignment_id,
+                        status="accepted",
+                    )
+                    try:
+                        context = self.database_workflow.start_new_run(
+                            **database_run_args,
+                            allow_new_hardware_pairing=True,
+                        )
+                    except Exception:
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            "hardware_pairing.transaction_failed",
+                            level=SupportLogLevel.ERROR,
+                            destination_main_board_serial=(
+                                conflict.destination_main_board_serial
+                            ),
+                            requested_switch_serial=conflict.requested_switch_serial,
+                            source_assignment_id=conflict.source_assignment_id,
+                            destination_assignment_id=conflict.destination_assignment_id,
+                            status="rolled_back",
+                        )
+                        raise
+                    self.statusBar().showMessage(
+                        "Fresh hardware pairing created; unfinished conflicting runs were stopped."
+                    )
+                    for assignment_id in context.pairing_closed_assignment_ids:
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            "hardware_pairing.assignment_closed",
+                            assignment_id=assignment_id,
+                            status="success",
+                        )
+                    for run_id in context.pairing_stopped_run_ids:
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            "hardware_pairing.run_stopped",
+                            run_id=run_id,
+                            status="success",
+                        )
+                    self._record_support(
+                        SupportEventCategory.WORKFLOW,
+                        "hardware_pairing.identity_map_created",
+                        assignment_id=context.assignment.assignment_id,
+                        channel_count=len(context.assignment.initial_channel_map),
+                        status="success",
+                    )
+                    self._record_support(
+                        SupportEventCategory.WORKFLOW,
+                        "hardware_pairing.assignment_created",
+                        assignment_id=context.assignment.assignment_id,
+                        status="success",
+                    )
+                    self._record_support(
+                        SupportEventCategory.WORKFLOW,
+                        "hardware_pairing.transaction_completed",
+                        assignment_id=context.assignment.assignment_id,
+                        run_id=context.run.run_id,
+                        source_assignment_id=conflict.source_assignment_id,
+                        destination_assignment_id=conflict.destination_assignment_id,
+                        identity_map_channel_count=len(
+                            context.assignment.initial_channel_map
+                        ),
+                        closed_assignment_count=len(
+                            context.pairing_closed_assignment_ids
+                        ),
+                        stopped_run_count=len(context.pairing_stopped_run_ids),
+                        status="success",
                     )
                 except AssignmentChangeRequiredError:
                     reason, accepted = QInputDialog.getText(
@@ -7107,12 +7305,22 @@ class MainWindow(QMainWindow):
                 raise RuntimeError(
                     "No database run is active; the reading was not accepted."
                 )
+            front_panel_count = self.database_run_context.run.front_panel_channel_count
+            is_extra_candidate = (
+                front_panel_count is not None
+                and int(channel) > int(front_panel_count)
+            )
             if self.database_pending_measurement is None:
                 self.database_pending_measurement = (
                     self.database_workflow.measurements.prepare_measurement(
                         run_id=self.database_run_context.run.run_id,
-                        logical_channel=channel,
+                        logical_channel=(None if is_extra_candidate else channel),
                         physical_port=physical_port,
+                        measurement_role=(
+                            MEASUREMENT_ROLE_EXTRA_CANDIDATE
+                            if is_extra_candidate
+                            else MEASUREMENT_ROLE_LOGICAL_CHANNEL
+                        ),
                         wavelength_1_nm=wavelengths[0],
                         wavelength_1_il_db=first_loss,
                         wavelength_2_nm=wavelengths[1],
@@ -7172,6 +7380,17 @@ class MainWindow(QMainWindow):
                 attempt_number=attempt.attempt_number,
                 status="success",
             )
+            if is_extra_candidate:
+                self._record_support(
+                    SupportEventCategory.MEASUREMENT,
+                    "measurement.extra_candidate_confirmed",
+                    operation_id=token.operation_id,
+                    measurement_uuid=measurement_uuid,
+                    assignment_id=self.database_run_context.run.assignment_id,
+                    run_id=self.database_run_context.run.run_id,
+                    physical_port=physical_port,
+                    status="success",
+                )
             self._last_measurement_acknowledgement = (
                 MeasurementPersistenceAcknowledgement(
                     operation_id=token.operation_id,
@@ -7719,7 +7938,7 @@ class MainWindow(QMainWindow):
                 result.get("designed_channel_count"),
             ),
             configured_channel_count=part_context.get(
-                "configured_physical_channel_count"
+                "scpi_configured_channel_count"
             ),
             part_number=part_context.get("part_number", ""),
             status="completed",
@@ -7792,7 +8011,7 @@ class MainWindow(QMainWindow):
             "part_number": details.value,
             "model": details.model,
             "front_panel_channel_count": details.front_panel_channel_count,
-            "configured_physical_channel_count": configured_count,
+            "scpi_configured_channel_count": configured_count,
         }
 
     def _reconcile_database_completion(self):
@@ -8784,8 +9003,7 @@ class MainWindow(QMainWindow):
         ]
         measured_ports = [
             item.physical_port
-            for item in context.snapshot.measurements
-            if item.physical_port is not None
+            for item in context.routing.confirmed_extra_ports
         ]
         model = self.database_workflow.replacements.build_editor_model(
             snapshot=context.routing,
@@ -8799,48 +9017,56 @@ class MainWindow(QMainWindow):
             % (context.switch.switch_model, context.switch.switch_serial),
         )
         dialog = DatabaseReplacementDialog(model, self)
-        if dialog.exec_() != QDialog.Accepted:
-            return
-        try:
-            self._persist_database_routing_changes(dialog)
-        except Exception as error:
-            refresh_error = None
+        while True:
+            if dialog.exec_() != QDialog.Accepted:
+                return
             try:
-                refreshed = self.database_workflow.refresh(context.run.run_id)
-                self._apply_database_run_context(refreshed, update_setup=False)
-            except Exception as reload_error:
-                refresh_error = reload_error
-            self._record_support(
-                SupportEventCategory.PERSISTENCE,
-                "replacement.database_save_failed",
-                level=SupportLogLevel.ERROR,
-                run_number=context.run.run_number,
-                unit_serial=context.unit.main_board_serial,
-                status="error",
-                details=(
-                    "%s: %s%s"
-                    % (
-                        type(error).__name__,
-                        error,
-                        (
-                            "; authoritative reload also failed: %s" % refresh_error
-                            if refresh_error is not None
-                            else ""
-                        ),
-                    )
-                ),
-            )
-            message = (
-                "No replacement or spare changes were committed. The database "
-                "rejected the atomic save:\n%s" % error
-            )
-            if refresh_error is not None:
-                message += (
-                    "\n\nThe database state could not be reloaded. Close this run "
-                    "and reconnect before making another routing change."
+                self._persist_database_routing_changes(dialog)
+            except Exception as error:
+                validation = (
+                    error
+                    if isinstance(error, ReplacementBatchValidationError)
+                    else None
                 )
-            QMessageBox.critical(self, "Could not save replacement records", message)
-            return
+                self._record_support(
+                    SupportEventCategory.PERSISTENCE,
+                    "replacement.database_save_failed",
+                    level=SupportLogLevel.ERROR,
+                    assignment_id=context.assignment.assignment_id,
+                    run_number=context.run.run_number,
+                    unit_serial=context.unit.main_board_serial,
+                    status="error",
+                    committed=False,
+                    reason_code=(validation.code if validation else "persistence_error"),
+                    logical_channel=(validation.logical_channel if validation else None),
+                    expected_previous_physical_port=(
+                        validation.expected_previous_physical_port
+                        if validation
+                        else None
+                    ),
+                    actual_previous_physical_port=(
+                        validation.actual_previous_physical_port
+                        if validation
+                        else None
+                    ),
+                    proposed_replacement_physical_port=(
+                        validation.proposed_replacement_physical_port
+                        if validation
+                        else None
+                    ),
+                    details="%s: %s" % (type(error).__name__, error),
+                )
+                message = (
+                    "No replacement or spare changes were committed.\n\n%s"
+                    % (validation.operator_message if validation else error)
+                )
+                message += "\n\nThe queued records were retained so you can correct and retry."
+                QMessageBox.critical(self, "Could not save replacement records", message)
+                # Re-enter the same dialog with its authoritative pending model
+                # intact.  The user may correct the queue or cancel.
+                dialog.setResult(QDialog.Rejected)
+                continue
+            break
         try:
             refreshed = self.database_workflow.refresh(context.run.run_id)
             self._apply_database_run_context(refreshed, update_setup=False)
@@ -8889,7 +9115,7 @@ class MainWindow(QMainWindow):
         context = self.database_run_context
         if context is None or self.database_workflow is None:
             raise ValueError("No database-backed unit is loaded")
-        self.database_workflow.replacements.apply_changes(
+        plan = self.database_workflow.replacements.plan_changes(
             assignment_id=context.assignment.assignment_id,
             related_run_id=context.run.run_id,
             replacements=dialog.replacement_requests,
@@ -8897,6 +9123,21 @@ class MainWindow(QMainWindow):
             spares_to_undesignate=dialog.spares_to_undesignate,
             spare_operator=dialog.spare_operator,
         )
+        mapping_summary = "; ".join(
+            "%d:%d>%d" % item for item in plan.request_summary
+        )[:500]
+        self._record_support(
+            SupportEventCategory.PERSISTENCE,
+            "replacement.database_save_plan",
+            assignment_id=context.assignment.assignment_id,
+            run_id=context.run.run_id,
+            replacement_request_count=len(plan.replacement_specs),
+            spare_designation_count=len(dialog.spares_to_designate),
+            spare_undesignation_count=len(dialog.spares_to_undesignate),
+            replacement_save_plan=mapping_summary,
+            status="validated",
+        )
+        self.database_workflow.replacements.apply_plan(plan)
 
     def copy_replacement_notes(self):
         """Copy completed physical-port swaps for pasting into Unit Editor."""
@@ -9154,7 +9395,7 @@ class MainWindow(QMainWindow):
             measurement_count=len(self.run_data.measurements),
             front_panel_channel_count=part_context["front_panel_channel_count"],
             configured_channel_count=part_context[
-                "configured_physical_channel_count"
+                "scpi_configured_channel_count"
             ],
             part_number=part_context["part_number"],
             status="started",

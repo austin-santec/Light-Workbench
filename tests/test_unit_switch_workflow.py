@@ -144,7 +144,7 @@ class UnitSwitchAssignmentWorkflowTests(unittest.TestCase):
         result = validate_initial_channel_map(
             channel_map,
             front_panel_channel_count=48,
-            physical_channel_count=51,
+            scpi_configured_channel_count=51,
         )
         self.assertEqual(len(result), 48)
         self.assertEqual(result[48], 51)
@@ -161,7 +161,7 @@ class UnitSwitchAssignmentWorkflowTests(unittest.TestCase):
                     validate_initial_channel_map(
                         channel_map,
                         front_panel_channel_count=48,
-                        physical_channel_count=51,
+                        scpi_configured_channel_count=51,
                     )
 
 

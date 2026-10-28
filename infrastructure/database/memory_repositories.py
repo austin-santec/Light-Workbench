@@ -12,9 +12,13 @@ from domain.database_records import (
     AssignmentRecord,
     AssignmentSpec,
     ChannelMapRecord,
+    ConfirmedExtraPortRecord,
     MeasurementRecord,
     MeasurementSpec,
     MeasurementWriteSpec,
+    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
+    MEASUREMENT_ROLE_LOGICAL_CHANNEL,
+    PendingRunStartSpec,
     ReplacementAnalysisRecommendationRecord,
     ReplacementAnalysisRecommendationSpec,
     ReplacementAnalysisRecord,
@@ -124,7 +128,10 @@ class InMemoryRepositories:
     def _get_or_create_switch(self, spec: SwitchSpec) -> SwitchRecord:
         serial = require_text(spec.switch_serial, "Switch serial")
         model = require_text(spec.switch_model, "Switch model")
-        count = require_positive(spec.physical_channel_count, "Physical channel count")
+        count = require_positive(
+            spec.last_reported_scpi_channel_count,
+            "Last reported SCPI channel count",
+        )
         existing = next(
             (item for item in self.switches.values() if item.switch_serial == serial),
             None,
@@ -133,7 +140,7 @@ class InMemoryRepositories:
             updated = replace(
                 existing,
                 switch_model=model,
-                physical_channel_count=count,
+                last_reported_scpi_channel_count=count,
                 firmware_version=spec.firmware_version,
                 notes=spec.notes,
             )
@@ -272,6 +279,112 @@ class InMemoryRepositories:
         self.assignments[closed.assignment_id] = closed
         self.assignments[installed.assignment_id] = installed
         return installed
+
+    def install_fresh_pairing(
+        self,
+        spec: AssignmentSpec,
+        removed_at_utc: datetime,
+        removed_by: str,
+    ) -> tuple[AssignmentRecord, tuple[AssignmentRecord, ...], tuple[int, ...]]:
+        """Close both sides of a conflicting pair and install a clean assignment."""
+        with self._lock:
+            removed = require_utc(removed_at_utc, "Pairing-change time")
+            operator = require_text(removed_by, "Pairing-change operator")
+            if spec.unit_id not in self.units or spec.switch_id not in self.switches:
+                raise ValueError("Assignment unit and switch must already exist")
+            active_for_unit = self.get_active(spec.unit_id)
+            active_for_switch = self.get_active_for_switch(spec.switch_id)
+            conflicts = []
+            for item in (active_for_unit, active_for_switch):
+                if item is not None and item.assignment_id not in {
+                    value.assignment_id for value in conflicts
+                }:
+                    conflicts.append(item)
+            if any(
+                item.unit_id == spec.unit_id and item.switch_id == spec.switch_id
+                for item in conflicts
+            ):
+                return conflicts[0], (), ()
+            for item in conflicts:
+                if removed < item.installed_at_utc:
+                    raise ValueError("Pairing-change time cannot precede installation")
+
+            before_assignments = dict(self.assignments)
+            before_runs = dict(self.runs)
+            before_next_ids = dict(self._next_ids)
+            try:
+                stopped_ids = []
+                for item in conflicts:
+                    reason = (
+                        "Main board paired with switch %s"
+                        % self.switches[spec.switch_id].switch_serial
+                        if item.unit_id == spec.unit_id
+                        else "Switch reassigned to main board %s"
+                        % self.units[spec.unit_id].main_board_serial
+                    )
+                    closed = replace(
+                        item,
+                        removed_at_utc=removed,
+                        removed_by=operator,
+                        removal_reason=reason,
+                    )
+                    self.assignments[item.assignment_id] = closed
+                    for run in tuple(self.runs.values()):
+                        if (
+                            run.assignment_id == item.assignment_id
+                            and run.completion_status == "in_progress"
+                        ):
+                            self.runs[run.run_id] = replace(
+                                run,
+                                completion_status="stopped",
+                                run_ended_at_utc=removed,
+                                analysis_status="pending",
+                            )
+                            stopped_ids.append(run.run_id)
+                installed = AssignmentRecord(
+                    self._next("assignment"),
+                    spec.unit_id,
+                    spec.switch_id,
+                    require_utc(spec.installed_at_utc, "Installation time"),
+                    require_text(spec.installed_by, "Installer"),
+                    spec.initial_channel_map,
+                    notes=spec.notes,
+                )
+                self.assignments[installed.assignment_id] = installed
+                closed_records = tuple(
+                    self.assignments[item.assignment_id] for item in conflicts
+                )
+                return installed, closed_records, tuple(sorted(stopped_ids))
+            except Exception:
+                self.assignments = before_assignments
+                self.runs = before_runs
+                self._next_ids = before_next_ids
+                raise
+
+    def create_next_with_fresh_pairing(
+        self,
+        assignment: AssignmentSpec,
+        run: PendingRunStartSpec,
+        changed_at_utc: datetime,
+        changed_by: str,
+    ):
+        with self._lock:
+            before_assignments = dict(self.assignments)
+            before_runs = dict(self.runs)
+            before_next_ids = dict(self._next_ids)
+            try:
+                installed, closed, stopped = self.install_fresh_pairing(
+                    assignment, changed_at_utc, changed_by
+                )
+                record = self.create_next(
+                    run.with_assignment_id(installed.assignment_id)
+                )
+                return record, installed, closed, stopped
+            except Exception:
+                self.assignments = before_assignments
+                self.runs = before_runs
+                self._next_ids = before_next_ids
+                raise
 
     def create(self, spec: RunSpec) -> RunRecord:
         existing = self.get_by_uuid(spec.client_run_uuid)
@@ -545,7 +658,12 @@ class InMemoryRepositories:
             self._validate_measurement_run(spec)
             if any(
                 item.run_id == spec.run_id
-                and item.logical_channel == spec.logical_channel
+                and item.measurement_role == spec.measurement_role
+                and (
+                    item.logical_channel == spec.logical_channel
+                    if spec.measurement_role == MEASUREMENT_ROLE_LOGICAL_CHANNEL
+                    else item.physical_port == spec.physical_port
+                )
                 and item.attempt_number == spec.attempt_number
                 for item in self.measurements.values()
             ):
@@ -554,7 +672,7 @@ class InMemoryRepositories:
                 measurement_id=self._next("measurement"),
                 measurement_uuid=spec.measurement_uuid,
                 run_id=spec.run_id,
-                logical_channel=require_positive(spec.logical_channel, "Logical channel"),
+                logical_channel=spec.logical_channel,
                 attempt_number=require_positive(spec.attempt_number, "Attempt number"),
                 wavelength_1_nm=require_positive(spec.wavelength_1_nm, "First wavelength"),
                 wavelength_1_il_db=Decimal(spec.wavelength_1_il_db),
@@ -568,6 +686,7 @@ class InMemoryRepositories:
                     if spec.physical_port is not None
                     else None
                 ),
+                measurement_role=spec.measurement_role,
             )
             self.measurements[record.measurement_id] = record
             return record
@@ -583,7 +702,12 @@ class InMemoryRepositories:
                     item.attempt_number
                     for item in self.measurements.values()
                     if item.run_id == spec.run_id
-                    and item.logical_channel == spec.logical_channel
+                    and item.measurement_role == spec.measurement_role
+                    and (
+                        item.logical_channel == spec.logical_channel
+                        if spec.measurement_role == MEASUREMENT_ROLE_LOGICAL_CHANNEL
+                        else item.physical_port == spec.physical_port
+                    )
                 ),
                 default=0,
             )
@@ -612,15 +736,26 @@ class InMemoryRepositories:
                 f"{run.wavelength_mode} measurements require wavelengths "
                 f"{expected[0]} nm and {expected[1]} nm"
             )
+        if run.front_panel_channel_count is not None:
+            boundary = int(run.front_panel_channel_count)
+            if spec.measurement_role == MEASUREMENT_ROLE_LOGICAL_CHANNEL:
+                if int(spec.logical_channel) > boundary:
+                    raise ValueError("Logical channel exceeds the front-panel channel count")
+            elif int(spec.physical_port) <= boundary:
+                raise ValueError("Extra-candidate physical port must exceed the front-panel channel count")
         return run
 
     def current_for_run(self, run_id: int) -> tuple[MeasurementRecord, ...]:
-        current: dict[int, MeasurementRecord] = {}
+        current: dict[tuple[str, int], MeasurementRecord] = {}
         for item in self.history_for_run(run_id):
-            prior = current.get(item.logical_channel)
+            identity = (
+                item.measurement_role,
+                int(item.logical_channel if item.logical_channel is not None else item.physical_port),
+            )
+            prior = current.get(identity)
             if prior is None or item.attempt_number > prior.attempt_number:
-                current[item.logical_channel] = item
-        return tuple(current[channel] for channel in sorted(current))
+                current[identity] = item
+        return tuple(current[identity] for identity in sorted(current))
 
     def history_for_run(self, run_id: int) -> tuple[MeasurementRecord, ...]:
         return tuple(
@@ -635,12 +770,16 @@ class InMemoryRepositories:
     ) -> tuple[tuple[MeasurementRecord, ...], tuple[MeasurementRecord, ...]]:
         with self._lock:
             history = self.history_for_run(run_id)
-            current: dict[int, MeasurementRecord] = {}
+            current: dict[tuple[str, int], MeasurementRecord] = {}
             for item in history:
-                prior = current.get(item.logical_channel)
+                identity = (
+                    item.measurement_role,
+                    int(item.logical_channel if item.logical_channel is not None else item.physical_port),
+                )
+                prior = current.get(identity)
                 if prior is None or item.attempt_number > prior.attempt_number:
-                    current[item.logical_channel] = item
-            latest = tuple(current[channel] for channel in sorted(current))
+                    current[identity] = item
+            latest = tuple(current[identity] for identity in sorted(current))
             return latest, history
 
     def append(self, spec: ReplacementSpec) -> ReplacementRecord:
@@ -659,14 +798,21 @@ class InMemoryRepositories:
                 raise ValueError(
                     "Previous physical port does not match the current channel map"
                 )
-            if spec.replacement_physical_port > switch.physical_channel_count:
-                raise ValueError("Replacement physical port exceeds switch capacity")
             if any(
                 item.logical_channel != spec.logical_channel
                 and item.effective_physical_port == spec.replacement_physical_port
                 for item in channel_map.values()
             ):
                 raise ValueError("Replacement physical port is already in use")
+            confirmed = {
+                item.physical_port: item
+                for item in self.confirmed_extra_ports_for_assignment(spec.assignment_id)
+            }
+            if not spec.is_correction and spec.replacement_physical_port not in confirmed:
+                raise ValueError(
+                    "Replacement physical port has no valid committed extra-port "
+                    "measurement for this assignment"
+                )
             if spec.related_run_id is not None:
                 run = self.runs.get(spec.related_run_id)
                 if run is None or run.assignment_id != spec.assignment_id:
@@ -696,6 +842,13 @@ class InMemoryRepositories:
                     raise ValueError(
                         "Source recommendation does not match the replacement"
                     )
+                evidence_id = recommendation.candidate_measurement_id
+                if evidence_id is not None and (
+                    spec.replacement_physical_port not in confirmed
+                    or confirmed[spec.replacement_physical_port].measurement.measurement_id
+                    != evidence_id
+                ):
+                    raise ValueError("Source recommendation candidate evidence is stale")
                 if any(
                     item.source_recommendation_id == spec.source_recommendation_id
                     for item in self.replacements.values()
@@ -773,6 +926,43 @@ class InMemoryRepositories:
                 for item in recommendations:
                     if item.analysis_id not in (None, analysis_id):
                         raise ValueError("Recommendation analysis ID does not match")
+                    if item.current_measurement_id is not None:
+                        current_evidence = self.measurements.get(
+                            int(item.current_measurement_id)
+                        )
+                        current_run = (
+                            self.runs.get(current_evidence.run_id)
+                            if current_evidence is not None
+                            else None
+                        )
+                        if (
+                            current_evidence is None
+                            or current_run is None
+                            or current_run.assignment_id != run.assignment_id
+                            or current_evidence.measurement_role
+                            != MEASUREMENT_ROLE_LOGICAL_CHANNEL
+                            or current_evidence.logical_channel != item.logical_channel
+                            or current_evidence.physical_port
+                            != item.current_physical_port
+                        ):
+                            raise ValueError(
+                                "Recommendation current measurement evidence is invalid"
+                            )
+                    if item.candidate_measurement_id is not None:
+                        confirmed = {
+                            evidence.measurement.measurement_id: evidence
+                            for evidence in self.confirmed_extra_ports_for_assignment(
+                                run.assignment_id
+                            )
+                        }.get(int(item.candidate_measurement_id))
+                        if (
+                            confirmed is None
+                            or confirmed.physical_port
+                            != item.candidate_physical_port
+                        ):
+                            raise ValueError(
+                                "Recommendation candidate measurement evidence is invalid"
+                            )
                     recommendation_id = self._next("replacement_recommendation")
                     inserted_record = ReplacementAnalysisRecommendationRecord(
                         recommendation_id,
@@ -789,6 +979,8 @@ class InMemoryRepositories:
                         item.current_worst_loss_db,
                         item.candidate_worst_loss_db,
                         item.improvement_db,
+                        item.current_measurement_id,
+                        item.candidate_measurement_id,
                     )
                     self.replacement_analysis_recommendations[
                         recommendation_id
@@ -902,13 +1094,73 @@ class InMemoryRepositories:
                 )
             return tuple(rows)
 
+    def confirmed_extra_ports_for_assignment(
+        self, assignment_id: int
+    ) -> tuple[ConfirmedExtraPortRecord, ...]:
+        with self._lock:
+            self._routing_context(assignment_id)
+            eligible_runs = {
+                run.run_id: run
+                for run in self.runs.values()
+                if run.assignment_id == int(assignment_id)
+                and run.analysis_status not in {"excluded", "superseded"}
+            }
+            latest: dict[int, MeasurementRecord] = {}
+            for measurement in self.measurements.values():
+                run = eligible_runs.get(measurement.run_id)
+                if (
+                    run is None
+                    or measurement.measurement_role
+                    != MEASUREMENT_ROLE_EXTRA_CANDIDATE
+                    or run.front_panel_channel_count is None
+                    or int(measurement.physical_port)
+                    <= int(run.front_panel_channel_count)
+                ):
+                    continue
+                port = int(measurement.physical_port)
+                prior = latest.get(port)
+                if prior is None or (
+                    measurement.written_at_utc,
+                    measurement.attempt_number,
+                    measurement.measurement_id,
+                ) > (
+                    prior.written_at_utc,
+                    prior.attempt_number,
+                    prior.measurement_id,
+                ):
+                    latest[port] = measurement
+            return tuple(
+                ConfirmedExtraPortRecord(
+                    int(assignment_id),
+                    measurement.run_id,
+                    measurement,
+                    int(eligible_runs[measurement.run_id].front_panel_channel_count),
+                )
+                for _port, measurement in sorted(latest.items())
+            )
+
     def append_event(self, spec: SpareEventSpec) -> SpareEventRecord:
         with self._lock:
             assignment, switch = self._routing_context(
                 spec.assignment_id, require_active=True
             )
-            if spec.physical_port > switch.physical_channel_count:
-                raise ValueError("Spare physical port exceeds switch capacity")
+            if spec.action == "designated":
+                confirmed = {
+                    item.physical_port
+                    for item in self.confirmed_extra_ports_for_assignment(
+                        spec.assignment_id
+                    )
+                }
+                if spec.physical_port not in confirmed:
+                    raise ValueError(
+                        "Spare physical port has no valid committed extra-port "
+                        "measurement for this assignment"
+                    )
+                if spec.physical_port in {
+                    item.effective_physical_port
+                    for item in self.current_channel_map(spec.assignment_id)
+                }:
+                    raise ValueError("Mapped physical port cannot be designated as a spare")
             history = self.spare_history_for_assignment(spec.assignment_id)
             prior = [item for item in history if item.physical_port == spec.physical_port]
             current_action = prior[-1].action if prior else "undesignated"

@@ -20,7 +20,13 @@ from typing import Mapping
 from uuid import UUID, uuid5
 
 from domain.coc_preparation import prepare_coc
-from domain.database_records import RunVoidInfo, SwitchSpec, UnitSpec
+from domain.database_records import (
+    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
+    MEASUREMENT_ROLE_LOGICAL_CHANNEL,
+    RunVoidInfo,
+    SwitchSpec,
+    UnitSpec,
+)
 from domain.limit_profiles import LimitProfile
 from domain.reference import ReferenceSnapshot
 from domain.run_purpose import normalize_run_purpose
@@ -102,7 +108,10 @@ class SampleScenario:
             switch = SwitchSpec(
                 switch_serial=switch_serial,
                 switch_model=str(switch_values["switch_model"]),
-                physical_channel_count=int(switch_values["physical_channel_count"]),
+                last_reported_scpi_channel_count=int(
+                    switch_values.get("last_reported_scpi_channel_count")
+                    or switch_values["physical_channel_count"]
+                ),
                 firmware_version=str(switch_values.get("firmware_version") or "").strip()
                 or None,
                 notes=str(switch_values.get("notes") or "").strip() or None,
@@ -163,12 +172,17 @@ class SampleScenario:
             raise SampleScenarioError("Sample switch model must be OSX-100 or OSX-150.")
         if self.switch.switch_model != self.unit.unit_model:
             raise SampleScenarioError("Sample unit and switch models must match.")
-        if self.switch.physical_channel_count < self.unit.front_panel_channel_count:
-            raise SampleScenarioError("The sample switch must have enough physical ports.")
+        if (
+            self.switch.last_reported_scpi_channel_count
+            < self.unit.front_panel_channel_count
+        ):
+            raise SampleScenarioError(
+                "The sample switch must report enough SCPI-configured channels."
+            )
         if len(set(self.spares)) != len(self.spares):
             raise SampleScenarioError("Sample spare ports must be unique.")
-        if any(port < 1 or port > self.switch.physical_channel_count for port in self.spares):
-            raise SampleScenarioError("A sample spare port is outside switch capacity.")
+        if any(port < 1 for port in self.spares):
+            raise SampleScenarioError("A sample spare port must be positive.")
         if self.station_number <= 0:
             raise SampleScenarioError("Sample station number must be positive.")
         if not self.ilm_model or not _is_sample_serial(self.ilm_serial):
@@ -188,8 +202,8 @@ class SampleScenario:
                 raise SampleScenarioError("A replacement record is missing a required field.")
             if int(replacement["logical_channel"]) not in self.initial_channel_map:
                 raise SampleScenarioError("A replacement references an unknown logical channel.")
-            if int(replacement["replacement_physical_port"]) > self.switch.physical_channel_count:
-                raise SampleScenarioError("A replacement port exceeds switch capacity.")
+            if int(replacement["replacement_physical_port"]) < 1:
+                raise SampleScenarioError("A replacement port must be positive.")
         if self.runs[-1].purpose not in {"production", "engineering", "training", "calibration"}:
             raise SampleScenarioError("The final run has an invalid purpose.")
 
@@ -256,7 +270,10 @@ class SampleScenario:
         if (
             self.unit.front_panel_channel_count
             < logical_channel
-            <= self.switch.physical_channel_count
+            <= max(
+                self.switch.last_reported_scpi_channel_count,
+                self.unit.front_panel_channel_count,
+            )
         ):
             return logical_channel
         raise SampleScenarioError(
@@ -349,15 +366,6 @@ class SampleDatabaseSeeder:
             notes=scenario.tag,
         )
         assignment_id = assignment.assignment.assignment_id
-        for port in scenario.spares:
-            self.workflow.replacements.designate_spare(
-                assignment_id,
-                port,
-                scenario.installed_by,
-                notes=scenario.tag,
-                recorded_at_utc=scenario.installed_at_utc,
-            )
-
         current_map = dict(scenario.initial_channel_map)
         run_ids = []
         measurement_count = 0
@@ -398,6 +406,17 @@ class SampleDatabaseSeeder:
                     f"Expected sample Run {run.number}, but the database allocated Run {record.run_number}."
                 )
             run_ids.append(record.run_id)
+            rows = scenario.measurement_rows(run)
+            # Persist measured extra-port evidence before any replacement in
+            # this sample run references it.
+            for row in rows:
+                logical = int(row["logical_channel"])
+                if logical <= scenario.unit.front_panel_channel_count:
+                    continue
+                self._commit_sample_measurement(
+                    scenario, run, record.run_id, row, current_map
+                )
+                measurement_count += 1
             for replacement in scenario.replacements:
                 if int(replacement.get("related_run_number", 0)) != run.number:
                     continue
@@ -414,27 +433,13 @@ class SampleDatabaseSeeder:
                     replaced_at_utc=_parse_utc(replacement["replaced_at_utc"]),
                 )
                 current_map[logical] = int(replacement["replacement_physical_port"])
-            for row in scenario.measurement_rows(run):
+            for row in rows:
                 logical = int(row["logical_channel"])
-                physical_port = scenario.measurement_physical_port(
-                    row,
-                    current_map,
+                if logical > scenario.unit.front_panel_channel_count:
+                    continue
+                self._commit_sample_measurement(
+                    scenario, run, record.run_id, row, current_map
                 )
-                pending = self.workflow.measurements.prepare_measurement(
-                    run_id=record.run_id,
-                    logical_channel=logical,
-                    physical_port=physical_port,
-                    wavelength_1_nm=int(row["wavelength_1_nm"]),
-                    wavelength_1_il_db=Decimal(str(row["wavelength_1_il_db"])),
-                    wavelength_2_nm=int(row["wavelength_2_nm"]),
-                    wavelength_2_il_db=Decimal(str(row["wavelength_2_il_db"])),
-                    reference_snapshot=run.reference_snapshot,
-                    written_by=scenario.installed_by,
-                    written_at_utc=run.started_at_utc
-                    + timedelta(seconds=logical),
-                    measurement_uuid=scenario.measurement_uuid(run, row),
-                )
-                self.workflow.commit_measurement(pending)
                 measurement_count += 1
             finished = self.workflow.lifecycle.finish_run(
                 record.run_id,
@@ -453,6 +458,17 @@ class SampleDatabaseSeeder:
                     self.workflow.lifecycle.set_analysis_status(
                         record.run_id, run.analysis_status
                     )
+        for port in scenario.spares:
+            self.workflow.replacements.designate_spare(
+                assignment_id,
+                port,
+                scenario.installed_by,
+                notes=scenario.tag,
+                recorded_at_utc=max(
+                    (run.ended_at_utc for run in scenario.runs),
+                    default=scenario.installed_at_utc,
+                ),
+            )
         self.verify(scenario)
         return SeedResult(
             scenario.scenario_id,
@@ -463,6 +479,32 @@ class SampleDatabaseSeeder:
             len(scenario.replacements),
             len(scenario.spares),
         )
+
+    def _commit_sample_measurement(
+        self, scenario, run, run_id, row, current_map
+    ) -> None:
+        logical = int(row["logical_channel"])
+        is_extra = logical > scenario.unit.front_panel_channel_count
+        physical_port = scenario.measurement_physical_port(row, current_map)
+        pending = self.workflow.measurements.prepare_measurement(
+            run_id=run_id,
+            logical_channel=None if is_extra else logical,
+            physical_port=physical_port,
+            measurement_role=(
+                MEASUREMENT_ROLE_EXTRA_CANDIDATE
+                if is_extra
+                else MEASUREMENT_ROLE_LOGICAL_CHANNEL
+            ),
+            wavelength_1_nm=int(row["wavelength_1_nm"]),
+            wavelength_1_il_db=Decimal(str(row["wavelength_1_il_db"])),
+            wavelength_2_nm=int(row["wavelength_2_nm"]),
+            wavelength_2_il_db=Decimal(str(row["wavelength_2_il_db"])),
+            reference_snapshot=run.reference_snapshot,
+            written_by=scenario.installed_by,
+            written_at_utc=run.started_at_utc + timedelta(seconds=logical),
+            measurement_uuid=scenario.measurement_uuid(run, row),
+        )
+        self.workflow.commit_measurement(pending)
 
     def verify(self, scenario: SampleScenario) -> None:
         unit = self.repositories.get_by_main_board_serial(scenario.unit.main_board_serial)
@@ -510,7 +552,19 @@ class SampleDatabaseSeeder:
                 raise SampleScenarioError(f"Sample Run {expected.number} has the wrong measurement count.")
             for row in expected_rows:
                 logical = int(row["logical_channel"])
-                match = next((item for item in measurements if item.logical_channel == logical), None)
+                match = next(
+                    (
+                        item
+                        for item in measurements
+                        if (
+                            item.logical_channel == logical
+                            if logical <= scenario.unit.front_panel_channel_count
+                            else item.logical_channel is None
+                            and item.physical_port == logical
+                        )
+                    ),
+                    None,
+                )
                 if match is None or match.attempt_number != int(row.get("attempt_number", 1)):
                     raise SampleScenarioError(f"Sample Run {expected.number} is missing channel {logical}.")
                 expected_port = scenario.measurement_physical_port(row, current_map)
@@ -611,11 +665,7 @@ class SampleDatabaseSeeder:
         for row in rows:
             logical = int(row["logical_channel"])
             is_front_panel = logical in scenario.initial_channel_map
-            is_extra_port = (
-                scenario.unit.front_panel_channel_count
-                < logical
-                <= scenario.switch.physical_channel_count
-            )
+            is_extra_port = logical > scenario.unit.front_panel_channel_count
             if not is_front_panel and not is_extra_port:
                 raise SampleScenarioError(
                     f"Run {run.number} contains unknown channel {logical}."
@@ -626,10 +676,10 @@ class SampleDatabaseSeeder:
                     scenario.initial_channel_map.get(logical, logical),
                 )
             )
-            if physical_port < 1 or physical_port > scenario.switch.physical_channel_count:
+            if physical_port < 1:
                 raise SampleScenarioError(
                     f"Run {run.number} contains physical port {physical_port} "
-                    "outside switch capacity."
+                    "that is not positive."
                 )
             if is_extra_port and physical_port != logical:
                 raise SampleScenarioError(

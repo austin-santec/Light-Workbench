@@ -41,6 +41,11 @@ def immutable_mapping(value: Mapping | None) -> Mapping:
 
 
 LOSS_QUANTUM = Decimal("0.0001")
+MEASUREMENT_ROLE_LOGICAL_CHANNEL = "logical_channel"
+MEASUREMENT_ROLE_EXTRA_CANDIDATE = "extra_candidate"
+MEASUREMENT_ROLES = frozenset(
+    {MEASUREMENT_ROLE_LOGICAL_CHANNEL, MEASUREMENT_ROLE_EXTRA_CANDIDATE}
+)
 
 
 def require_loss(value, label: str) -> Decimal:
@@ -79,7 +84,7 @@ class SwitchRecord:
     switch_id: int
     switch_serial: str
     switch_model: str
-    physical_channel_count: int
+    last_reported_scpi_channel_count: int
     firmware_version: str | None = None
     notes: str | None = None
 
@@ -170,7 +175,7 @@ class MeasurementRecord:
     measurement_id: int
     measurement_uuid: UUID
     run_id: int
-    logical_channel: int
+    logical_channel: int | None
     attempt_number: int
     wavelength_1_nm: int
     wavelength_1_il_db: Decimal
@@ -180,8 +185,22 @@ class MeasurementRecord:
     written_at_utc: datetime
     written_by: str
     physical_port: int | None = None
+    measurement_role: str = MEASUREMENT_ROLE_LOGICAL_CHANNEL
 
     def __post_init__(self) -> None:
+        role = str(self.measurement_role or "").strip().lower()
+        if role not in MEASUREMENT_ROLES:
+            raise ValueError("Invalid measurement role")
+        object.__setattr__(self, "measurement_role", role)
+        if role == MEASUREMENT_ROLE_LOGICAL_CHANNEL:
+            if self.logical_channel is None:
+                raise ValueError("Logical-channel measurements require a logical channel")
+            require_positive(self.logical_channel, "Logical channel")
+            if self.physical_port is None:
+                object.__setattr__(self, "physical_port", int(self.logical_channel))
+        elif self.logical_channel is not None:
+            raise ValueError("Extra-candidate measurements cannot have a logical channel")
+        require_positive(self.physical_port, "Physical port")
         object.__setattr__(
             self,
             "wavelength_1_il_db",
@@ -260,7 +279,7 @@ class UnitSpec:
 class SwitchSpec:
     switch_serial: str
     switch_model: str
-    physical_channel_count: int
+    last_reported_scpi_channel_count: int
     firmware_version: str | None = None
     notes: str | None = None
 
@@ -271,7 +290,10 @@ class SwitchSpec:
         object.__setattr__(
             self, "switch_model", require_text(self.switch_model, "Switch model")
         )
-        require_positive(self.physical_channel_count, "Physical channel count")
+        require_positive(
+            self.last_reported_scpi_channel_count,
+            "Last reported SCPI channel count",
+        )
 
 
 @dataclass(frozen=True)
@@ -411,10 +433,82 @@ class RunStartSpec:
 
 
 @dataclass(frozen=True)
+class PendingRunStartSpec:
+    """Run fields that can be finalized after a fresh assignment is created."""
+
+    client_run_uuid: UUID
+    run_started_at_utc: datetime
+    tested_by: str
+    wavelength_mode: str
+    operating_band: str
+    application_version: str
+    measurement_hardware: Mapping = field(default_factory=dict)
+    limit_snapshot: Mapping = field(default_factory=dict)
+    station_number: int | None = None
+    run_purpose: str = "production"
+    analysis_status: str = "pending"
+    void_info: RunVoidInfo | None = None
+    part_number_snapshot: str | None = None
+    front_panel_channel_count: int | None = None
+    notes: str | None = None
+
+    def __post_init__(self) -> None:
+        validated = RunStartSpec(
+            assignment_id=1,
+            client_run_uuid=self.client_run_uuid,
+            run_started_at_utc=self.run_started_at_utc,
+            tested_by=self.tested_by,
+            wavelength_mode=self.wavelength_mode,
+            operating_band=self.operating_band,
+            application_version=self.application_version,
+            measurement_hardware=self.measurement_hardware,
+            limit_snapshot=self.limit_snapshot,
+            station_number=self.station_number,
+            run_purpose=self.run_purpose,
+            analysis_status=self.analysis_status,
+            void_info=self.void_info,
+            part_number_snapshot=self.part_number_snapshot,
+            front_panel_channel_count=self.front_panel_channel_count,
+            notes=self.notes,
+        )
+        for name in (
+            "run_started_at_utc",
+            "tested_by",
+            "wavelength_mode",
+            "operating_band",
+            "application_version",
+            "measurement_hardware",
+            "limit_snapshot",
+            "run_purpose",
+        ):
+            object.__setattr__(self, name, getattr(validated, name))
+
+    def with_assignment_id(self, assignment_id: int) -> RunStartSpec:
+        return RunStartSpec(
+            assignment_id=assignment_id,
+            client_run_uuid=self.client_run_uuid,
+            run_started_at_utc=self.run_started_at_utc,
+            tested_by=self.tested_by,
+            wavelength_mode=self.wavelength_mode,
+            operating_band=self.operating_band,
+            application_version=self.application_version,
+            measurement_hardware=self.measurement_hardware,
+            limit_snapshot=self.limit_snapshot,
+            station_number=self.station_number,
+            run_purpose=self.run_purpose,
+            analysis_status=self.analysis_status,
+            void_info=self.void_info,
+            part_number_snapshot=self.part_number_snapshot,
+            front_panel_channel_count=self.front_panel_channel_count,
+            notes=self.notes,
+        )
+
+
+@dataclass(frozen=True)
 class MeasurementSpec:
     measurement_uuid: UUID
     run_id: int
-    logical_channel: int
+    logical_channel: int | None
     attempt_number: int
     wavelength_1_nm: int
     wavelength_1_il_db: Decimal
@@ -424,10 +518,23 @@ class MeasurementSpec:
     written_at_utc: datetime
     written_by: str
     physical_port: int | None = None
+    measurement_role: str = MEASUREMENT_ROLE_LOGICAL_CHANNEL
 
     def __post_init__(self) -> None:
         require_positive(self.run_id, "Run ID")
-        require_positive(self.logical_channel, "Logical channel")
+        role = str(self.measurement_role or "").strip().lower()
+        if role not in MEASUREMENT_ROLES:
+            raise ValueError("Invalid measurement role")
+        object.__setattr__(self, "measurement_role", role)
+        if role == MEASUREMENT_ROLE_LOGICAL_CHANNEL:
+            if self.logical_channel is None:
+                raise ValueError("Logical-channel measurements require a logical channel")
+            require_positive(self.logical_channel, "Logical channel")
+            if self.physical_port is None:
+                object.__setattr__(self, "physical_port", int(self.logical_channel))
+        elif self.logical_channel is not None:
+            raise ValueError("Extra-candidate measurements cannot have a logical channel")
+        require_positive(self.physical_port, "Physical port")
         require_positive(self.attempt_number, "Attempt number")
         require_positive(self.wavelength_1_nm, "First wavelength")
         require_positive(self.wavelength_2_nm, "Second wavelength")
@@ -443,8 +550,6 @@ class MeasurementSpec:
             "wavelength_2_il_db",
             require_loss(self.wavelength_2_il_db, "Second insertion loss"),
         )
-        if self.physical_port is not None:
-            require_positive(self.physical_port, "Physical port")
         object.__setattr__(
             self, "written_at_utc", require_utc(self.written_at_utc, "Write time")
         )
@@ -462,7 +567,7 @@ class MeasurementWriteSpec:
 
     measurement_uuid: UUID
     run_id: int
-    logical_channel: int
+    logical_channel: int | None
     wavelength_1_nm: int
     wavelength_1_il_db: Decimal
     wavelength_2_nm: int
@@ -471,6 +576,7 @@ class MeasurementWriteSpec:
     written_at_utc: datetime
     written_by: str
     physical_port: int | None = None
+    measurement_role: str = MEASUREMENT_ROLE_LOGICAL_CHANNEL
 
     def __post_init__(self) -> None:
         validated = self.with_attempt_number(1)
@@ -497,7 +603,22 @@ class MeasurementWriteSpec:
             written_at_utc=self.written_at_utc,
             written_by=self.written_by,
             physical_port=self.physical_port,
+            measurement_role=self.measurement_role,
         )
+
+
+@dataclass(frozen=True)
+class ConfirmedExtraPortRecord:
+    """Latest accepted extra-candidate evidence for an assignment port."""
+
+    assignment_id: int
+    run_id: int
+    measurement: MeasurementRecord
+    front_panel_channel_count: int
+
+    @property
+    def physical_port(self) -> int:
+        return int(self.measurement.physical_port)
 
 
 @dataclass(frozen=True)
@@ -512,6 +633,7 @@ class ReplacementSpec:
     related_run_id: int | None = None
     notes: str | None = None
     source_recommendation_id: int | None = None
+    is_correction: bool = False
 
     def __post_init__(self) -> None:
         require_positive(self.assignment_id, "Assignment ID")
@@ -594,6 +716,8 @@ class ReplacementAnalysisRecommendationSpec:
     current_worst_loss_db: Decimal
     candidate_worst_loss_db: Decimal
     improvement_db: Decimal
+    current_measurement_id: int | None = None
+    candidate_measurement_id: int | None = None
 
     def __post_init__(self) -> None:
         if self.analysis_id is not None:
@@ -619,6 +743,10 @@ class ReplacementAnalysisRecommendationSpec:
             (self.improvement_db, "Improvement"),
         ):
             require_loss(value, label)
+        if self.current_measurement_id is not None:
+            require_positive(self.current_measurement_id, "Current measurement ID")
+        if self.candidate_measurement_id is not None:
+            require_positive(self.candidate_measurement_id, "Candidate measurement ID")
 
 
 @dataclass(frozen=True)
@@ -637,6 +765,8 @@ class ReplacementAnalysisRecommendationRecord:
     current_worst_loss_db: Decimal
     candidate_worst_loss_db: Decimal
     improvement_db: Decimal
+    current_measurement_id: int | None = None
+    candidate_measurement_id: int | None = None
 
 
 @dataclass(frozen=True)

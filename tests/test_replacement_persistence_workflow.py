@@ -1,13 +1,17 @@
 import unittest
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from uuid import uuid4
 
 from application.replacement_persistence_workflow import (
+    ReplacementBatchValidationError,
     ReplacementChangeRequest,
     ReplacementPersistenceWorkflow,
 )
 from domain.database_records import (
     AssignmentSpec,
+    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
+    MeasurementSpec,
     RunSpec,
     SwitchSpec,
     UnitSpec,
@@ -46,8 +50,27 @@ class ReplacementPersistenceWorkflowTests(unittest.TestCase):
                 "SM",
                 "O band",
                 "test",
+                front_panel_channel_count=2,
             )
         )
+        for offset, port in enumerate((3, 4, 5), start=1):
+            self.repository.append_attempt(
+                MeasurementSpec(
+                    measurement_uuid=uuid4(),
+                    run_id=self.run.run_id,
+                    logical_channel=None,
+                    physical_port=port,
+                    measurement_role=MEASUREMENT_ROLE_EXTRA_CANDIDATE,
+                    attempt_number=1,
+                    wavelength_1_nm=1310,
+                    wavelength_1_il_db=Decimal("1.0"),
+                    wavelength_2_nm=1550,
+                    wavelength_2_il_db=Decimal("1.1"),
+                    reference_snapshot={"reference_id": "ref-1"},
+                    written_at_utc=NOW + timedelta(milliseconds=offset),
+                    written_by="AT",
+                )
+            )
         self.workflow = ReplacementPersistenceWorkflow(self.repository)
 
     def test_repeated_replacements_preserve_history_and_update_current_map(self):
@@ -136,7 +159,7 @@ class ReplacementPersistenceWorkflowTests(unittest.TestCase):
                 replaced_by="AT",
                 replaced_at_utc=NOW + timedelta(seconds=1),
             )
-        with self.assertRaisesRegex(ValueError, "capacity"):
+        with self.assertRaisesRegex(ValueError, "committed extra-port"):
             self.workflow.record_replacement(
                 assignment_id=self.assignment.assignment_id,
                 logical_channel=1,
@@ -344,8 +367,95 @@ class ReplacementPersistenceWorkflowTests(unittest.TestCase):
         self.assertEqual(snapshot.effective_channel_map[1], 4)
         self.assertEqual(snapshot.active_spares, (5,))
 
+    def test_distinct_batch_uses_one_authoritative_snapshot(self):
+        snapshot = self.workflow.apply_changes(
+            assignment_id=self.assignment.assignment_id,
+            related_run_id=self.run.run_id,
+            replacements=(
+                ReplacementChangeRequest(
+                    1,
+                    4,
+                    "First",
+                    "AT",
+                    expected_previous_physical_port=1,
+                ),
+                ReplacementChangeRequest(
+                    2,
+                    5,
+                    "Second",
+                    "AT",
+                    expected_previous_physical_port=2,
+                ),
+            ),
+            spare_operator="AT",
+            recorded_at_utc=NOW + timedelta(seconds=1),
+        )
+
+        self.assertEqual(snapshot.effective_channel_map, {1: 4, 2: 5})
+        self.assertEqual(
+            tuple(
+                (item.logical_channel, item.previous_physical_port,
+                 item.replacement_physical_port)
+                for item in snapshot.replacement_history
+            ),
+            ((1, 1, 4), (2, 2, 5)),
+        )
+
+    def test_batch_validation_rejects_duplicate_logical_channel_before_write(self):
+        with self.assertRaisesRegex(
+            ReplacementBatchValidationError,
+            "Channel 1 is included more than once",
+        ):
+            self.workflow.apply_changes(
+                assignment_id=self.assignment.assignment_id,
+                related_run_id=self.run.run_id,
+                replacements=(
+                    ReplacementChangeRequest(1, 4, "First", "AT"),
+                    ReplacementChangeRequest(1, 5, "Second", "AT"),
+                ),
+                spare_operator="AT",
+            )
+        self.assertEqual(self.workflow.load_assignment(
+            self.assignment.assignment_id
+        ).replacement_history, ())
+
+    def test_batch_validation_reports_stale_mapping_and_no_op(self):
+        with self.assertRaisesRegex(ReplacementBatchValidationError, "expected to use"):
+            self.workflow.apply_changes(
+                assignment_id=self.assignment.assignment_id,
+                related_run_id=self.run.run_id,
+                replacements=(
+                    ReplacementChangeRequest(
+                        1,
+                        4,
+                        "Stale",
+                        "AT",
+                        expected_previous_physical_port=9,
+                    ),
+                ),
+                spare_operator="AT",
+            )
+        with self.assertRaisesRegex(ReplacementBatchValidationError, "cannot be recorded as"):
+            self.workflow.apply_changes(
+                assignment_id=self.assignment.assignment_id,
+                related_run_id=self.run.run_id,
+                replacements=(
+                    ReplacementChangeRequest(
+                        1,
+                        1,
+                        "No-op",
+                        "AT",
+                        expected_previous_physical_port=1,
+                    ),
+                ),
+                spare_operator="AT",
+            )
+        self.assertEqual(self.workflow.load_assignment(
+            self.assignment.assignment_id
+        ).replacement_history, ())
+
     def test_failed_atomic_changes_leave_no_partial_replacement(self):
-        with self.assertRaisesRegex(ValueError, "already in use"):
+        with self.assertRaisesRegex(ValueError, "more than one logical channel"):
             self.workflow.apply_changes(
                 assignment_id=self.assignment.assignment_id,
                 related_run_id=self.run.run_id,
@@ -395,7 +505,13 @@ class ReplacementPersistenceWorkflowTests(unittest.TestCase):
             assignment_id=self.assignment.assignment_id,
             related_run_id=self.run.run_id,
             replacements=(
-                ReplacementChangeRequest(1, 1, "Reversal to original port", "JS"),
+                ReplacementChangeRequest(
+                    1,
+                    1,
+                    "Reversal to original port",
+                    "JS",
+                    is_correction=True,
+                ),
             ),
             spare_operator="JS",
             recorded_at_utc=NOW + timedelta(seconds=2),
@@ -407,6 +523,104 @@ class ReplacementPersistenceWorkflowTests(unittest.TestCase):
         self.assertEqual(second.replacement_history[1].previous_physical_port, 4)
         self.assertEqual(second.replacement_history[1].replacement_physical_port, 1)
         self.assertEqual(second.effective_channel_map[1], 1)
+
+    def test_confirmed_ports_above_scpi_count_support_atomic_replacements(self):
+        repository = InMemoryRepositories()
+        unit = repository.get_or_create(
+            UnitSpec(
+                "unit-48-with-cli-extras",
+                "OSX-150-1A-048-09-FA-00B-3H",
+                48,
+                "OSX-150",
+            )
+        )
+        switch = repository.get_or_create(
+            SwitchSpec("switch-48-with-cli-extras", "OSX-150", 48)
+        )
+        assignment = repository.install(
+            AssignmentSpec(
+                unit.unit_id,
+                switch.switch_id,
+                NOW,
+                "AT",
+                {channel: channel for channel in range(1, 49)},
+            )
+        )
+        run = repository.create(
+            RunSpec(
+                assignment.assignment_id,
+                1,
+                uuid4(),
+                NOW,
+                "AT",
+                "SM",
+                "O band",
+                "test",
+                front_panel_channel_count=48,
+            )
+        )
+        for offset, port in enumerate(range(49, 54), start=1):
+            repository.append_attempt(
+                MeasurementSpec(
+                    uuid4(),
+                    run.run_id,
+                    None,
+                    1,
+                    1310,
+                    Decimal("0.9000"),
+                    1550,
+                    Decimal("0.8500"),
+                    {"reference_id": "ref-cli"},
+                    NOW + timedelta(seconds=offset),
+                    "AT",
+                    port,
+                    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
+                )
+            )
+        workflow = ReplacementPersistenceWorkflow(repository)
+        workflow.designate_spare(
+            assignment.assignment_id,
+            52,
+            "AT",
+            recorded_at_utc=NOW + timedelta(seconds=10),
+        )
+        workflow.designate_spare(
+            assignment.assignment_id,
+            53,
+            "AT",
+            recorded_at_utc=NOW + timedelta(seconds=11),
+        )
+
+        saved = workflow.apply_changes(
+            assignment_id=assignment.assignment_id,
+            related_run_id=run.run_id,
+            replacements=(
+                ReplacementChangeRequest(10, 49, "High loss", "AT"),
+                ReplacementChangeRequest(11, 50, "High loss", "AT"),
+            ),
+            spare_operator="AT",
+            recorded_at_utc=NOW + timedelta(seconds=12),
+        )
+
+        self.assertEqual(saved.effective_channel_map[10], 49)
+        self.assertEqual(saved.effective_channel_map[11], 50)
+        self.assertEqual(saved.active_spares, (52, 53))
+        self.assertEqual(
+            tuple(item.physical_port for item in saved.confirmed_extra_ports),
+            (49, 50, 51, 52, 53),
+        )
+        with self.assertRaisesRegex(
+            ReplacementBatchValidationError, "no valid committed extra-port"
+        ):
+            workflow.apply_changes(
+                assignment_id=assignment.assignment_id,
+                related_run_id=run.run_id,
+                replacements=(
+                    ReplacementChangeRequest(12, 54, "High loss", "AT"),
+                ),
+                spare_operator="AT",
+                recorded_at_utc=NOW + timedelta(seconds=13),
+            )
 
 
 if __name__ == "__main__":

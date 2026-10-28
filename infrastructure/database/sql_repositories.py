@@ -15,12 +15,16 @@ from domain.database_records import (
     MeasurementRecord,
     MeasurementSpec,
     MeasurementWriteSpec,
+    PendingRunStartSpec,
     ReplacementAnalysisRecommendationRecord,
     ReplacementAnalysisRecommendationSpec,
     ReplacementAnalysisRecord,
     ReplacementAnalysisSpec,
     ReplacementRecord,
     ReplacementSpec,
+    ConfirmedExtraPortRecord,
+    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
+    MEASUREMENT_ROLE_LOGICAL_CHANNEL,
     RunRecord,
     RunStartSpec,
     RunSpec,
@@ -143,13 +147,13 @@ class SqlRepositories:
                     """
                     INSERT INTO dbo.SWITCHES (
                         switch_serial, switch_model, firmware_version,
-                        physical_channel_count, notes
+                        last_reported_scpi_channel_count, notes
                     ) OUTPUT INSERTED.switch_id VALUES (?, ?, ?, ?, ?)
                     """,
                     spec.switch_serial,
                     spec.switch_model,
                     spec.firmware_version,
-                    spec.physical_channel_count,
+                    spec.last_reported_scpi_channel_count,
                     spec.notes,
                 ).fetchone()[0]
             else:
@@ -158,13 +162,13 @@ class SqlRepositories:
                     """
                     UPDATE dbo.SWITCHES SET
                         switch_model = ?, firmware_version = ?,
-                        physical_channel_count = ?, notes = ?,
+                        last_reported_scpi_channel_count = ?, notes = ?,
                         updated_at_utc = SYSUTCDATETIME()
                     WHERE switch_id = ?
                     """,
                     spec.switch_model,
                     spec.firmware_version,
-                    spec.physical_channel_count,
+                    spec.last_reported_scpi_channel_count,
                     spec.notes,
                     switch_id,
                 )
@@ -199,7 +203,7 @@ class SqlRepositories:
             row = cursor.execute(
                 """
                 SELECT switch_id, switch_serial, switch_model,
-                    physical_channel_count, firmware_version, notes
+                    last_reported_scpi_channel_count, firmware_version, notes
                 FROM dbo.SWITCHES WHERE switch_id = ?
                 """,
                 int(switch_id),
@@ -211,7 +215,7 @@ class SqlRepositories:
             row = cursor.execute(
                 """
                 SELECT switch_id, switch_serial, switch_model,
-                    physical_channel_count, firmware_version, notes
+                    last_reported_scpi_channel_count, firmware_version, notes
                 FROM dbo.SWITCHES WHERE switch_serial = ?
                 """,
                 str(switch_serial or "").strip(),
@@ -378,6 +382,287 @@ class SqlRepositories:
             ).fetchone()
             return self._assignment(row)
 
+    def install_fresh_pairing(
+        self,
+        spec: AssignmentSpec,
+        removed_at_utc: datetime,
+        removed_by: str,
+    ) -> tuple[AssignmentRecord, tuple[AssignmentRecord, ...], tuple[int, ...]]:
+        """Atomically close conflicting assignments and install a fresh baseline."""
+        channel_map = {str(key): value for key, value in spec.initial_channel_map.items()}
+        removed = require_utc(removed_at_utc, "Pairing-change time")
+        operator = str(removed_by or "").strip()
+        if not operator:
+            raise ValueError("Pairing-change operator is required")
+        with self._factory.transaction() as cursor:
+            unit = cursor.execute(
+                """
+                SELECT main_board_serial FROM dbo.UNITS WITH (UPDLOCK, HOLDLOCK)
+                WHERE unit_id = ?
+                """,
+                spec.unit_id,
+            ).fetchone()
+            switch = cursor.execute(
+                """
+                SELECT switch_serial FROM dbo.SWITCHES WITH (UPDLOCK, HOLDLOCK)
+                WHERE switch_id = ?
+                """,
+                spec.switch_id,
+            ).fetchone()
+            if unit is None or switch is None:
+                raise ValueError("Assignment unit and switch must already exist")
+            rows = cursor.execute(
+                """
+                SELECT assignment_id, unit_id, switch_id, installed_at_utc
+                FROM dbo.UNIT_SWITCH_ASSIGNMENTS WITH (UPDLOCK, HOLDLOCK)
+                WHERE removed_at_utc IS NULL
+                    AND (unit_id = ? OR switch_id = ?)
+                ORDER BY assignment_id
+                """,
+                spec.unit_id,
+                spec.switch_id,
+            ).fetchall()
+            conflicts = tuple(rows)
+            for row in conflicts:
+                if int(row[1]) == spec.unit_id and int(row[2]) == spec.switch_id:
+                    return (
+                        self._assignment(
+                            cursor.execute(
+                                self._ASSIGNMENT_SELECT
+                                + " WHERE assignment.assignment_id = ?",
+                                row[0],
+                            ).fetchone()
+                        ),
+                        (),
+                        (),
+                    )
+                if removed < _utc(row[3]):
+                    raise ValueError("Pairing-change time cannot precede installation")
+
+            assignment_ids = tuple(int(row[0]) for row in conflicts)
+            stopped_ids = []
+            if assignment_ids:
+                placeholders = ", ".join("?" for _ in assignment_ids)
+                run_rows = cursor.execute(
+                    """
+                    SELECT run_id FROM dbo.IL_RUNS WITH (UPDLOCK, HOLDLOCK)
+                    WHERE completion_status = 'in_progress'
+                        AND assignment_id IN (%s)
+                    ORDER BY run_id
+                    """ % placeholders,
+                    *assignment_ids,
+                ).fetchall()
+                stopped_ids = [int(row[0]) for row in run_rows]
+                cursor.execute(
+                    """
+                    UPDATE dbo.IL_RUNS SET completion_status = 'stopped',
+                        run_ended_at_utc = ?, analysis_status = 'pending',
+                        updated_at_utc = SYSUTCDATETIME()
+                    WHERE completion_status = 'in_progress'
+                        AND assignment_id IN (%s)
+                    """ % placeholders,
+                    removed,
+                    *assignment_ids,
+                )
+            closed_reasons = {}
+            for row in conflicts:
+                assignment_id = int(row[0])
+                if int(row[1]) == spec.unit_id:
+                    reason = "Main board paired with switch %s" % switch[0]
+                else:
+                    reason = "Switch reassigned to main board %s" % unit[0]
+                closed_reasons[assignment_id] = reason
+                cursor.execute(
+                    """
+                    UPDATE dbo.UNIT_SWITCH_ASSIGNMENTS SET
+                        removed_at_utc = ?, removed_by = ?, removal_reason = ?,
+                        updated_at_utc = SYSUTCDATETIME()
+                    WHERE assignment_id = ? AND removed_at_utc IS NULL
+                    """,
+                    removed,
+                    operator,
+                    reason,
+                    assignment_id,
+                )
+            new_id = cursor.execute(
+                """
+                INSERT INTO dbo.UNIT_SWITCH_ASSIGNMENTS (
+                    unit_id, switch_id, installed_at_utc, installed_by,
+                    initial_channel_map_json, notes
+                ) OUTPUT INSERTED.assignment_id VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                spec.unit_id,
+                spec.switch_id,
+                spec.installed_at_utc,
+                spec.installed_by,
+                _json(channel_map),
+                spec.notes,
+            ).fetchone()[0]
+            installed = self._assignment(
+                cursor.execute(
+                    self._ASSIGNMENT_SELECT + " WHERE assignment.assignment_id = ?",
+                    new_id,
+                ).fetchone()
+            )
+            closed = tuple(
+                self._assignment(
+                    cursor.execute(
+                        self._ASSIGNMENT_SELECT
+                        + " WHERE assignment.assignment_id = ?",
+                        int(row[0]),
+                    ).fetchone()
+                )
+                for row in conflicts
+            )
+            return installed, closed, tuple(stopped_ids)
+
+    def create_next_with_fresh_pairing(
+        self,
+        assignment: AssignmentSpec,
+        run: PendingRunStartSpec,
+        changed_at_utc: datetime,
+        changed_by: str,
+    ):
+        """Persist pairing transition and the first run in one SQL transaction."""
+        channel_map = {str(key): value for key, value in assignment.initial_channel_map.items()}
+        removed = require_utc(changed_at_utc, "Pairing-change time")
+        operator = str(changed_by or "").strip()
+        if not operator:
+            raise ValueError("Pairing-change operator is required")
+        with self._factory.transaction() as cursor:
+            unit = cursor.execute(
+                "SELECT main_board_serial FROM dbo.UNITS WITH (UPDLOCK, HOLDLOCK) WHERE unit_id = ?",
+                assignment.unit_id,
+            ).fetchone()
+            switch = cursor.execute(
+                "SELECT switch_serial FROM dbo.SWITCHES WITH (UPDLOCK, HOLDLOCK) WHERE switch_id = ?",
+                assignment.switch_id,
+            ).fetchone()
+            if unit is None or switch is None:
+                raise ValueError("Assignment unit and switch must already exist")
+            conflicts = cursor.execute(
+                """
+                SELECT assignment_id, unit_id, switch_id, installed_at_utc
+                FROM dbo.UNIT_SWITCH_ASSIGNMENTS WITH (UPDLOCK, HOLDLOCK)
+                WHERE removed_at_utc IS NULL AND (unit_id = ? OR switch_id = ?)
+                ORDER BY assignment_id
+                """,
+                assignment.unit_id,
+                assignment.switch_id,
+            ).fetchall()
+            if any(
+                int(row[1]) == assignment.unit_id
+                and int(row[2]) == assignment.switch_id
+                for row in conflicts
+            ):
+                active_id = next(
+                    int(row[0])
+                    for row in conflicts
+                    if int(row[1]) == assignment.unit_id
+                    and int(row[2]) == assignment.switch_id
+                )
+                assignment_record = self._assignment(
+                    cursor.execute(
+                        self._ASSIGNMENT_SELECT
+                        + " WHERE assignment.assignment_id = ?",
+                        active_id,
+                    ).fetchone()
+                )
+                target_assignment_id = active_id
+                closed = ()
+                stopped_ids = ()
+            else:
+                for row in conflicts:
+                    if removed < _utc(row[3]):
+                        raise ValueError("Pairing-change time cannot precede installation")
+                assignment_ids = tuple(int(row[0]) for row in conflicts)
+                stopped_ids_list = []
+                if assignment_ids:
+                    placeholders = ", ".join("?" for _ in assignment_ids)
+                    run_rows = cursor.execute(
+                        "SELECT run_id FROM dbo.IL_RUNS WITH (UPDLOCK, HOLDLOCK) "
+                        "WHERE completion_status = 'in_progress' AND assignment_id IN (%s) "
+                        "ORDER BY run_id" % placeholders,
+                        *assignment_ids,
+                    ).fetchall()
+                    stopped_ids_list = [int(row[0]) for row in run_rows]
+                    cursor.execute(
+                        "UPDATE dbo.IL_RUNS SET completion_status = 'stopped', "
+                        "run_ended_at_utc = ?, analysis_status = 'pending', "
+                        "updated_at_utc = SYSUTCDATETIME() "
+                        "WHERE completion_status = 'in_progress' AND assignment_id IN (%s)"
+                        % placeholders,
+                        removed,
+                        *assignment_ids,
+                    )
+                for row in conflicts:
+                    reason = (
+                        "Main board paired with switch %s" % switch[0]
+                        if int(row[1]) == assignment.unit_id
+                        else "Switch reassigned to main board %s" % unit[0]
+                    )
+                    cursor.execute(
+                        "UPDATE dbo.UNIT_SWITCH_ASSIGNMENTS SET removed_at_utc = ?, "
+                        "removed_by = ?, removal_reason = ?, updated_at_utc = SYSUTCDATETIME() "
+                        "WHERE assignment_id = ? AND removed_at_utc IS NULL",
+                        removed,
+                        operator,
+                        reason,
+                        int(row[0]),
+                    )
+                target_assignment_id = cursor.execute(
+                    """
+                    INSERT INTO dbo.UNIT_SWITCH_ASSIGNMENTS (
+                        unit_id, switch_id, installed_at_utc, installed_by,
+                        initial_channel_map_json, notes
+                    ) OUTPUT INSERTED.assignment_id VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    assignment.unit_id,
+                    assignment.switch_id,
+                    assignment.installed_at_utc,
+                    assignment.installed_by,
+                    _json(channel_map),
+                    assignment.notes,
+                ).fetchone()[0]
+                assignment_record = self._assignment(
+                    cursor.execute(
+                        self._ASSIGNMENT_SELECT
+                        + " WHERE assignment.assignment_id = ?",
+                        target_assignment_id,
+                    ).fetchone()
+                )
+                closed = tuple(
+                    self._assignment(
+                        cursor.execute(
+                            self._ASSIGNMENT_SELECT
+                            + " WHERE assignment.assignment_id = ?",
+                            int(row[0]),
+                        ).fetchone()
+                    )
+                    for row in conflicts
+                )
+                stopped_ids = tuple(stopped_ids_list)
+            run_spec = run.with_assignment_id(target_assignment_id)
+            existing = cursor.execute(
+                self._RUN_SELECT + " WHERE run.client_run_uuid = ?",
+                str(run_spec.client_run_uuid),
+            ).fetchone()
+            if existing is not None:
+                record = self._run(existing)
+            else:
+                run_number = cursor.execute(
+                    """
+                    SELECT COALESCE(MAX(run.run_number), 0) + 1
+                    FROM dbo.IL_RUNS AS run
+                    INNER JOIN dbo.UNIT_SWITCH_ASSIGNMENTS AS assignment
+                        ON assignment.assignment_id = run.assignment_id
+                    WHERE assignment.unit_id = ?
+                    """,
+                    assignment.unit_id,
+                ).fetchone()[0]
+                record = self._insert_run(cursor, run_spec.with_run_number(run_number))
+            return record, assignment_record, closed, stopped_ids
+
     def create(self, spec: RunSpec) -> RunRecord:
         try:
             with self._factory.transaction() as cursor:
@@ -525,7 +810,7 @@ class SqlRepositories:
             rows = cursor.execute(
                 """
                 SELECT switch_id, switch_serial, switch_model,
-                    physical_channel_count, firmware_version, notes
+                    last_reported_scpi_channel_count, firmware_version, notes
                 FROM dbo.SWITCHES ORDER BY switch_id
                 """
             ).fetchall()
@@ -758,14 +1043,19 @@ class SqlRepositories:
                 if existing is not None:
                     return existing
                 self._validate_measurement_run(cursor, spec)
+                if spec.measurement_role == MEASUREMENT_ROLE_LOGICAL_CHANNEL:
+                    identity_sql = "logical_channel = ?"
+                    identity_value = spec.logical_channel
+                else:
+                    identity_sql = "physical_port = ?"
+                    identity_value = spec.physical_port
                 attempt_number = cursor.execute(
-                    """
-                    SELECT COALESCE(MAX(attempt_number), 0) + 1
-                    FROM dbo.IL_MEASUREMENTS
-                    WHERE run_id = ? AND logical_channel = ?
-                    """,
+                    "SELECT COALESCE(MAX(attempt_number), 0) + 1 "
+                    "FROM dbo.IL_MEASUREMENTS WHERE run_id = ? "
+                    "AND measurement_role = ? AND " + identity_sql,
                     spec.run_id,
-                    spec.logical_channel,
+                    spec.measurement_role,
+                    identity_value,
                 ).fetchone()[0]
                 return self._insert_measurement(
                     cursor,
@@ -791,7 +1081,7 @@ class SqlRepositories:
     def _validate_measurement_run(self, cursor, spec) -> None:
         row = cursor.execute(
             """
-            SELECT wavelength_mode, completion_status
+            SELECT wavelength_mode, completion_status, front_panel_channel_count
             FROM dbo.IL_RUNS WITH (UPDLOCK, HOLDLOCK)
             WHERE run_id = ?
             """,
@@ -799,7 +1089,7 @@ class SqlRepositories:
         ).fetchone()
         if row is None:
             raise ValueError("Measurement run does not exist")
-        mode, completion_status = row
+        mode, completion_status, front_panel_channel_count = row
         if completion_status != "in_progress":
             raise ValueError("Measurements may only be written to an in-progress run")
         expected = (1310, 1550) if mode == "SM" else (850, 1300)
@@ -809,22 +1099,31 @@ class SqlRepositories:
                 f"{mode} measurements require wavelengths "
                 f"{expected[0]} nm and {expected[1]} nm"
             )
+        if front_panel_channel_count is not None:
+            boundary = int(front_panel_channel_count)
+            if spec.measurement_role == MEASUREMENT_ROLE_LOGICAL_CHANNEL:
+                if int(spec.logical_channel) > boundary:
+                    raise ValueError("Logical channel exceeds the front-panel channel count")
+            elif int(spec.physical_port) <= boundary:
+                raise ValueError("Extra-candidate physical port must exceed the front-panel channel count")
 
     def _insert_measurement(self, cursor, spec: MeasurementSpec) -> MeasurementRecord:
         measurement_id = cursor.execute(
             """
             INSERT INTO dbo.IL_MEASUREMENTS (
                 measurement_uuid, run_id, logical_channel, physical_port,
+                measurement_role,
                 attempt_number, wavelength_1_nm, wavelength_1_il_db,
                 wavelength_2_nm, wavelength_2_il_db,
                 reference_snapshot_json, written_at_utc, written_by
             ) OUTPUT INSERTED.measurement_id
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             str(spec.measurement_uuid),
             spec.run_id,
             spec.logical_channel,
             spec.physical_port,
+            spec.measurement_role,
             spec.attempt_number,
             spec.wavelength_1_nm,
             spec.wavelength_1_il_db,
@@ -844,7 +1143,8 @@ class SqlRepositories:
         with self._factory.transaction() as cursor:
             rows = cursor.execute(
                 self._CURRENT_MEASUREMENT_SELECT
-                + " WHERE measurement.run_id = ? ORDER BY measurement.logical_channel",
+                + " WHERE measurement.run_id = ? ORDER BY measurement.measurement_role, "
+                "COALESCE(measurement.logical_channel, measurement.physical_port)",
                 run_id,
             ).fetchall()
             return tuple(self._measurement(row) for row in rows)
@@ -873,7 +1173,8 @@ class SqlRepositories:
                 raise ValueError("Measurement run does not exist")
             current_rows = cursor.execute(
                 self._CURRENT_MEASUREMENT_SELECT
-                + " WHERE measurement.run_id = ? ORDER BY measurement.logical_channel",
+                + " WHERE measurement.run_id = ? ORDER BY measurement.measurement_role, "
+                "COALESCE(measurement.logical_channel, measurement.physical_port)",
                 run_id,
             ).fetchall()
             history_rows = cursor.execute(
@@ -942,6 +1243,37 @@ class SqlRepositories:
             for item in recommendations:
                 if item.analysis_id not in (None, int(analysis_id)):
                     raise ValueError("Recommendation analysis ID does not match")
+                if item.current_measurement_id is not None:
+                    current_evidence = cursor.execute(
+                        """
+                        SELECT measurement.logical_channel, measurement.physical_port,
+                            run.assignment_id, measurement.measurement_role
+                        FROM dbo.IL_MEASUREMENTS AS measurement
+                        INNER JOIN dbo.IL_RUNS AS run ON run.run_id = measurement.run_id
+                        WHERE measurement.measurement_id = ?
+                        """,
+                        item.current_measurement_id,
+                    ).fetchone()
+                    if (
+                        current_evidence is None
+                        or int(current_evidence[0]) != int(item.logical_channel)
+                        or int(current_evidence[1]) != int(item.current_physical_port)
+                        or int(current_evidence[2]) != int(run[0])
+                        or current_evidence[3] != MEASUREMENT_ROLE_LOGICAL_CHANNEL
+                    ):
+                        raise ValueError("Recommendation current measurement evidence is invalid")
+                if item.candidate_measurement_id is not None:
+                    candidate_evidence = cursor.execute(
+                        "SELECT assignment_id, physical_port FROM dbo.vw_ConfirmedExtraPorts "
+                        "WHERE measurement_id = ?",
+                        item.candidate_measurement_id,
+                    ).fetchone()
+                    if (
+                        candidate_evidence is None
+                        or int(candidate_evidence[0]) != int(run[0])
+                        or int(candidate_evidence[1]) != int(item.candidate_physical_port)
+                    ):
+                        raise ValueError("Recommendation candidate measurement evidence is invalid")
                 cursor.execute(
                     """
                     INSERT INTO dbo.REPLACEMENT_ANALYSIS_RECOMMENDATIONS (
@@ -950,8 +1282,9 @@ class SqlRepositories:
                         candidate_physical_port, current_wavelength_1_il_db,
                         current_wavelength_2_il_db, candidate_wavelength_1_il_db,
                         candidate_wavelength_2_il_db, current_worst_loss_db,
-                        candidate_worst_loss_db, improvement_db
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        candidate_worst_loss_db, improvement_db,
+                        current_measurement_id, candidate_measurement_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     analysis_id,
                     item.recommendation_rank,
@@ -966,6 +1299,8 @@ class SqlRepositories:
                     item.current_worst_loss_db,
                     item.candidate_worst_loss_db,
                     item.improvement_db,
+                    item.current_measurement_id,
+                    item.candidate_measurement_id,
                 )
             return self._analysis_bundle(cursor, analysis_id)
 
@@ -1089,14 +1424,25 @@ class SqlRepositories:
             raise ValueError("Replacement logical channel is not in the assignment")
         if route.effective_physical_port != spec.previous_physical_port:
             raise ValueError("Previous physical port does not match the current channel map")
-        if spec.replacement_physical_port > context[4]:
-            raise ValueError("Replacement physical port exceeds switch capacity")
         if any(
             item.logical_channel != spec.logical_channel
             and item.effective_physical_port == spec.replacement_physical_port
             for item in channel_map.values()
         ):
             raise ValueError("Replacement physical port is already in use")
+        confirmed = None
+        if not spec.is_correction:
+            confirmed = cursor.execute(
+                "SELECT measurement_id FROM dbo.vw_ConfirmedExtraPorts "
+                "WHERE assignment_id = ? AND physical_port = ?",
+                spec.assignment_id,
+                spec.replacement_physical_port,
+            ).fetchone()
+            if confirmed is None:
+                raise ValueError(
+                    "Replacement physical port has no valid committed extra-port "
+                    "measurement for this assignment"
+                )
         if spec.related_run_id is not None:
             related = cursor.execute(
                 "SELECT assignment_id FROM dbo.IL_RUNS WHERE run_id = ?",
@@ -1109,7 +1455,8 @@ class SqlRepositories:
                 """
                 SELECT recommendation.analysis_id, recommendation.logical_channel,
                     recommendation.candidate_physical_port, analysis.run_id,
-                    analysis.source_measurement_high_watermark_id
+                    analysis.source_measurement_high_watermark_id,
+                    recommendation.candidate_measurement_id
                 FROM dbo.REPLACEMENT_ANALYSIS_RECOMMENDATIONS AS recommendation
                 INNER JOIN dbo.REPLACEMENT_ANALYSES AS analysis
                     ON analysis.analysis_id = recommendation.analysis_id
@@ -1141,6 +1488,10 @@ class SqlRepositories:
                 or int(recommendation[2]) != int(spec.replacement_physical_port)
             ):
                 raise ValueError("Source recommendation does not match the replacement")
+            if recommendation[5] is not None and (
+                confirmed is None or int(recommendation[5]) != int(confirmed[0])
+            ):
+                raise ValueError("Source recommendation candidate evidence is stale")
             used = cursor.execute(
                 "SELECT 1 FROM dbo.CHANNEL_REPLACEMENTS "
                 "WHERE source_recommendation_id = ?",
@@ -1190,8 +1541,26 @@ class SqlRepositories:
 
     def _append_spare_event(self, cursor, spec: SpareEventSpec):
         context = self._routing_context(cursor, spec.assignment_id, require_active=True)
-        if spec.physical_port > context[4]:
-            raise ValueError("Spare physical port exceeds switch capacity")
+        if spec.action == "designated":
+            confirmed = cursor.execute(
+                "SELECT 1 FROM dbo.vw_ConfirmedExtraPorts "
+                "WHERE assignment_id = ? AND physical_port = ?",
+                spec.assignment_id,
+                spec.physical_port,
+            ).fetchone()
+            if confirmed is None:
+                raise ValueError(
+                    "Spare physical port has no valid committed extra-port "
+                    "measurement for this assignment"
+                )
+            if cursor.execute(
+                self._CURRENT_CHANNEL_MAP_SELECT
+                + " WHERE channel_map.assignment_id = ? "
+                "AND channel_map.effective_physical_port = ?",
+                spec.assignment_id,
+                spec.physical_port,
+            ).fetchone() is not None:
+                raise ValueError("Mapped physical port cannot be designated as a spare")
         prior = cursor.execute(
             """
             SELECT TOP (1) action, recorded_at_utc
@@ -1244,6 +1613,18 @@ class SqlRepositories:
             self._active_spares_from_history(spare_history),
         )
 
+    def confirmed_extra_ports_for_assignment(
+        self, assignment_id: int
+    ) -> tuple[ConfirmedExtraPortRecord, ...]:
+        with self._factory.transaction() as cursor:
+            self._routing_context(cursor, assignment_id)
+            rows = cursor.execute(
+                self._CONFIRMED_EXTRA_SELECT
+                + " WHERE extra.assignment_id = ? ORDER BY extra.physical_port",
+                assignment_id,
+            ).fetchall()
+            return tuple(self._confirmed_extra(row) for row in rows)
+
     def _routing_context(
         self,
         cursor,
@@ -1256,7 +1637,7 @@ class SqlRepositories:
         row = cursor.execute(
             "SELECT assignment.assignment_id, assignment.switch_id, "
             "assignment.installed_at_utc, assignment.removed_at_utc, "
-            "switch.physical_channel_count "
+            "switch.last_reported_scpi_channel_count "
             "FROM dbo.UNIT_SWITCH_ASSIGNMENTS AS assignment"
             + hint
             + " INNER JOIN dbo.SWITCHES AS switch "
@@ -1320,7 +1701,7 @@ class SqlRepositories:
         row = cursor.execute(
             """
             SELECT switch_id, switch_serial, switch_model,
-                physical_channel_count, firmware_version, notes
+                last_reported_scpi_channel_count, firmware_version, notes
             FROM dbo.SWITCHES WHERE switch_id = ?
             """,
             switch_id,
@@ -1362,8 +1743,20 @@ class SqlRepositories:
             wavelength_1_nm=row[6], wavelength_1_il_db=Decimal(row[7]),
             wavelength_2_nm=row[8], wavelength_2_il_db=Decimal(row[9]),
             reference_snapshot=_mapping(row[10]), written_at_utc=_utc(row[11]),
-            written_by=row[12],
+            written_by=row[12], measurement_role=row[13],
         )
+
+    @staticmethod
+    def _confirmed_extra(row) -> ConfirmedExtraPortRecord:
+        measurement = MeasurementRecord(
+            measurement_id=row[2], measurement_uuid=UUID(str(row[3])), run_id=row[1],
+            logical_channel=None, physical_port=row[4], attempt_number=row[5],
+            wavelength_1_nm=row[6], wavelength_1_il_db=Decimal(row[7]),
+            wavelength_2_nm=row[8], wavelength_2_il_db=Decimal(row[9]),
+            reference_snapshot=_mapping(row[10]), written_at_utc=_utc(row[11]),
+            written_by=row[12], measurement_role=MEASUREMENT_ROLE_EXTRA_CANDIDATE,
+        )
+        return ConfirmedExtraPortRecord(row[0], row[1], measurement, row[14])
 
     @staticmethod
     def _replacement(row) -> ReplacementRecord:
@@ -1406,6 +1799,8 @@ class SqlRepositories:
             current_worst_loss_db=Decimal(row[11]),
             candidate_worst_loss_db=Decimal(row[12]),
             improvement_db=Decimal(row[13]),
+            current_measurement_id=row[14],
+            candidate_measurement_id=row[15],
         )
 
     @staticmethod
@@ -1444,7 +1839,7 @@ class SqlRepositories:
             measurement.wavelength_1_nm, measurement.wavelength_1_il_db,
             measurement.wavelength_2_nm, measurement.wavelength_2_il_db,
             measurement.reference_snapshot_json, measurement.written_at_utc,
-            measurement.written_by
+            measurement.written_by, measurement.measurement_role
         FROM dbo.IL_MEASUREMENTS AS measurement
     """
     _CURRENT_MEASUREMENT_SELECT = _MEASUREMENT_SELECT.replace(
@@ -1489,8 +1884,20 @@ class SqlRepositories:
             recommendation.candidate_wavelength_2_il_db,
             recommendation.current_worst_loss_db,
             recommendation.candidate_worst_loss_db,
-            recommendation.improvement_db
+            recommendation.improvement_db,
+            recommendation.current_measurement_id,
+            recommendation.candidate_measurement_id
         FROM dbo.REPLACEMENT_ANALYSIS_RECOMMENDATIONS AS recommendation
+    """
+    _CONFIRMED_EXTRA_SELECT = """
+        SELECT extra.assignment_id, extra.run_id, extra.measurement_id,
+            extra.measurement_uuid, extra.physical_port, extra.attempt_number,
+            extra.wavelength_1_nm, extra.wavelength_1_il_db,
+            extra.wavelength_2_nm, extra.wavelength_2_il_db,
+            extra.reference_snapshot_json, extra.written_at_utc,
+            extra.written_by, extra.analysis_status,
+            extra.front_panel_channel_count
+        FROM dbo.vw_ConfirmedExtraPorts AS extra
     """
     _SPARE_SELECT = """
         SELECT spare.spare_event_id, spare.assignment_id, spare.physical_port,

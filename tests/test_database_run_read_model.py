@@ -7,6 +7,7 @@ from application.database_run_read_model import DatabaseRunQueryService
 from application.measurement_persistence_workflow import MeasurementPersistenceWorkflow
 from domain.coc_preparation import prepare_coc
 from domain.database_records import AssignmentSpec, RunSpec, SwitchSpec, UnitSpec
+from domain.database_records import MEASUREMENT_ROLE_EXTRA_CANDIDATE
 from domain.limit_profiles import LimitProfile
 from domain.run_status import COMPLETION_COMPLETE, RESULT_PASS
 from infrastructure.database.memory_repositories import InMemoryRepositories
@@ -77,10 +78,14 @@ class DatabaseRunReadModelTests(unittest.TestCase):
         self.query = DatabaseRunQueryService(self.repository, self.repository)
 
     def write(self, channel, first, second, offset, *, physical_port=None):
+        extra = int(channel) > int(self.run.front_panel_channel_count)
         pending = self.writer.prepare_measurement(
             run_id=self.run.run_id,
-            logical_channel=channel,
+            logical_channel=None if extra else channel,
             physical_port=physical_port or channel,
+            measurement_role=(
+                MEASUREMENT_ROLE_EXTRA_CANDIDATE if extra else "logical_channel"
+            ),
             wavelength_1_nm=1310,
             wavelength_1_il_db=Decimal(first),
             wavelength_2_nm=1550,

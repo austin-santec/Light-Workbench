@@ -8,7 +8,13 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 from application.database_repositories import RunRepository
-from domain.database_records import RunRecord, RunStartSpec, RunVoidInfo, utc_now
+from domain.database_records import (
+    PendingRunStartSpec,
+    RunRecord,
+    RunStartSpec,
+    RunVoidInfo,
+    utc_now,
+)
 from domain.database_run_lifecycle import StaleRunDecision
 from domain.run_purpose import default_analysis_policy, normalize_run_purpose
 
@@ -57,15 +63,53 @@ class RunLifecycleWorkflow:
         client_run_uuid: UUID | None = None,
         started_at_utc: datetime | None = None,
     ) -> RunRecord:
+        return self._repository.create_next(
+            self.prepare_start_spec(
+                tested_by=tested_by,
+                wavelength_mode=wavelength_mode,
+                operating_band=operating_band,
+                application_version=application_version,
+                measurement_hardware=measurement_hardware,
+                limit_snapshot=limit_snapshot,
+                part_number_snapshot=part_number_snapshot,
+                front_panel_channel_count=front_panel_channel_count,
+                station_number=station_number,
+                run_purpose=run_purpose,
+                analysis_status=analysis_status,
+                void_info=void_info,
+                notes=notes,
+                client_run_uuid=client_run_uuid,
+                started_at_utc=started_at_utc,
+            ).with_assignment_id(assignment_id)
+        )
+
+    def prepare_start_spec(
+        self,
+        *,
+        tested_by: str,
+        wavelength_mode: str,
+        operating_band: str,
+        application_version: str,
+        measurement_hardware: Mapping,
+        limit_snapshot: Mapping,
+        part_number_snapshot: str | None,
+        front_panel_channel_count: int | None,
+        station_number: int | None = None,
+        run_purpose: str = "production",
+        analysis_status: str | None = None,
+        void_info: RunVoidInfo | None = None,
+        notes: str | None = None,
+        client_run_uuid: UUID | None = None,
+        started_at_utc: datetime | None = None,
+    ) -> PendingRunStartSpec:
+        """Validate run fields before an assignment transaction is opened."""
         preflight = self._readiness_check()
         if not getattr(preflight, "ready", False):
             raise DatabaseRunUnavailableError(preflight)
-
         purpose = normalize_run_purpose(run_purpose)
         if analysis_status is None:
             analysis_status, _default_reason = default_analysis_policy(purpose)
-        spec = RunStartSpec(
-            assignment_id=assignment_id,
+        return PendingRunStartSpec(
             client_run_uuid=client_run_uuid or uuid4(),
             run_started_at_utc=started_at_utc or utc_now(),
             tested_by=tested_by,
@@ -82,7 +126,6 @@ class RunLifecycleWorkflow:
             front_panel_channel_count=front_panel_channel_count,
             notes=notes,
         )
-        return self._repository.create_next(spec)
 
     def finish_run(
         self,

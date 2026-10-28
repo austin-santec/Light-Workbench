@@ -12,7 +12,7 @@
   "switch": {
     "switch_serial": "SAMPLE-COC-OSX150-18901",
     "switch_model": "OSX-150",
-    "physical_channel_count": 48,
+    "last_reported_scpi_channel_count": 48,
     "firmware_version": "03.01.23",
     "notes": "Synthetic switch identity for COC workflow demonstrations."
   },
@@ -83,10 +83,10 @@
       },
       "generated_measurements": {
         "seed": 16001,
-        "channels": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36],
+        "channels": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 41, 43, 44],
         "wavelength_1": {"base": 1.15, "spread": 0.18},
         "wavelength_2": {"base": 1.05, "spread": 0.16},
-        "overrides": {"9": [2.34, 2.29], "20": [2.64, 2.58]}
+        "overrides": {"9": [2.34, 2.29], "20": [2.64, 2.58], "37": [1.10, 1.00], "41": [0.92, 0.88], "43": [0.95, 0.90], "44": [1.15, 1.05]}
       }
     },
     {

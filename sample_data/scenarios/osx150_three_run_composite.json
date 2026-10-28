@@ -16,7 +16,7 @@
   "switch": {
     "switch_serial": "S-00002",
     "switch_model": "OSX-150",
-    "physical_channel_count": 48,
+    "last_reported_scpi_channel_count": 48,
     "firmware_version": "03.01.23",
     "notes": "Synthetic OSX-150 switch identity for multi-run COC demonstrations."
   },

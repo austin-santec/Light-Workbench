@@ -7,7 +7,13 @@ import json
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
-from domain.database_records import MeasurementRecord, ReplacementRecord, RunRecord
+from domain.database_records import (
+    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
+    MEASUREMENT_ROLE_LOGICAL_CHANNEL,
+    MeasurementRecord,
+    ReplacementRecord,
+    RunRecord,
+)
 from domain.models import MeasurementRecord as DisplayMeasurement
 from domain.replacements import ReplacementReading, analyze_replacements
 
@@ -70,6 +76,8 @@ class EffectiveMeasurement:
         }
 
     def display_record(self, mode: str) -> DisplayMeasurement:
+        if self.record.logical_channel is None:
+            raise ValueError("Extra-candidate measurements are not logical-channel rows")
         return DisplayMeasurement.from_wavelengths(
             self.record.logical_channel,
             {
@@ -245,7 +253,13 @@ def build_effective_replacement_projection(
         context_channel_map[row.logical_channel] = row.replacement_physical_port
 
     latest_front = _latest_by(
-        (item for item in candidates if 1 <= item.record.logical_channel <= count),
+        (
+            item
+            for item in candidates
+            if item.record.measurement_role == MEASUREMENT_ROLE_LOGICAL_CHANNEL
+            and item.record.logical_channel is not None
+            and 1 <= item.record.logical_channel <= count
+        ),
         lambda item: item.record.logical_channel,
     )
     front = []
@@ -287,8 +301,8 @@ def build_effective_replacement_projection(
     extra_candidates = (
         item
         for item in candidates
-        if int(item.record.physical_port or item.record.logical_channel) > count
-        or item.record.logical_channel > count
+        if item.record.measurement_role == MEASUREMENT_ROLE_EXTRA_CANDIDATE
+        and int(item.record.physical_port) > count
     )
     latest_extras = _latest_by(
         extra_candidates,
@@ -322,7 +336,8 @@ def build_effective_replacement_projection(
         matching = [
             item
             for item in candidates
-            if item.record.logical_channel == row.logical_channel
+            if item.record.measurement_role == MEASUREMENT_ROLE_LOGICAL_CHANNEL
+            and item.record.logical_channel == row.logical_channel
             and int(item.record.physical_port or item.record.logical_channel)
             == row.replacement_physical_port
             and item.record.written_at_utc > row.replaced_at_utc
@@ -477,7 +492,17 @@ def build_effective_replacement_projection(
         "spare_event_high_watermark_id": max(spare_event_ids, default=None),
         "state_fingerprint_sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
         "superseded_attempt_count": len(candidates)
-        - len(_latest_by(candidates, lambda item: item.record.logical_channel)),
+        - len(
+            _latest_by(
+                candidates,
+                lambda item: (
+                    item.record.measurement_role,
+                    item.record.logical_channel
+                    if item.record.logical_channel is not None
+                    else item.record.physical_port,
+                ),
+            )
+        ),
     }
     return EffectiveReplacementProjection(
         context_run,

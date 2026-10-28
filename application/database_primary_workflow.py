@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Mapping
 
@@ -24,10 +24,13 @@ from application.run_lifecycle_workflow import (
     RunLifecycleWorkflow,
 )
 from application.unit_switch_workflow import (
+    AssignmentResolution,
     UnitSwitchAssignmentResult,
     UnitSwitchAssignmentWorkflow,
 )
-from domain.unit_switch_assignments import AssignmentChangeRequiredError
+from domain.unit_switch_assignments import (
+    AssignmentChangeRequiredError,
+)
 from domain.database_records import (
     MeasurementRecord,
     MeasurementWriteSpec,
@@ -54,6 +57,8 @@ class DatabaseRunContext:
     replacement_analysis: object | None = None
     replacement_analysis_history: tuple[object, ...] = ()
     effective_projection: object | None = None
+    pairing_closed_assignment_ids: tuple[int, ...] = ()
+    pairing_stopped_run_ids: tuple[int, ...] = ()
 
     @property
     def run(self) -> RunRecord:
@@ -98,29 +103,89 @@ class DatabasePrimaryRunWorkflow:
         run_purpose: str = "production",
         started_at_utc: datetime | None = None,
         switch_replacement_reason: str | None = None,
+        allow_new_hardware_pairing: bool = False,
     ) -> DatabaseRunContext:
         readiness = self.check_ready()
         if not getattr(readiness, "ready", False):
             raise DatabaseRunUnavailableError(readiness)
         started = started_at_utc or utc_now()
-        try:
-            assignment = self.assignments.resolve(
-                unit_spec,
-                switch_spec,
+        pairing_conflict = self.assignments.requires_new_pairing(
+            unit_spec, switch_spec
+        )
+        if (
+            pairing_conflict is not None
+            and not allow_new_hardware_pairing
+            and not str(switch_replacement_reason or "").strip()
+        ):
+            raise pairing_conflict
+        if pairing_conflict is not None and allow_new_hardware_pairing:
+            unit = self.repositories.get_or_create(unit_spec)
+            switch = self.repositories.get_or_create(switch_spec)
+            assignment_spec = self.assignments.build_assignment_spec(
+                unit,
+                switch,
                 installed_at_utc=started,
                 installed_by=installed_by,
                 initial_channel_map=initial_channel_map,
             )
-        except AssignmentChangeRequiredError:
-            if not str(switch_replacement_reason or "").strip():
-                raise
-            assignment = self.assignments.replace_switch(
-                unit_spec,
-                switch_spec,
-                changed_at_utc=started,
-                changed_by=installed_by,
-                removal_reason=str(switch_replacement_reason).strip(),
-                initial_channel_map=initial_channel_map,
+            pending_run = self.lifecycle.prepare_start_spec(
+                tested_by=tested_by,
+                wavelength_mode=wavelength_mode,
+                operating_band=operating_band,
+                application_version=application_version,
+                measurement_hardware=measurement_hardware,
+                limit_snapshot=limit_snapshot,
+                part_number_snapshot=part_number_snapshot,
+                front_panel_channel_count=front_panel_channel_count,
+                station_number=station_number,
+                run_purpose=run_purpose,
+                started_at_utc=started,
+            )
+            record, installed, closed, stopped = (
+                self.repositories.create_next_with_fresh_pairing(
+                    assignment_spec,
+                    pending_run,
+                    started,
+                    installed_by,
+                )
+            )
+            assignment = UnitSwitchAssignmentResult(
+                unit,
+                switch,
+                installed,
+                AssignmentResolution.FRESH_PAIRING,
+                previous_assignment=closed[0] if closed else None,
+                previous_assignments=closed,
+                stopped_run_ids=stopped,
+            )
+        else:
+            try:
+                assignment = self.assignments.resolve(
+                    unit_spec,
+                    switch_spec,
+                    installed_at_utc=started,
+                    installed_by=installed_by,
+                    initial_channel_map=initial_channel_map,
+                )
+            except AssignmentChangeRequiredError:
+                if not str(switch_replacement_reason or "").strip():
+                    raise
+                assignment = self.assignments.replace_switch(
+                    unit_spec,
+                    switch_spec,
+                    changed_at_utc=started,
+                    changed_by=installed_by,
+                    removal_reason=str(switch_replacement_reason).strip(),
+                    initial_channel_map=initial_channel_map,
+                )
+        if pairing_conflict is not None and allow_new_hardware_pairing:
+            context = self._context(record, assignment)
+            return replace(
+                context,
+                pairing_closed_assignment_ids=tuple(
+                    item.assignment_id for item in assignment.previous_assignments
+                ),
+                pairing_stopped_run_ids=assignment.stopped_run_ids,
             )
         run = self.lifecycle.start_run(
             assignment_id=assignment.assignment.assignment_id,

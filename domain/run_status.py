@@ -274,7 +274,7 @@ def assess_run_status(
         elif projection_failures:
             recommendations = tuple(
                 getattr(projection, "optimization_recommendations", ())
-            )
+            ) or tuple((replacement_analysis or {}).get("recommendations", ()))
             result = (
                 RESULT_FAIL_RECOVERABLE
                 if recommendations
@@ -289,7 +289,7 @@ def assess_run_status(
         elif projection_optimizations:
             recommendations = tuple(
                 getattr(projection, "optimization_recommendations", ())
-            )
+            ) or tuple((replacement_analysis or {}).get("recommendations", ()))
             result = (
                 RESULT_PASS_OPTIMIZATION
                 if recommendations

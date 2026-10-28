@@ -269,7 +269,10 @@ class DatabaseReportingService:
             void_reason=(run.void_info.reason if run.void_info is not None else ""),
             result_status=result_status,
             result_label=result_label,
-            current_channel_count=len(snapshot.measurements),
+            current_channel_count=sum(
+                measurement.channel <= int(run.front_panel_channel_count)
+                for measurement in snapshot.measurements
+            ) if run.front_panel_channel_count else len(snapshot.measurements),
             attempt_count=len(attempts),
             retest_attempt_count=retest_attempts,
             retested_channel_count=retested_channels,

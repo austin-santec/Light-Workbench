@@ -620,7 +620,7 @@ class MainWindowTests(unittest.TestCase):
             window.hardware_configured_channel_count = 15
             context = window._front_panel_channel_context_for_active_run()
             self.assertEqual(context["front_panel_channel_count"], 12)
-            self.assertEqual(context["configured_physical_channel_count"], 15)
+            self.assertEqual(context["scpi_configured_channel_count"], 15)
 
             window.run_data.metadata["Part number"] = (
                 "OSX-150-1A-016-09-FA-00B-2HD"

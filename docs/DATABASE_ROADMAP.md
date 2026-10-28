@@ -16,7 +16,7 @@ rules.
 
 ### Implement
 
-- Approve the ten tables and three read-only views.
+- Approve the ten tables and four read-only views.
 - Approve SQL Server types, nullable fields, status vocabularies, and JSON
   shapes.
 - Approve identity, foreign-key, unique, check, and append-only rules.
@@ -41,8 +41,8 @@ rules.
 ## Milestone 1 - SQL Server foundation
 
 Status: complete. Forward-only migrations through
-`0005_iterative_replacement_analysis.sql`, checksum/history validation, the
-ten tables, three views, least-privilege database roles,
+`0006_authoritative_channel_roles.sql`, checksum/history validation, the
+ten tables, four views, least-privilege database roles,
 guarded reset tooling, and isolated SQL integration tests are implemented. The
 local `LWBTestDB_Integration` database has been reset, migrated, backed up,
 restored to a temporary database, checked with `DBCC CHECKDB`, and cleaned up
@@ -196,10 +196,10 @@ SpareRepository.append_event(...)
 
 Status: complete at the application/repository boundary. The workflow now
 resolves or creates units and switches, reuses matching active assignments,
-requires an explicit replacement operation when a unit's switch changes,
-rejects switches already active in another unit, validates complete baseline
-channel maps, and atomically closes/opens assignment history. It is not yet
-called by Start Run; that integration follows the run-lifecycle milestones.
+uses one confirmation for a genuinely new pairing, automatically closes all
+affected active assignments, stops unfinished runs, validates a fresh identity
+baseline, and atomically creates the new assignment and first run. It assumes
+the external module-map reset and does not command or verify hardware mapping.
 
 ### Implement
 
@@ -207,18 +207,23 @@ called by Start Run; that integration follows the run-lifecycle milestones.
 2. Resolve or create a switch by switch serial.
 3. Find the active unit/switch assignment.
 4. Create the baseline logical-to-physical map for a new assignment.
-5. Close an old assignment when a physical switch is removed.
-6. Create a new assignment for the replacement switch.
-7. Prevent one unit or switch from participating in conflicting active
+5. Close every conflicting active assignment when a new pairing is confirmed.
+6. Stop unfinished runs on those assignments in the same transaction.
+7. Create a new assignment and first run with a fresh identity map.
+8. Prevent one unit or switch from participating in conflicting active
    assignments.
 
 ### Tests
 
 - Reconnecting the same unit/switch reuses the active assignment.
 - Replacing a switch preserves the old assignment and its runs.
-- A switch cannot be active in two units simultaneously.
+- A switch can be paired with a different main board after one confirmation.
+- Both destination and source conflicts are resolved together.
+- Unfinished conflicting runs are stopped without deleting measurements.
+- A new pairing does not inherit mapping, replacement, spare, or analysis data.
 - Invalid or missing baseline channel maps are rejected.
-- Physical channel count and front-panel channel count remain distinct.
+- Front-panel count is authoritative; the last SCPI-reported count remains
+  diagnostic and does not impose replacement capacity.
 
 ### Exit criteria
 
@@ -364,11 +369,13 @@ records and spare designation changes are append-only and owned by the exact
 unit/switch assignment. The workflow records operator, reason, timestamp,
 previous/effective port, optional related run, and notes without issuing switch
 commands or using switch route queries. Repository validation prevents stale
-replacement chains, duplicate effective routes, out-of-capacity ports,
+replacement chains, duplicate effective routes, unconfirmed candidate ports,
 cross-assignment related runs, and changes to removed assignments.
 `vw_CurrentChannelMap` supplies the effective logical-to-physical map, while a
 stable routing snapshot exposes complete replacement/spare history and the
-current designated-spare set. Replacement analysis is now persisted as an
+current designated-spare set. Normal replacements and spare designations use
+assignment-scoped confirmed extra measurements rather than a stored capacity
+ceiling. Replacement analysis is now persisted as an
 append-only run snapshot, while recommendations remain advisory and do not
 change the external mapping.
 
@@ -392,6 +399,11 @@ change the external mapping.
   recorded effective physical port.
 - Support iterative selected-channel verification runs and subsequent analysis
   using unchanged channels and unused extras from compatible earlier runs.
+- Validate replacement batches against one freshly loaded authoritative routing
+  snapshot before opening the write transaction. The editor permits one
+  pending replacement per logical channel, captures the expected current port,
+  reports stale/no-op/duplicate requests precisely, and preserves queued work
+  after a failed save for correction and retry.
 
 ### Tests
 
@@ -400,6 +412,11 @@ change the external mapping.
 - Current-map queries return the latest effective port.
 - Spare designation history produces the correct active set.
 - Replacement records survive run changes and remain attributable.
+- A multi-channel replacement batch is order-independent, and invalid batches
+  commit neither replacement nor spare events.
+- Confirmed candidates above the SCPI count remain valid for the same
+  assignment; unmeasured candidates and candidates from another assignment are
+  rejected.
 
 ### Exit criteria
 

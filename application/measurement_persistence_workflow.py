@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from application.database_repositories import MeasurementRepository
 from domain.database_records import (
+    MEASUREMENT_ROLE_LOGICAL_CHANNEL,
     MeasurementRecord,
     MeasurementWriteSpec,
     utc_now,
@@ -24,7 +25,7 @@ class MeasurementPersistenceWorkflow:
         self,
         *,
         run_id: int,
-        logical_channel: int,
+        logical_channel: int | None,
         wavelength_1_nm: int,
         wavelength_1_il_db,
         wavelength_2_nm: int,
@@ -32,6 +33,7 @@ class MeasurementPersistenceWorkflow:
         reference_snapshot: Mapping,
         written_by: str,
         physical_port: int | None = None,
+        measurement_role: str = MEASUREMENT_ROLE_LOGICAL_CHANNEL,
         measurement_uuid: UUID | None = None,
         written_at_utc: datetime | None = None,
     ) -> MeasurementWriteSpec:
@@ -48,6 +50,7 @@ class MeasurementPersistenceWorkflow:
             written_at_utc=written_at_utc or utc_now(),
             written_by=written_by,
             physical_port=physical_port,
+            measurement_role=measurement_role,
         )
 
     def commit(

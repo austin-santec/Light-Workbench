@@ -169,11 +169,20 @@ It is kept independent of Qt, hardware adapters, and CSV/JSON file formats.
 Replacement events document changes performed outside Light Workbench; this
 workflow deliberately does not use `CLOSe?` or send mapping commands.
 
+Database hardware identity transitions are handled by the assignment workflow.
+The same active unit/switch pair is reused. A different pairing is confirmed
+once at Start Run, then one database transaction closes every affected active
+assignment, stops unfinished runs, and creates a fresh identity channel map
+and run. The workflow assumes the external module-map reset protocol; it does
+not command or verify the hardware map. Assignment-scoped measurements,
+replacements, spares, analyses, and COC inputs never cross the transition.
+
 `domain/part_numbers.py` owns supported OSX part-number parsing. Its validated
-three-digit channel field is the front-panel production count; it is separate
-from the physical channel count reported by the optical switch. Replacement
-analysis and COC preparation consume this derived value and do not expose a
-manual count override.
+three-digit channel field is the authoritative front-panel production count.
+The switch's SCPI-configured count is only a diagnostic/routing snapshot and is
+not physical capacity. Replacement analysis and COC preparation consume the
+part-number count and confirmed committed extra-port measurements; they do not
+expose a manual count override.
 
 `domain/coc_preparation.py` owns the report-publication boundary. It projects
 all compatible persisted runs into one effective measurement set, selecting
@@ -405,8 +414,11 @@ storage option may be evaluated here without changing domain reporting.
 - Live IL reading and red light testing are independent tools and must not add
   switch-test timing or run measurements.
 - A run belongs to a unit, but switch identity is run-specific.
-- Replacements and designated spares are device-level information and are
-  shared across runs for that unit.
+- Database replacements and designated spares are assignment-scoped. A new
+  main-board/switch pairing starts with a fresh identity map and no replacement
+  history, spare events, extra-port readings, analyses, or COC eligibility from
+  the prior assignment. Historical records remain available under the closed
+  assignment.
 - Database-backed replacement analysis is saved as an append-only snapshot with
   normalized recommendation rows, criteria, operator, assignment-wide source
   provenance, and a deterministic source-state fingerprint. New measurements,
@@ -417,9 +429,21 @@ storage option may be evaluated here without changing domain reporting.
 - Replacement analysis, run status, and database COC preparation share the
   same assignment boundary, latest-whole-pair rule, and effective recorded
   physical mapping. No analysis action commands or queries switch routing.
+- Normal replacement and spare records require assignment-scoped evidence from
+  a committed extra-candidate measurement. Correction/reversal mode remains an
+  explicit audited exception because it may return to a previously used
+  front-panel port.
 - A replacement is verified only by a compatible accepted post-replacement
   measurement on the recorded new physical port. The UI can start an ordinary
   selected-channel run for replacements still awaiting that evidence.
+- Manage Port Replacements keeps one authoritative pending record per logical
+  channel. Save planning reloads the assignment map, compares each request
+  with the expected current port captured when it was queued, validates the
+  complete batch before persistence, and retains the queue when validation or
+  the atomic save fails.
+- Replacement save diagnostics record bounded logical/current/replacement port
+  summaries and identify stale, duplicate, or no-op requests without logging
+  free-form replacement notes.
 - Admin Mode may permanently mark an inactive database run `excluded`
   (displayed as Voided). Its rows and analysis history remain visible, but it
   cannot contribute to later effective calculations.

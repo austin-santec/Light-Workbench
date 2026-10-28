@@ -46,7 +46,7 @@ class SampleDatabaseSeedingTests(unittest.TestCase):
         workflow = self._workflow()
         result = SampleDatabaseSeeder(workflow).seed(scenario)
         self.assertEqual(result.action, "seeded")
-        self.assertEqual(result.measurement_count, 38)
+        self.assertEqual(result.measurement_count, 42)
         self.assertEqual(result.replacement_count, 2)
         self.assertEqual(result.spare_count, 2)
         context = workflow.load_for_unit(scenario.unit.main_board_serial, 2)
@@ -136,7 +136,7 @@ class SampleDatabaseSeedingTests(unittest.TestCase):
         self.assertEqual(scenario.switch.switch_serial, "S-00005")
         self.assertEqual(scenario.ilm_serial, "S-00006")
         self.assertEqual(scenario.unit.front_panel_channel_count, 48)
-        self.assertEqual(scenario.switch.physical_channel_count, 56)
+        self.assertEqual(scenario.switch.last_reported_scpi_channel_count, 56)
         self.assertEqual(scenario.replacements, ())
         self.assertEqual(scenario.spares, ())
 

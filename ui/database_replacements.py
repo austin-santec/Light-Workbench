@@ -210,7 +210,10 @@ class DatabaseReplacementDialog(QDialog):
         self.spares_to_designate: tuple[int, ...] = ()
         self.spares_to_undesignate: tuple[int, ...] = ()
         self.spare_operator = model.default_operator
-        self._pending: list[ReplacementChangeRequest] = []
+        # The keyed collection is the source of truth for both the visible
+        # queue and the requests returned to the controller.  A logical
+        # channel can therefore occur at most once in a save batch.
+        self._pending: dict[int, ReplacementChangeRequest] = {}
         self._selected_recommendation = None
         self._settings = QSettings("Light Workbench", "LightWorkbench")
 
@@ -421,7 +424,7 @@ class DatabaseReplacementDialog(QDialog):
             text=cls._candidate_il_text(recommendation),
             worst=recommendation.candidate_worst_loss_db,
             description=(
-                "Accepted measurement for the candidate port, not a guaranteed "
+                "Confirmed extra-port measurement, not a guaranteed "
                 "result after physical rerouting."
             ),
         )
@@ -493,7 +496,7 @@ class DatabaseReplacementDialog(QDialog):
             "Accepted current-channel measurement at 1310 / 1550 nm."
         )
         header_item = self.recommendation_table.horizontalHeaderItem(6)
-        header_item.setToolTip("Accepted candidate-port measurement at 1310 / 1550 nm.")
+        header_item.setToolTip("Confirmed extra-port measurement at 1310 / 1550 nm.")
 
         action_row = QHBoxLayout()
         use_recommendation = QPushButton("Use Selected Recommendation")
@@ -596,6 +599,38 @@ class DatabaseReplacementDialog(QDialog):
         remove_button.clicked.connect(self.remove_queued_replacement)
         layout.addWidget(remove_button)
         return panel
+
+    def _render_pending_table(self) -> None:
+        """Render the pending collection without parsing values from cells."""
+        self.pending_table.setSortingEnabled(False)
+        self.pending_table.setRowCount(0)
+        for request in self._pending.values():
+            row = self.pending_table.rowCount()
+            self.pending_table.insertRow(row)
+            logical_item = QTableWidgetItem(str(request.logical_channel))
+            logical_item.setData(Qt.UserRole, request.logical_channel)
+            current_item = QTableWidgetItem(
+                str(request.expected_previous_physical_port)
+            )
+            current_item.setData(Qt.UserRole, request.logical_channel)
+            values = (
+                logical_item,
+                current_item,
+                request.replacement_physical_port,
+                request.category,
+                request.improvement,
+                request.reason,
+                request.replaced_by,
+            )
+            for column, value in enumerate(values):
+                if isinstance(value, QTableWidgetItem):
+                    item = value
+                else:
+                    item = QTableWidgetItem(str(value))
+                self.pending_table.setItem(row, column, item)
+        has_pending = bool(self._pending)
+        self.pending_empty_label.setVisible(not has_pending)
+        self.pending_table.setVisible(has_pending)
 
     def _build_mapping_panel(self) -> QGroupBox:
         panel = QGroupBox("Current effective assignment mapping")
@@ -790,14 +825,14 @@ class DatabaseReplacementDialog(QDialog):
         else:
             self.candidate_il_label.setText("Not available")
             self.candidate_il_label.setToolTip(
-                "No accepted candidate-port measurement is available."
+                "No confirmed extra-port measurement is available."
             )
         if port in set(self.model.measured_physical_ports):
             self.candidate_warning_label.clear()
             self.candidate_warning_label.setStyleSheet("")
         else:
             self.candidate_warning_label.setText(
-                "Warning: no accepted measurement is available for this candidate port."
+                "Warning: this is not a confirmed extra port for the assignment."
             )
             self.candidate_warning_label.setStyleSheet("color: #d98200;")
 
@@ -830,6 +865,8 @@ class DatabaseReplacementDialog(QDialog):
                 "Enter who performed or recorded the replacement.",
             )
             return
+        category = self.category_edit.text().strip()
+        improvement = self.improvement_edit.text().strip()
         request = ReplacementChangeRequest(
             logical_channel=logical_channel,
             replacement_physical_port=proposed_port,
@@ -844,29 +881,40 @@ class DatabaseReplacementDialog(QDialog):
                 == proposed_port
                 else None
             ),
+            expected_previous_physical_port=current_port,
+            category=category,
+            improvement=improvement,
+            is_correction=bool(self._correction_mode),
         )
-        self._pending.append(request)
-        category = self.category_edit.text().strip()
-        improvement = self.improvement_edit.text().strip()
-        row = self.pending_table.rowCount()
-        self.pending_table.insertRow(row)
-        for column, value in enumerate(
-            (logical_channel, current_port, proposed_port, category, improvement, reason, operator)
-        ):
-            self.pending_table.setItem(row, column, QTableWidgetItem(str(value)))
-        self.pending_table.selectRow(row)
-        self.pending_empty_label.hide()
-        self.pending_table.show()
+        if logical_channel in self._pending:
+            answer = QMessageBox.question(
+                self,
+                "Update queued replacement",
+                "A replacement for logical channel %d is already queued. "
+                "Replace the existing queued record?" % logical_channel,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+        self._pending[logical_channel] = request
+        self._render_pending_table()
+        for row in range(self.pending_table.rowCount()):
+            item = self.pending_table.item(row, 0)
+            if item is not None and item.data(Qt.UserRole) == logical_channel:
+                self.pending_table.selectRow(row)
+                break
         self.begin_manual_replacement()
 
     def remove_queued_replacement(self) -> None:
         row = self.pending_table.currentRow()
         if row >= 0:
-            self.pending_table.removeRow(row)
-            self._pending.pop(row)
-            if self.pending_table.rowCount() == 0:
-                self.pending_table.hide()
-                self.pending_empty_label.show()
+            item = self.pending_table.item(row, 0)
+            if item is not None:
+                logical_channel = item.data(Qt.UserRole)
+                if logical_channel is not None:
+                    self._pending.pop(int(logical_channel), None)
+                self._render_pending_table()
 
     def _spare_changes(self) -> tuple[tuple[int, ...], tuple[int, ...]]:
         existing = set(self.model.existing_spares)
@@ -879,10 +927,10 @@ class DatabaseReplacementDialog(QDialog):
 
     def accept_changes(self) -> None:
         designate, undesignate = self._spare_changes()
-        self.replacement_requests = tuple(self._pending)
+        self.replacement_requests = tuple(self._pending.values())
         self.spares_to_designate = designate
         self.spares_to_undesignate = undesignate
-        operators = [request.replaced_by for request in self._pending]
+        operators = [request.replaced_by for request in self._pending.values()]
         self.spare_operator = (operators[0] if operators else self.model.default_operator).strip()
         if (designate or undesignate) and not self.spare_operator:
             QMessageBox.warning(

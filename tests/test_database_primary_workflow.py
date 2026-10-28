@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from application.database_primary_workflow import DatabasePrimaryRunWorkflow
 from application.run_lifecycle_workflow import DatabaseRunUnavailableError
 from domain.database_records import SwitchSpec, UnitSpec
-from domain.unit_switch_assignments import AssignmentChangeRequiredError
+from domain.unit_switch_assignments import (
+    AssignmentChangeRequiredError,
+    NewHardwarePairingConfirmationRequired,
+)
 from infrastructure.database.memory_repositories import InMemoryRepositories
 
 
@@ -162,6 +165,100 @@ class DatabasePrimaryRunWorkflowTests(unittest.TestCase):
         self.assertEqual(second.run.run_number, 2)
         self.assertEqual(history[0].removal_reason, "Previous switch failed")
         self.assertIsNone(history[1].removed_at_utc)
+
+    def test_new_pairing_requires_one_confirmation_and_stops_old_run(self):
+        first = self._start()
+        arguments = dict(
+            unit_spec=UnitSpec("MB-100", "OSX-150-1A-002-09-FA-00B-3H", 2, "OSX-150"),
+            switch_spec=SwitchSpec("SW-200", "OSX-150", 4),
+            installed_by="AT",
+            initial_channel_map={1: 1, 2: 2},
+            tested_by="AT",
+            wavelength_mode="SM",
+            operating_band="O band",
+            application_version="test",
+            measurement_hardware={"planned_channels": [1, 2]},
+            limit_snapshot={"model": "OSX-150", "fail_above_db": 2.5},
+            part_number_snapshot="OSX-150-1A-002-09-FA-00B-3H",
+            front_panel_channel_count=2,
+        )
+        with self.assertRaises(NewHardwarePairingConfirmationRequired) as context:
+            self.workflow.start_new_run(**arguments)
+        self.assertEqual(context.exception.destination_main_board_serial, "MB-100")
+        self.assertIsNone(self.repositories.get_active_for_switch(2))
+        self.assertEqual(self.repositories.get(first.run.run_id).completion_status, "in_progress")
+
+        second = self.workflow.start_new_run(
+            **arguments,
+            allow_new_hardware_pairing=True,
+        )
+        self.assertEqual(second.run.run_number, 2)
+        self.assertNotEqual(second.assignment.assignment_id, first.assignment.assignment_id)
+        self.assertEqual(
+            dict(second.assignment.initial_channel_map), {1: 1, 2: 2}
+        )
+        self.assertEqual(
+            self.repositories.get(first.run.run_id).completion_status, "stopped"
+        )
+        self.assertIsNotNone(
+            self.repositories.get(first.run.run_id).run_ended_at_utc
+        )
+        self.assertEqual(
+            self.repositories.get_active(first.unit.unit_id).assignment_id,
+            second.assignment.assignment_id,
+        )
+
+    def test_switch_move_closes_source_and_destination_assignments_together(self):
+        source = self._start()
+        destination = self.workflow.start_new_run(
+            unit_spec=UnitSpec(
+                "MB-200", "OSX-150-1A-002-09-FA-00B-3H", 2, "OSX-150"
+            ),
+            switch_spec=SwitchSpec("SW-200", "OSX-150", 4),
+            installed_by="AT",
+            initial_channel_map={1: 1, 2: 2},
+            tested_by="AT",
+            wavelength_mode="SM",
+            operating_band="O band",
+            application_version="test",
+            measurement_hardware={"planned_channels": [1, 2]},
+            limit_snapshot={"model": "OSX-150", "fail_above_db": 2.5},
+            part_number_snapshot="OSX-150-1A-002-09-FA-00B-3H",
+            front_panel_channel_count=2,
+        )
+        arguments = dict(
+            unit_spec=UnitSpec(
+                "MB-200", "OSX-150-1A-002-09-FA-00B-3H", 2, "OSX-150"
+            ),
+            switch_spec=SwitchSpec("SW-100", "OSX-150", 4),
+            installed_by="AT",
+            initial_channel_map={1: 1, 2: 2},
+            tested_by="AT",
+            wavelength_mode="SM",
+            operating_band="O band",
+            application_version="test",
+            measurement_hardware={"planned_channels": [1, 2]},
+            limit_snapshot={"model": "OSX-150", "fail_above_db": 2.5},
+            part_number_snapshot="OSX-150-1A-002-09-FA-00B-3H",
+            front_panel_channel_count=2,
+        )
+        with self.assertRaises(NewHardwarePairingConfirmationRequired):
+            self.workflow.start_new_run(**arguments)
+        result = self.workflow.start_new_run(
+            **arguments,
+            allow_new_hardware_pairing=True,
+        )
+        self.assertEqual(len(result.assignment.initial_channel_map), 2)
+        self.assertEqual(
+            self.repositories.get(source.run.run_id).completion_status, "stopped"
+        )
+        self.assertEqual(
+            self.repositories.get(destination.run.run_id).completion_status,
+            "stopped",
+        )
+        history = self.repositories.history_for_unit(destination.unit.unit_id)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(result.run.run_number, 2)
 
 
 if __name__ == "__main__":

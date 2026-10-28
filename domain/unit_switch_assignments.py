@@ -17,20 +17,58 @@ class SwitchAlreadyAssignedError(AssignmentConflictError):
     """Raised when a switch is already active in another unit."""
 
 
+class NewHardwarePairingConfirmationRequired(
+    AssignmentChangeRequiredError, SwitchAlreadyAssignedError
+):
+    """Raised before a conflicting hardware pairing is changed."""
+
+    def __init__(
+        self,
+        *,
+        destination_main_board_serial: str,
+        requested_switch_serial: str,
+        source_main_board_serial: str | None = None,
+        destination_switch_serial: str | None = None,
+        source_assignment_id: int | None = None,
+        destination_assignment_id: int | None = None,
+    ) -> None:
+        self.destination_main_board_serial = destination_main_board_serial
+        self.requested_switch_serial = requested_switch_serial
+        self.source_main_board_serial = source_main_board_serial
+        self.destination_switch_serial = destination_switch_serial
+        self.source_assignment_id = source_assignment_id
+        self.destination_assignment_id = destination_assignment_id
+        details = [
+            "A new main-board/switch hardware pairing is required.",
+            f"Main board: {destination_main_board_serial}.",
+            f"Switch: {requested_switch_serial}.",
+        ]
+        if source_main_board_serial:
+            details.append(
+                f"The switch is currently assigned to main board {source_main_board_serial}."
+            )
+        if destination_switch_serial:
+            details.append(
+                f"The destination main board is currently paired with switch "
+                f"{destination_switch_serial}; this unit has a different active "
+                f"switch."
+            )
+        super().__init__(" ".join(details))
+
 def validate_initial_channel_map(
     channel_map: Mapping[int, int],
     *,
     front_panel_channel_count: int | None,
-    physical_channel_count: int,
+    scpi_configured_channel_count: int,
 ) -> dict[int, int]:
-    """Validate a complete, one-to-one baseline map for an installation."""
+    """Validate a baseline map inside the switch's reported SCPI range."""
     if front_panel_channel_count is None or int(front_panel_channel_count) <= 0:
         raise ValueError(
             "A front-panel channel count is required before assigning a switch."
         )
-    physical_count = int(physical_channel_count)
-    if physical_count <= 0:
-        raise ValueError("The switch physical-channel count must be positive.")
+    configured_count = int(scpi_configured_channel_count)
+    if configured_count <= 0:
+        raise ValueError("The switch SCPI-configured channel count must be positive.")
 
     normalized: dict[int, int] = {}
     for logical_channel, physical_port in dict(channel_map or {}).items():
@@ -55,10 +93,10 @@ def validate_initial_channel_map(
     ports = tuple(normalized.values())
     if len(set(ports)) != len(ports):
         raise ValueError("Each logical channel must map to a unique physical port.")
-    invalid_ports = sorted(port for port in ports if port > physical_count)
+    invalid_ports = sorted(port for port in ports if port > configured_count)
     if invalid_ports:
         raise ValueError(
-            "Channel-map physical ports exceed the switch capacity: "
+            "Baseline channel-map ports exceed the switch SCPI-configured range: "
             + ", ".join(map(str, invalid_ports))
         )
     return normalized
@@ -67,6 +105,7 @@ def validate_initial_channel_map(
 __all__ = [
     "AssignmentChangeRequiredError",
     "AssignmentConflictError",
+    "NewHardwarePairingConfirmationRequired",
     "SwitchAlreadyAssignedError",
     "validate_initial_channel_map",
 ]

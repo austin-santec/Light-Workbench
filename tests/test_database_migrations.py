@@ -94,17 +94,20 @@ class MigrationDiscoveryTests(unittest.TestCase):
     def test_bundled_migrations_are_discovered(self):
         migrations = discover_migrations()
 
-        self.assertEqual([item.migration_id for item in migrations], [1, 2, 3, 4, 5])
+        self.assertEqual([item.migration_id for item in migrations], [1, 2, 3, 4, 5, 6])
         self.assertEqual(migrations[0].name, "initial_schema")
         self.assertEqual(migrations[1].name, "nonnegative_measurement_losses")
-        self.assertEqual(migrations[-1].name, "iterative_replacement_analysis")
-        self.assertIn("void_info_json", migrations[-1].script)
-        self.assertIn("FOR JSON PATH, WITHOUT_ARRAY_WRAPPER", migrations[-1].script)
-        self.assertIn("DROP COLUMN analysis_exclusion_reason", migrations[-1].script)
-        self.assertIn("CK_IL_RUNS_void_info_json", migrations[-1].script)
-        self.assertIn("ISJSON(void_info_json) = 1", migrations[-1].script)
-        self.assertIn("verification_required", migrations[-1].script)
-        self.assertIn("review_required", migrations[-1].script)
+        self.assertEqual(migrations[-1].name, "authoritative_channel_roles")
+        self.assertIn("last_reported_scpi_channel_count", migrations[-1].script)
+        self.assertIn("measurement_role", migrations[-1].script)
+        self.assertIn("vw_ConfirmedExtraPorts", migrations[-1].script)
+        prior_script = migrations[-2].script
+        self.assertIn("FOR JSON PATH, WITHOUT_ARRAY_WRAPPER", prior_script)
+        self.assertIn("DROP COLUMN analysis_exclusion_reason", prior_script)
+        self.assertIn("CK_IL_RUNS_void_info_json", prior_script)
+        self.assertIn("ISJSON(void_info_json) = 1", prior_script)
+        self.assertIn("verification_required", prior_script)
+        self.assertIn("review_required", prior_script)
         self.assertTrue(all(len(item.checksum) == 64 for item in migrations))
 
     def test_migration_ids_must_be_contiguous(self):

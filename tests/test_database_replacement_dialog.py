@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QApplication, QDialog, QSplitter
+from PyQt5.QtWidgets import QApplication, QDialog, QMessageBox, QSplitter
 
 from application.replacement_persistence_workflow import (
     ReplacementEditorModel,
@@ -234,7 +234,36 @@ class DatabaseReplacementDialogTests(unittest.TestCase):
         )
         with patch("ui.database_replacements.QMessageBox.warning"):
             dialog.queue_replacement()
-        self.assertEqual(dialog._pending[0].reason, "Reversal to previous physical port")
+        self.assertEqual(
+            dialog._pending[1].reason,
+            "Reversal to previous physical port",
+        )
+        dialog.close()
+
+    def test_queue_uses_one_authoritative_record_per_logical_channel(self):
+        dialog = DatabaseReplacementDialog(self.model())
+        dialog.proposed_port_spin.setValue(6)
+        dialog.reason_combo.setCurrentIndex(
+            dialog.reason_combo.findText("Splicing issue")
+        )
+        dialog.queue_replacement()
+
+        dialog.proposed_port_spin.setValue(5)
+        dialog.reason_combo.setCurrentIndex(
+            dialog.reason_combo.findText("Break in fiber")
+        )
+        with patch(
+            "ui.database_replacements.QMessageBox.question",
+            return_value=QMessageBox.Yes,
+        ):
+            dialog.queue_replacement()
+
+        self.assertEqual(dialog.pending_table.rowCount(), 1)
+        self.assertEqual(tuple(dialog._pending), (1,))
+        self.assertEqual(dialog._pending[1].replacement_physical_port, 5)
+        dialog.accept_changes()
+        self.assertEqual(len(dialog.replacement_requests), 1)
+        self.assertEqual(dialog.replacement_requests[0].replacement_physical_port, 5)
         dialog.close()
 
     def test_manual_replacement_derives_latest_effective_port_and_saves_details(self):

@@ -9,6 +9,7 @@ from application.replacement_analysis_persistence import (
 )
 from domain.database_records import (
     AssignmentSpec,
+    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
     MeasurementSpec,
     ReplacementSpec,
     RunSpec,
@@ -48,12 +49,20 @@ class ReplacementAnalysisPersistenceTests(unittest.TestCase):
                 application_version="test",
                 measurement_hardware={"ilm": {"model": "OP815"}},
                 limit_snapshot={"model": "OSX-150", "failure_db": 2.5},
+                front_panel_channel_count=48,
             )
         )
         self.repository.append_attempt(
             MeasurementSpec(
                 uuid4(), self.run.run_id, 1, 1, 1310, Decimal("2.6"),
                 1550, Decimal("2.6"), {"snapshot_id": "ref"}, NOW, "AT", 1,
+            )
+        )
+        self.extra_measurement = self.repository.append_attempt(
+            MeasurementSpec(
+                uuid4(), self.run.run_id, None, 1, 1310, Decimal("0.7"),
+                1550, Decimal("0.8"), {"snapshot_id": "ref"}, NOW, "AT", 49,
+                MEASUREMENT_ROLE_EXTRA_CANDIDATE,
             )
         )
         self.repository.append_attempt(
@@ -91,6 +100,8 @@ class ReplacementAnalysisPersistenceTests(unittest.TestCase):
                     "current_worst_loss_db": 2.6,
                     "candidate_worst_loss_db": 0.8,
                     "improvement_db": 1.8,
+                    "current_measurement_id": 1,
+                    "candidate_measurement_id": self.extra_measurement.measurement_id,
                 }
             ],
         }

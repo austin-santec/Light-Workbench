@@ -62,7 +62,8 @@ be used as source locations. The release scripts keep deployment output in
   not used to infer the selected mode.
 - OSX-100/OSX-150 part-number parsing and front-panel channel-count resolution:
   `domain/part_numbers.py`. This count remains separate from the switch's
-  configured physical-channel count.
+  last reported SCPI-configured channel count; this is diagnostic and not a
+  physical-capacity authority.
 - Multi-run COC merging and publication rules: `domain/coc_preparation.py`;
   repository coordination: `application/coc_workflow.py`; operator selection:
   `ui/coc_export_dialog.py`; workbook mechanics: `infrastructure/coc_export.py`.
