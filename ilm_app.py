@@ -186,6 +186,7 @@ from infrastructure.coc_exporter import (
 from infrastructure.run_repository import DEFAULT_RUN_ROOT, FileRunRepository
 from infrastructure.unit_repository import FileUnitRepository
 from infrastructure.limit_profile_repository import LimitProfileRepository
+from infrastructure.timing_profile_repository import TimingProfileRepository
 from infrastructure.support_bundle import export_support_bundle
 from hardware.optical_switch import OSX150
 from hardware.power_meter import SantecPowerMeter, SimulatedPowerMeter
@@ -209,6 +210,7 @@ from ui.power_measurement_diagnostics import PowerMeasurementDiagnosticsDialog
 from ui.hardware_status import HardwareStatusPanel
 from ui.support_logs import LoggingStatusDialog, SupportBundleDialog
 from ui.admin_config import AdminConfigDialog, AdminPasswordDialog
+from ui.timing_profiles import TimingProfilesDialog
 from ui.reading_history import ReadingHistoryDialog
 from ui.coc_export_dialog import CocExportDialog, format_optimization_warning
 from ui.switch_ip import SwitchIpAddressDialog
@@ -217,6 +219,7 @@ from ui.database_replacements import DatabaseReplacementDialog
 from ui.collapsible_group_box import CollapsibleGroupBox
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
+from domain.measurement_timing import default_measurement_timing_profiles
 
 
 ACCENT = "#e60013"
@@ -889,6 +892,20 @@ class MainWindow(QMainWindow):
             )
         except (OSError, ValueError, TypeError) as error:
             self.limit_profile_error = str(error)
+        self.timing_profile_repository = TimingProfileRepository()
+        self.timing_profiles = default_measurement_timing_profiles()
+        self.active_timing_profile_id = "standard"
+        self.timing_profile_error = None
+        try:
+            self.timing_profiles, self.active_timing_profile_id = (
+                self.timing_profile_repository.load()
+            )
+        except (OSError, ValueError, TypeError) as error:
+            self.timing_profile_error = str(error)
+        self.active_timing_profile = self.timing_profiles.get(
+            self.active_timing_profile_id,
+            self.timing_profiles["standard"],
+        )
         self.active_limit_profile = self.limit_profiles[profile_key("OSX-150", "SM")]
         self._wavelength_mode_selection_method = "application_default_sm"
         self.ilm_source_profile = source_profile_for_mode(
@@ -1632,6 +1649,10 @@ class MainWindow(QMainWindow):
         self.admin_config_action.setEnabled(False)
         self.admin_config_action.triggered.connect(self.show_admin_config)
         edit_menu.addAction(self.admin_config_action)
+        self.timing_profiles_action = QAction("Timing Profiles...", self)
+        self.timing_profiles_action.setEnabled(False)
+        self.timing_profiles_action.triggered.connect(self.show_timing_profiles)
+        edit_menu.addAction(self.timing_profiles_action)
 
         tools_menu = self.menuBar().addMenu("Tools")
         switch_address_action = QAction("Switch VISA Address...", self)
@@ -2909,6 +2930,7 @@ class MainWindow(QMainWindow):
             self.admin_mode_action.setChecked(False)
             self.admin_mode_indicator.setText("")
             self.admin_config_action.setEnabled(False)
+            self.timing_profiles_action.setEnabled(False)
             self._refresh_admin_branding()
             self.statusBar().showMessage("Admin mode disabled.")
             self._record_support(
@@ -2936,6 +2958,7 @@ class MainWindow(QMainWindow):
         self.admin_mode_action.setChecked(True)
         self.admin_mode_indicator.setText("ADMIN MODE")
         self.admin_config_action.setEnabled(True)
+        self.timing_profiles_action.setEnabled(True)
         self._refresh_admin_branding()
         self.statusBar().showMessage("ADMIN MODE active for this session.")
         self._record_support(
@@ -3033,6 +3056,65 @@ class MainWindow(QMainWindow):
             status="success",
         )
         self.statusBar().showMessage("Admin criteria configuration reloaded.")
+
+    def show_timing_profiles(self):
+        """Open the administrator-only production timing profile editor."""
+        if not self.admin_session.is_active:
+            return
+        if self.hardware_run_active:
+            QMessageBox.information(
+                self,
+                "Timing profile locked",
+                "Stop the active hardware run before changing timing profiles.",
+            )
+            return
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "admin.timing_profiles_opened",
+            admin_mode=True,
+            active_profile=self.active_timing_profile_id,
+            status="started",
+        )
+        dialog = TimingProfilesDialog(
+            self.timing_profiles,
+            self.timing_profile_repository,
+            self.active_timing_profile_id,
+            self,
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        try:
+            self.timing_profiles, self.active_timing_profile_id = (
+                self.timing_profile_repository.load()
+            )
+            self.active_timing_profile = self.timing_profiles[
+                self.active_timing_profile_id
+            ]
+            self.timing_profile_error = None
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            self.timing_profile_error = str(error)
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "admin.timing_profiles_validation_failed",
+                admin_mode=True,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="failed",
+            )
+            QMessageBox.warning(self, "Invalid timing profiles", str(error))
+            return
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "admin.timing_profiles_saved",
+            admin_mode=True,
+            active_profile=self.active_timing_profile_id,
+            **self.active_timing_profile.as_dict(),
+            status="success",
+        )
+        self.statusBar().showMessage(
+            "Timing profile '%s' is active for future runs."
+            % self.active_timing_profile.name
+        )
 
     def toggle_dark_mode(self, enabled):
         """Apply and persist the operator's light/dark appearance choice."""
@@ -3260,6 +3342,7 @@ class MainWindow(QMainWindow):
             support_logger=self.support_logger,
             workflow_id=workflow.workflow_id if workflow else "",
             measurement_configuration_value=self.measurement_configuration,
+            measurement_timing=self.active_timing_profile,
         )
         self.reference_values_changed.connect(dialog.set_reference_values)
         dialog.references_changed.connect(self.set_reference_values)
@@ -3443,6 +3526,7 @@ class MainWindow(QMainWindow):
             support_logger=self.support_logger,
             workflow_id=workflow.workflow_id if workflow else "",
             measurement_configuration_value=self.measurement_configuration,
+            measurement_timing=self.active_timing_profile,
         )
         dialog.references_changed.connect(self.set_reference_values)
         dialog.calculated_references_applied.connect(
@@ -4828,12 +4912,17 @@ class MainWindow(QMainWindow):
                 self.measurement_configuration.source_profile.origin
             ),
             "mode_selection_method": self._wavelength_mode_selection_method,
+            "timing_profile": self.active_timing_profile.as_dict(),
             "extra_channel_routing": {
                 "method": routing_method.value,
                 "front_panel_channel_count": front_panel_channel_count,
                 "scpi_configured_channel_count": switch.configured_channel_count,
             },
         }
+
+    def _measurement_timing_snapshot(self):
+        """Return the immutable timing values selected for a new run."""
+        return self.active_timing_profile.as_dict()
 
     def _extra_channel_routing_method_for_run(self, run_mode):
         """Return immutable saved provenance for continuations when available."""
@@ -6025,6 +6114,7 @@ class MainWindow(QMainWindow):
             run_purpose=purpose,
             retest=retest,
             live_write_mode=self.live_write_mode_enabled,
+            timing_profile=self.active_timing_profile.as_dict(),
             status="started",
         )
 
@@ -6084,6 +6174,8 @@ class MainWindow(QMainWindow):
                     "Source profile origin": (
                         self.measurement_configuration.source_profile.origin
                     ),
+                    "Timing profile": self.active_timing_profile.name,
+                    "timing_profile": self.active_timing_profile.as_dict(),
                     "Mode selection method": self._wavelength_mode_selection_method,
                     "Measurement classification": (
                         self.measurement_configuration.classification.value
@@ -6205,6 +6297,8 @@ class MainWindow(QMainWindow):
             ),
             resume_existing=continuing_existing,
             live_write_mode=self.live_write_mode_enabled,
+            live_write_interval=self.active_timing_profile.live_update_pause_seconds,
+            measurement_timing=self.active_timing_profile,
             support_logger=self.support_logger,
             workflow_id=workflow_id,
             reference_snapshot=self.active_run_reference_snapshot,

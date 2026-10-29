@@ -987,7 +987,12 @@ class MainWindowTests(unittest.TestCase):
         )
         self.assertEqual(
             [action.text() for action in menus["Edit"].actions()],
-            ["Keybinds...", "Admin Mode...", "Admin Config..."],
+            [
+                "Keybinds...",
+                "Admin Mode...",
+                "Admin Config...",
+                "Timing Profiles...",
+            ],
         )
         self.assertEqual(
             [action.text() for action in menus["Tools"].actions()],

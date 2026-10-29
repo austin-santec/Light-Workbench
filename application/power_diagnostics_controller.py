@@ -10,6 +10,7 @@ from domain.measurement import (
     validate_reference_measurements,
 )
 from domain.reference import calculate_reference_offsets
+from domain.measurement_timing import MeasurementTimingProfile
 from domain.wavelengths import measurement_configuration
 from hardware.interfaces import PowerMeter
 from hardware.session import OpticalTestSession
@@ -24,11 +25,18 @@ class PowerDiagnosticsWorker(QObject):
     failed = pyqtSignal(str)
     finished = pyqtSignal()
 
-    def __init__(self, meter: PowerMeter, measurement_configuration_value=None):
+    def __init__(
+        self, meter: PowerMeter, measurement_configuration_value=None, measurement_timing=None
+    ):
         super().__init__()
         self.meter = meter
         self.measurement_configuration = (
             measurement_configuration_value or measurement_configuration()
+        )
+        self.measurement_timing = (
+            measurement_timing.validate()
+            if measurement_timing is not None
+            else MeasurementTimingProfile("standard", "Standard").validate()
         )
         self.hardware_session = OpticalTestSession(meter)
         self._finished = False
@@ -43,6 +51,9 @@ class PowerDiagnosticsWorker(QObject):
             configure = getattr(self.meter, "configure_measurement", None)
             if configure is not None:
                 configure(self.measurement_configuration)
+            configure_timing = getattr(self.meter, "configure_timing", None)
+            if configure_timing is not None:
+                configure_timing(self.measurement_timing)
             self.connected.emit(self.meter.description or "Power meter connected")
         except Exception as error:
             # Keep the worker alive long enough for the controller to perform
@@ -186,6 +197,7 @@ class PowerDiagnosticsController(QObject):
         self,
         meter_factory: Callable[[], PowerMeter],
         measurement_configuration_value=None,
+        measurement_timing=None,
     ) -> None:
         """Create the worker and connect the meter asynchronously."""
         if self.thread is not None or self.worker is not None:
@@ -210,11 +222,12 @@ class PowerDiagnosticsController(QObject):
                         setter(**self.trace_metadata)
                     except Exception:
                         pass
-            worker = (
-                self.worker_factory(meter, measurement_configuration_value)
-                if measurement_configuration_value is not None
-                else self.worker_factory(meter)
-            )
+            worker_kwargs = {"measurement_timing": measurement_timing}
+            if measurement_configuration_value is not None:
+                worker_kwargs["measurement_configuration_value"] = (
+                    measurement_configuration_value
+                )
+            worker = self.worker_factory(meter, **worker_kwargs)
             thread = QThread(self)
             worker.moveToThread(thread)
             self.worker = worker

@@ -34,6 +34,7 @@ from application.power_diagnostics_controller import PowerDiagnosticsController
 from application.diagnostic_trace import DiagnosticTraceRecorder
 from application.red_light_controller import RedLightTestController
 from application.timing import LIVE_UPDATE_PAUSE_MS
+from domain.measurement_timing import MeasurementTimingProfile
 from config.app_info import APP_VERSION
 from domain.models import ConnectionState, DeviceCategory
 from domain.wavelengths import measurement_configuration
@@ -113,6 +114,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         support_logger=None,
         workflow_id="",
         measurement_configuration_value=None,
+        measurement_timing=None,
     ):
         super().__init__(parent)
         self.hardware_factory = HardwareFactory()
@@ -123,11 +125,17 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self.measurement_configuration = (
             measurement_configuration_value or measurement_configuration()
         )
+        self.measurement_timing = (
+            measurement_timing.validate()
+            if measurement_timing is not None
+            else MeasurementTimingProfile("standard", "Standard").validate()
+        )
         self.wavelengths = self.measurement_configuration.opm_wavelengths_nm
 
         self.trace_recorder = DiagnosticTraceRecorder(APP_VERSION)
         self.trace_recorder.update_metadata(
-            **self.measurement_configuration.as_dict()
+            **self.measurement_configuration.as_dict(),
+            timing_profile=self.measurement_timing.as_dict(),
         )
         self.meter_controller = PowerDiagnosticsController(
             self,
@@ -135,6 +143,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
             trace_metadata={
                 "application_version": APP_VERSION,
                 **self.measurement_configuration.as_dict(),
+                "timing_profile": self.measurement_timing.as_dict(),
             },
         )
         self.switch_controller = RedLightTestController(self)
@@ -483,6 +492,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
             self.meter_controller.start(
                 self.meter_factory,
                 self.measurement_configuration,
+                self.measurement_timing,
             )
         except Exception as error:
             QMessageBox.critical(self, "Power diagnostics", str(error))
@@ -622,7 +632,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
             self.status_label.setText(
                 "Monitoring sample complete. Next sample will start shortly."
             )
-            self.monitor_timer.start(LIVE_UPDATE_PAUSE_MS)
+            self.monitor_timer.start(self.measurement_timing.live_update_pause_ms)
         else:
             self.status_label.setText("Reading complete. No data was saved.")
         self._update_controls()
@@ -1095,6 +1105,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         if self.support_logger is None:
             return
         try:
+            fields.setdefault("timing_profile", self.measurement_timing.as_dict())
             self.support_logger.record(
                 category,
                 event,

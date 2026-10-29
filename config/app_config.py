@@ -55,6 +55,13 @@ def default_limit_profile_path() -> Path:
     return base / "LightWorkbench" / "config" / "limit_profiles.ini"
 
 
+def default_timing_profile_path() -> Path:
+    """Return the per-user administrator timing-profile location."""
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    base = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
+    return base / "LightWorkbench" / "config" / "timing_profiles.ini"
+
+
 def default_database_config_path() -> Path:
     """Return the per-user, non-secret SQL Server settings location."""
     local_app_data = os.environ.get("LOCALAPPDATA")
@@ -73,6 +80,7 @@ class AppPaths:
     support_log_root: Path = default_support_log_root()
     support_log_fallback_root: Path = fallback_support_log_root()
     limit_profile_path: Path = default_limit_profile_path()
+    timing_profile_path: Path = default_timing_profile_path()
     database_config_path: Path = default_database_config_path()
 
     @property

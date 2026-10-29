@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
+from domain.measurement_timing import MeasurementTimingProfile
 from domain.measurement import (
     DARK_REFERENCE_THRESHOLD_DBM,
     NON_NEGATIVE_LOSS_THRESHOLD_DB,
@@ -78,6 +79,7 @@ class MeasurementWorker(QObject):
         resume_full_pass=False,
         live_write_mode=False,
         live_write_interval=LIVE_WRITE_INTERVAL_SECONDS,
+        measurement_timing: MeasurementTimingProfile | None = None,
         support_logger=None,
         workflow_id="",
         measurement_configuration_value: MeasurementConfiguration | None = None,
@@ -106,7 +108,15 @@ class MeasurementWorker(QObject):
         self.resume_existing = bool(resume_existing)
         self.resume_full_pass = bool(resume_full_pass)
         self.live_write_mode = bool(live_write_mode)
-        self.live_write_interval = max(0.1, float(live_write_interval))
+        # The administrator profile owns this delay.  Keep zero valid for
+        # diagnostics/experimentation while retaining the historical default
+        # when no profile was supplied.
+        self.live_write_interval = max(0.0, float(live_write_interval))
+        self.measurement_timing = (
+            measurement_timing.validate()
+            if measurement_timing is not None
+            else MeasurementTimingProfile("standard", "Standard").validate()
+        )
         self.support_logger = support_logger
         self.workflow_id = str(workflow_id or "")
         self.measurement_configuration = (
@@ -213,6 +223,9 @@ class MeasurementWorker(QObject):
             configure = getattr(self.power_meter, "configure_measurement", None)
             if configure is not None:
                 configure(self.measurement_configuration)
+            configure_timing = getattr(self.power_meter, "configure_timing", None)
+            if configure_timing is not None:
+                configure_timing(self.measurement_timing)
             self._emit_device_status(ConnectionState.CONNECTED)
             configured_count = None
             if self.channels is not None:
@@ -1529,6 +1542,7 @@ class MeasurementWorker(QObject):
         if self.support_logger is None:
             return
         try:
+            fields.setdefault("timing_profile", self.measurement_timing.as_dict())
             self.support_logger.record(
                 category,
                 event,

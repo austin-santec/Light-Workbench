@@ -9,6 +9,7 @@ from hardware.interfaces import (
     validate_wavelength_readings,
 )
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
+from domain.measurement_timing import MeasurementTimingProfile
 from domain.wavelengths import (
     MeasurementConfiguration,
     SM_SOURCE_PROFILE,
@@ -32,6 +33,7 @@ class SantecPowerMeter:
         self._measurement_configuration = measurement_configuration(
             "SM", source_profile
         )
+        self._measurement_timing = MeasurementTimingProfile("standard", "Standard")
 
     @property
     def description(self):
@@ -75,6 +77,15 @@ class SantecPowerMeter:
         setter = getattr(self._driver, "configure_measurement", None)
         if setter is not None:
             setter(configuration)
+
+    def configure_timing(self, timing: MeasurementTimingProfile):
+        """Apply the run's immutable production timing snapshot."""
+        if not isinstance(timing, MeasurementTimingProfile):
+            raise TypeError("A MeasurementTimingProfile is required.")
+        self._measurement_timing = timing.validate()
+        setter = getattr(self._driver, "configure_measurement_timing", None)
+        if setter is not None:
+            setter(self._measurement_timing)
 
     def set_trace_callback(self, callback):
         """Enable optional diagnostic tracing on the wrapped OP815 driver."""
@@ -145,6 +156,7 @@ class SimulatedPowerMeter:
         self._measurement_configuration = measurement_configuration(
             "SM", source_profile
         )
+        self._measurement_timing = MeasurementTimingProfile("standard", "Standard")
 
     def connect(self):
         self.connected = True
@@ -158,6 +170,11 @@ class SimulatedPowerMeter:
                 "The simulated source profile cannot provide the selected mode."
             )
         self._measurement_configuration = configuration
+
+    def configure_timing(self, timing: MeasurementTimingProfile):
+        if not isinstance(timing, MeasurementTimingProfile):
+            raise TypeError("A MeasurementTimingProfile is required.")
+        self._measurement_timing = timing.validate()
 
     def get_device_info(
         self,

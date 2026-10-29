@@ -773,6 +773,9 @@ class ManagedPowerMeter(_ManagedDevice):
     def configure_measurement(self, configuration):
         self._configure_optional("configure_measurement", configuration)
 
+    def configure_timing(self, timing):
+        self._configure_optional("configure_timing", timing)
+
     def source_capability_profile(self):
         from domain.wavelengths import SM_SOURCE_PROFILE
 

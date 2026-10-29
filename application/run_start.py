@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from application.hardware_planning import HardwareRunPlan, build_hardware_run_plan
 from application.run_controller import HardwareRunRequest
+from domain.measurement_timing import MeasurementTimingProfile
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from domain.extra_ports import ExtraChannelRoutingMethod
 from domain.models import ChannelMode
@@ -115,6 +116,7 @@ def build_hardware_run_request(
     resume_existing: bool,
     live_write_mode: bool,
     live_write_interval: float = LIVE_WRITE_INTERVAL_SECONDS,
+    measurement_timing: MeasurementTimingProfile | None = None,
     support_logger=None,
     workflow_id: str = "",
     reference_snapshot: Mapping[str, object] | None = None,
@@ -146,6 +148,7 @@ def build_hardware_run_request(
         and not preparation.manual_channel_order,
         live_write_mode=live_write_mode,
         live_write_interval=live_write_interval,
+        measurement_timing=measurement_timing,
         support_logger=support_logger,
         workflow_id=workflow_id,
         reference_snapshot=dict(reference_snapshot) if reference_snapshot else None,
