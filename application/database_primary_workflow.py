@@ -1,0 +1,358 @@
+"""Application orchestration for SQL-primary production runs."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from datetime import datetime
+from typing import Mapping
+
+from application.database_run_read_model import (
+    DatabaseRunQueryService,
+    DatabaseRunSnapshot,
+)
+from application.database_reporting import DatabaseReportingService
+from application.measurement_persistence_workflow import MeasurementPersistenceWorkflow
+from application.replacement_persistence_workflow import (
+    AssignmentRoutingSnapshot,
+    ReplacementPersistenceWorkflow,
+)
+from application.replacement_analysis_persistence import (
+    ReplacementAnalysisPersistenceWorkflow,
+)
+from application.run_lifecycle_workflow import (
+    DatabaseRunUnavailableError,
+    RunLifecycleWorkflow,
+)
+from application.unit_switch_workflow import (
+    AssignmentResolution,
+    UnitSwitchAssignmentResult,
+    UnitSwitchAssignmentWorkflow,
+)
+from domain.unit_switch_assignments import (
+    AssignmentChangeRequiredError,
+)
+from domain.database_records import (
+    MeasurementRecord,
+    MeasurementWriteSpec,
+    RunRecord,
+    SwitchSpec,
+    UnitSpec,
+    utc_now,
+)
+from domain.effective_replacement_analysis import (
+    build_effective_replacement_projection,
+)
+from domain.limit_profiles import LimitProfile
+
+
+@dataclass(frozen=True)
+class DatabaseRunContext:
+    """Identity, routing, and latest accepted values for one persisted run."""
+
+    unit: object
+    switch: object
+    assignment: object
+    snapshot: DatabaseRunSnapshot
+    routing: AssignmentRoutingSnapshot
+    replacement_analysis: object | None = None
+    replacement_analysis_history: tuple[object, ...] = ()
+    effective_projection: object | None = None
+    pairing_closed_assignment_ids: tuple[int, ...] = ()
+    pairing_stopped_run_ids: tuple[int, ...] = ()
+
+    @property
+    def run(self) -> RunRecord:
+        return self.snapshot.run
+
+
+class DatabasePrimaryRunWorkflow:
+    """Keep Qt and hardware code independent from SQL and connection details."""
+
+    def __init__(self, repositories, readiness_check) -> None:
+        self.repositories = repositories
+        self._readiness_check = readiness_check
+        self.assignments = UnitSwitchAssignmentWorkflow(
+            repositories, repositories, repositories
+        )
+        self.lifecycle = RunLifecycleWorkflow(repositories, readiness_check)
+        self.measurements = MeasurementPersistenceWorkflow(repositories)
+        self.queries = DatabaseRunQueryService(repositories, repositories)
+        self.reporting = DatabaseReportingService(repositories, self.queries)
+        self.replacements = ReplacementPersistenceWorkflow(repositories)
+        self.replacement_analyses = ReplacementAnalysisPersistenceWorkflow(repositories)
+
+    def check_ready(self):
+        return self._readiness_check()
+
+    def start_new_run(
+        self,
+        *,
+        unit_spec: UnitSpec,
+        switch_spec: SwitchSpec,
+        installed_by: str,
+        initial_channel_map: Mapping[int, int],
+        tested_by: str,
+        wavelength_mode: str,
+        operating_band: str,
+        application_version: str,
+        measurement_hardware: Mapping,
+        limit_snapshot: Mapping,
+        part_number_snapshot: str | None,
+        front_panel_channel_count: int | None,
+        station_number: int | None = None,
+        run_purpose: str = "production",
+        started_at_utc: datetime | None = None,
+        switch_replacement_reason: str | None = None,
+        allow_new_hardware_pairing: bool = False,
+    ) -> DatabaseRunContext:
+        readiness = self.check_ready()
+        if not getattr(readiness, "ready", False):
+            raise DatabaseRunUnavailableError(readiness)
+        started = started_at_utc or utc_now()
+        pairing_conflict = self.assignments.requires_new_pairing(
+            unit_spec, switch_spec
+        )
+        if (
+            pairing_conflict is not None
+            and not allow_new_hardware_pairing
+            and not str(switch_replacement_reason or "").strip()
+        ):
+            raise pairing_conflict
+        if pairing_conflict is not None and allow_new_hardware_pairing:
+            unit = self.repositories.get_or_create(unit_spec)
+            switch = self.repositories.get_or_create(switch_spec)
+            assignment_spec = self.assignments.build_assignment_spec(
+                unit,
+                switch,
+                installed_at_utc=started,
+                installed_by=installed_by,
+                initial_channel_map=initial_channel_map,
+            )
+            pending_run = self.lifecycle.prepare_start_spec(
+                tested_by=tested_by,
+                wavelength_mode=wavelength_mode,
+                operating_band=operating_band,
+                application_version=application_version,
+                measurement_hardware=measurement_hardware,
+                limit_snapshot=limit_snapshot,
+                part_number_snapshot=part_number_snapshot,
+                front_panel_channel_count=front_panel_channel_count,
+                station_number=station_number,
+                run_purpose=run_purpose,
+                started_at_utc=started,
+            )
+            record, installed, closed, stopped = (
+                self.repositories.create_next_with_fresh_pairing(
+                    assignment_spec,
+                    pending_run,
+                    started,
+                    installed_by,
+                )
+            )
+            assignment = UnitSwitchAssignmentResult(
+                unit,
+                switch,
+                installed,
+                AssignmentResolution.FRESH_PAIRING,
+                previous_assignment=closed[0] if closed else None,
+                previous_assignments=closed,
+                stopped_run_ids=stopped,
+            )
+        else:
+            try:
+                assignment = self.assignments.resolve(
+                    unit_spec,
+                    switch_spec,
+                    installed_at_utc=started,
+                    installed_by=installed_by,
+                    initial_channel_map=initial_channel_map,
+                )
+            except AssignmentChangeRequiredError:
+                if not str(switch_replacement_reason or "").strip():
+                    raise
+                assignment = self.assignments.replace_switch(
+                    unit_spec,
+                    switch_spec,
+                    changed_at_utc=started,
+                    changed_by=installed_by,
+                    removal_reason=str(switch_replacement_reason).strip(),
+                    initial_channel_map=initial_channel_map,
+                )
+        if pairing_conflict is not None and allow_new_hardware_pairing:
+            context = self._context(record, assignment)
+            return replace(
+                context,
+                pairing_closed_assignment_ids=tuple(
+                    item.assignment_id for item in assignment.previous_assignments
+                ),
+                pairing_stopped_run_ids=assignment.stopped_run_ids,
+            )
+        run = self.lifecycle.start_run(
+            assignment_id=assignment.assignment.assignment_id,
+            tested_by=tested_by,
+            wavelength_mode=wavelength_mode,
+            operating_band=operating_band,
+            application_version=application_version,
+            measurement_hardware=measurement_hardware,
+            limit_snapshot=limit_snapshot,
+            part_number_snapshot=part_number_snapshot,
+            front_panel_channel_count=front_panel_channel_count,
+            station_number=station_number,
+            run_purpose=run_purpose,
+            started_at_utc=started,
+        )
+        return self._context(run, assignment)
+
+    def load_for_unit(self, main_board_serial: str, run_number: int) -> DatabaseRunContext:
+        self._require_ready()
+        unit = self.repositories.get_by_main_board_serial(main_board_serial)
+        if unit is None:
+            raise ValueError("No database unit matches that main-board serial.")
+        run = self.repositories.get_for_unit_run_number(unit.unit_id, run_number)
+        if run is None:
+            available = self.repositories.list_for_unit(unit.unit_id)
+            numbers = ", ".join(str(item.run_number) for item in available) or "none"
+            raise ValueError(
+                f"No Run {int(run_number)} was found for this unit. "
+                f"Available runs: {numbers}."
+            )
+        return self._context(run)
+
+    def load_run(self, run_id: int) -> DatabaseRunContext:
+        self._require_ready()
+        run = self.repositories.get(run_id)
+        if run is None:
+            raise ValueError("Run was not found")
+        return self._context(run)
+
+    def refresh(self, run_id: int) -> DatabaseRunContext:
+        return self.load_run(run_id)
+
+    def list_for_unit(self, unit_id: int) -> tuple[DatabaseRunContext, ...]:
+        self._require_ready()
+        return tuple(
+            self._context(run)
+            for run in self.repositories.list_for_unit(int(unit_id))
+        )
+
+    def list_for_assignment(
+        self, assignment_id: int
+    ) -> tuple[DatabaseRunContext, ...]:
+        self._require_ready()
+        return tuple(
+            self._context(run)
+            for run in self.repositories.list_for_assignment(int(assignment_id))
+        )
+
+    def commit_measurement(
+        self, pending: MeasurementWriteSpec
+    ) -> tuple[MeasurementRecord, DatabaseRunContext]:
+        record = self.measurements.commit(pending)
+        return record, self.refresh(record.run_id)
+
+    def finish_run(self, run_id: int, status: str) -> DatabaseRunContext:
+        run = self.lifecycle.finish_run(run_id, status)
+        return self._context(run)
+
+    def resume_run(self, run_id: int) -> DatabaseRunContext:
+        self._require_ready()
+        run = self.lifecycle.resume_run(run_id)
+        return self._context(run)
+
+    def void_run(
+        self,
+        run_id: int,
+        *,
+        voided_by: str,
+        reason: str,
+    ) -> DatabaseRunContext:
+        """Permanently exclude a retained run and refresh authoritative state."""
+        self._require_ready()
+        run = self.lifecycle.void_run(
+            run_id,
+            voided_by=voided_by,
+            reason=reason,
+        )
+        return self._context(run)
+
+    def build_replacement_projection(
+        self,
+        run_id: int,
+        profile,
+        *,
+        bottom_spare_count: int = 2,
+    ):
+        """Coordinate assignment data for the pure effective-state projector."""
+        run = self.repositories.get(int(run_id))
+        if run is None:
+            raise ValueError("Run was not found")
+        routing = self.replacements.load_assignment(run.assignment_id)
+        runs = self.repositories.list_for_assignment(run.assignment_id)
+        histories = {
+            item.run_id: self.repositories.snapshot_for_run(item.run_id)[1]
+            for item in runs
+        }
+        return build_effective_replacement_projection(
+            context_run=run,
+            runs=runs,
+            measurements_by_run=histories,
+            # Rebuild the effective map inside the projection from the assignment
+            # baseline plus only replacement records visible to the context run.
+            # Passing today's map would leak later replacement activity into a
+            # historical analysis.
+            effective_channel_map={
+                item.logical_channel: item.initial_physical_port
+                for item in routing.channel_map
+            },
+            replacements=routing.replacement_history,
+            active_spares=routing.active_spares,
+            spare_event_ids=tuple(
+                event.spare_event_id for event in routing.spare_history
+            ),
+            profile=profile,
+            bottom_spare_count=bottom_spare_count,
+        )
+
+    def _require_ready(self) -> None:
+        result = self.check_ready()
+        if not getattr(result, "ready", False):
+            raise DatabaseRunUnavailableError(result)
+
+    def _context(
+        self,
+        run: RunRecord,
+        assignment_result: UnitSwitchAssignmentResult | None = None,
+    ) -> DatabaseRunContext:
+        if assignment_result is None:
+            assignment = self.repositories.get_assignment(run.assignment_id)
+            if assignment is None:
+                raise ValueError("Run assignment was not found")
+            unit = self.repositories.get_unit(assignment.unit_id)
+            switch = self.repositories.get_switch(assignment.switch_id)
+        else:
+            assignment = assignment_result.assignment
+            unit = assignment_result.unit
+            switch = assignment_result.switch
+        if unit is None or switch is None:
+            raise ValueError("Run hardware identity is incomplete")
+        snapshot = self.queries.load(run.run_id)
+        routing = self.replacements.load_assignment(assignment.assignment_id)
+        projection = None
+        try:
+            profile = LimitProfile.from_mapping(run.limit_snapshot)
+            projection = self.build_replacement_projection(run.run_id, profile)
+        except (KeyError, TypeError, ValueError):
+            pass
+        return DatabaseRunContext(
+            unit,
+            switch,
+            assignment,
+            snapshot,
+            routing,
+            self.replacement_analyses.latest_for_run(run.run_id),
+            self.replacement_analyses.history_for_run(run.run_id),
+            projection,
+        )
+
+
+__all__ = ["DatabasePrimaryRunWorkflow", "DatabaseRunContext"]

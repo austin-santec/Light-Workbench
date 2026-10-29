@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
+from domain.extra_ports import ExtraChannelRoutingMethod
 from domain.limit_profiles import LimitProfile, default_limit_profiles, profile_key
 
 
@@ -42,12 +43,21 @@ class AdminPasswordDialog(QDialog):
 class AdminConfigDialog(QDialog):
     """Edit both model profiles while keeping persistence outside the dialog."""
 
-    def __init__(self, profiles, repository, parent=None):
+    def __init__(
+        self,
+        profiles,
+        repository,
+        parent=None,
+        extra_channel_routing_method=ExtraChannelRoutingMethod.SCPI_MAPPED,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Admin Config")
         self.setMinimumWidth(430)
         self.repository = repository
         self.profiles = dict(profiles)
+        self.extra_channel_routing_method = ExtraChannelRoutingMethod.parse(
+            extra_channel_routing_method
+        )
         self._dirty = False
         self._loading = False
         layout = QVBoxLayout(self)
@@ -61,12 +71,6 @@ class AdminConfigDialog(QDialog):
         self.mode_combo.addItem("MM (850/1300)", "MM")
         self.mode_combo.currentIndexChanged.connect(self._load_current_profile)
         form.addRow("Wavelength mode:", self.mode_combo)
-        self.profile_name_edit = QLineEdit()
-        self.profile_name_edit.textChanged.connect(self._mark_dirty)
-        form.addRow("Profile name:", self.profile_name_edit)
-        self.revision_edit = QLineEdit()
-        self.revision_edit.textChanged.connect(self._mark_dirty)
-        form.addRow("Revision:", self.revision_edit)
         self.too_good_spin = self._spin()
         self.too_good_spin.valueChanged.connect(self._mark_dirty)
         form.addRow("Too-good below:", self.too_good_spin)
@@ -76,6 +80,23 @@ class AdminConfigDialog(QDialog):
         self.fail_spin = self._spin()
         self.fail_spin.valueChanged.connect(self._mark_dirty)
         form.addRow("Fail above:", self.fail_spin)
+        self.minimum_improvement_spin = self._minimum_improvement_spin()
+        self.minimum_improvement_spin.valueChanged.connect(self._mark_dirty)
+        self.minimum_improvement_spin.setToolTip(
+            "A spare must improve the target channel's worse wavelength by at least this amount."
+        )
+        self.minimum_improvement_label = QLabel("Minimum replacement improvement:")
+        form.addRow(self.minimum_improvement_label, self.minimum_improvement_spin)
+        self.extra_routing_combo = QComboBox()
+        for method in ExtraChannelRoutingMethod:
+            self.extra_routing_combo.addItem(method.label, method.value)
+        self.extra_routing_combo.currentIndexChanged.connect(self._mark_dirty)
+        self.extra_routing_label = QLabel("Extra-channel routing:")
+        self.extra_routing_combo.setToolTip(
+            "SCPI mapped channels are the default. CLI direct routing is an "
+            "experimental engineering option for OSX-150 only."
+        )
+        form.addRow(self.extra_routing_label, self.extra_routing_combo)
         self.warning_note = QLabel("Not applicable for OSX-100")
         self.warning_note.setWordWrap(True)
         form.addRow("", self.warning_note)
@@ -106,19 +127,37 @@ class AdminConfigDialog(QDialog):
         spin.setSuffix(" dB")
         return spin
 
+    @staticmethod
+    def _minimum_improvement_spin():
+        spin = QDoubleSpinBox()
+        spin.setRange(0, 100)
+        spin.setDecimals(4)
+        spin.setSingleStep(0.05)
+        spin.setSuffix(" dB")
+        return spin
+
     def _selected_key(self):
         return profile_key(self.model_combo.currentText(), self.mode_combo.currentData())
 
     def _load_current_profile(self, *_args):
         self._loading = True
         profile = self.profiles[self._selected_key()]
-        self.profile_name_edit.setText(profile.profile_name)
-        self.revision_edit.setText(profile.revision)
         self.too_good_spin.setValue(profile.too_good_below_db)
         self.warning_spin.setValue(profile.warning_above_db or 0.0)
         self.fail_spin.setValue(profile.fail_above_db)
+        self.minimum_improvement_spin.setValue(
+            profile.minimum_replacement_improvement_db
+        )
+        routing_index = self.extra_routing_combo.findData(
+            self.extra_channel_routing_method.value
+        )
+        self.extra_routing_combo.setCurrentIndex(max(0, routing_index))
         is_150 = self.model_combo.currentText() == "OSX-150"
         self.warning_spin.setEnabled(is_150)
+        self.minimum_improvement_label.setVisible(is_150)
+        self.minimum_improvement_spin.setVisible(is_150)
+        self.extra_routing_label.setVisible(is_150)
+        self.extra_routing_combo.setVisible(is_150)
         self.warning_note.setVisible(not is_150)
         self._loading = False
 
@@ -145,18 +184,35 @@ class AdminConfigDialog(QDialog):
     def _profile_from_form(self):
         model = self.model_combo.currentText()
         mode = self.mode_combo.currentData()
+        existing_profile = self.profiles[self._selected_key()]
         return LimitProfile(
-            model, self.profile_name_edit.text().strip(), self.revision_edit.text().strip(),
-            self.too_good_spin.value(), model == "OSX-150",
-            self.warning_spin.value() if model == "OSX-150" else None,
-            self.fail_spin.value(),
-            mode,
+            model=model,
+            profile_name=existing_profile.profile_name,
+            revision=existing_profile.revision,
+            too_good_below_db=self.too_good_spin.value(),
+            warning_enabled=model == "OSX-150",
+            warning_above_db=(
+                self.warning_spin.value() if model == "OSX-150" else None
+            ),
+            fail_above_db=self.fail_spin.value(),
+            wavelength_mode=mode,
+            minimum_replacement_improvement_db=(
+                self.minimum_improvement_spin.value()
+                if model == "OSX-150"
+                else existing_profile.minimum_replacement_improvement_db
+            ),
         ).validate()
 
     def _save_selected(self):
         try:
             self.profiles[self._selected_key()] = self._profile_from_form()
-            self.repository.save_profiles(self.profiles)
+            self.extra_channel_routing_method = ExtraChannelRoutingMethod.parse(
+                self.extra_routing_combo.currentData()
+            )
+            self.repository.save_profiles(
+                self.profiles,
+                self.extra_channel_routing_method,
+            )
         except (OSError, ValueError, TypeError) as error:
             QMessageBox.warning(self, "Could not save admin config", str(error))
             return
@@ -167,6 +223,9 @@ class AdminConfigDialog(QDialog):
     def _reload(self):
         try:
             self.profiles = self.repository.load_profiles()
+            self.extra_channel_routing_method = (
+                self.repository.load_extra_channel_routing_method()
+            )
         except (OSError, ValueError, TypeError) as error:
             QMessageBox.warning(self, "Could not reload admin config", str(error))
             return
@@ -174,6 +233,7 @@ class AdminConfigDialog(QDialog):
 
     def _restore_defaults(self):
         self.profiles = default_limit_profiles()
+        self.extra_channel_routing_method = ExtraChannelRoutingMethod.SCPI_MAPPED
         self._load_current_profile()
         self._dirty = True
 

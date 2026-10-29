@@ -2,16 +2,17 @@
 
 ## Purpose and scope
 
-Light Workbench 1.29.3 includes always-on, local engineering support logs. Their
+Light Workbench includes always-on, local engineering support logs. Their
 purpose is to help engineering reconstruct operator workflows, hardware
 communication, two-wavelength measurements, insertion-loss calculations,
 connection ownership, persistence, exports, and failures.
 
 Support logging is best-effort instrumentation. It does not control hardware,
 change measurement timing or calculations, commit readings, or replace the
-authoritative CSV/JSON run record. The files are local and editable; they are
-not a tamper-proof audit trail and do not satisfy the future immutable audit
-history described by FUN-048.
+authoritative SQL Server run record. The files are local and editable; they are
+not a tamper-proof audit trail and do not replace authoritative database
+history for accepted attempts, run voids, replacements, spares, or saved
+replacement analyses.
 
 ## Location, naming, and lifecycle
 
@@ -79,8 +80,11 @@ with exactly one `export.coc_attempt_completed` event containing:
   optimization confirmation, template selection, workbook export, or metadata
   persistence stage where the attempt ended.
 - `reason_code` and bounded validation evidence such as missing channels,
-  validation issue codes, failing channel/wavelength values, selected runs,
-  front-panel count, and template capacity.
+  validation issue codes, failing channel/wavelength values, all considered
+  and contributing run numbers, excluded-run reasons, front-panel count, and
+  template capacity. Successful or partially successful attempts also include
+  bounded per-channel provenance so support can see which run supplied each
+  COC measurement and confirm that the newest valid measurement won.
 
 Validation blocks and operator cancellations are separate from technical
 failures. If the workbook is created but provenance metadata cannot be saved,
@@ -104,12 +108,30 @@ Depending on the event, logs may contain:
 - Classified switch VISA failures, including the VISA status name and code,
   failed operation/command, error category, and whether physical
   disconnection is confirmed, suspected, or unknown.
-- Logical channel, reported physical port, raw optical power, reference power,
-  calculated insertion loss, and whether both wavelengths completed.
+- Requested and reported logical channel, documented effective physical port,
+  raw optical power, reference power, calculated insertion loss, and whether
+  both wavelengths completed. A `CLOSe?` response is never logged as a physical
+  mapping result.
 - Whether a reading was temporary, repeated, accepted, written, overwritten,
   diagnostic-only, or failed.
-- Run/unit save requests and results, atomic file replacement, measurement
-  counts, export results, and sanitized destinations.
+- Measurement commit lifecycle events, including commit start/success/failure,
+  provisional payload presentation, token-bound write acceptance, unknown or
+  cross-target write rejection, persistence-waiting, acknowledgement
+  mismatch/blocking, duplicate
+  click suppression, and final completion-coverage reconciliation with missing
+  channels when applicable.
+- Run/unit/database save requests and results, transaction or legacy atomic-file
+  outcomes, measurement counts, export results, and sanitized destinations.
+- Database configuration lifecycle events, including whether the per-user
+  `database.ini` was created or loaded, its sanitized path, endpoint metadata,
+  and validation failures. Credentials and complete connection strings are
+  never logged.
+- New hardware-pairing lifecycle events, including conflict detection,
+  confirmation shown/canceled/accepted, affected assignment IDs, stopped-run
+  counts, fresh identity-map creation, transaction completion, and rollback
+  failure. These events contain bounded IDs, serials, counts, and outcomes;
+  they do not contain credentials, complete channel-map JSON, or measurement
+  records.
 - Warning bypasses such as continuing without metadata or with both references
   at zero.
 - Post-run replacement-analysis offers record whether the operator accepted or
@@ -117,6 +139,11 @@ Depending on the event, logs may contain:
   from the post-run offer, its summary counts, each advisory recommendation,
   and each designated-spare recommendation. These events do not make the
   recommendation authoritative and do not replace the unit replacement audit.
+- Replacement save planning records assignment/run context, bounded requested
+  mappings, request/spare counts, and validation failures such as stale
+  mappings, no-op replacements, duplicate logical channels, or duplicate
+  candidate ports. Failed plans explicitly record that no routing changes were
+  committed.
 
 The OP815 trace uses independent subscribers. The global logger remains
 subscribed while Power Diagnostics temporarily records the same events in
@@ -187,15 +214,26 @@ change the validation or persistence decision.
 
 ## Relationship to other records
 
-- **Run CSV/JSON**: authoritative accepted production results; changed only by
-  existing run persistence.
+- **SQL Server run records**: authoritative accepted results for new
+  database-backed runs of every purpose.
+- **Legacy run CSV/JSON**: view-only compatibility records or explicit outputs;
+  opening one does not upload it or make it a writable database run.
 - **Diagnostic export**: explicit Power Diagnostics history and optional
   session trace selected by the operator.
 - **Support logs**: always-on, local engineering evidence that includes
   temporary measurements and workflow/hardware context.
-- **Future audit history**: a controlled, immutable, attributable record that
-  has not yet been implemented.
+- **Database audit history**: run voids, accepted attempts, replacements,
+  spares, and saved replacement analyses are authoritative database records;
+  support events only provide bounded troubleshooting correlation.
+
+Iterative replacement workflows emit bounded events for void requests/results,
+effective projection summaries, included/excluded source-run decisions,
+replacement verification, verification-run startup, completed analyses, saved
+analysis identity, confirmed extra-candidate commits, SCPI/front-panel count
+mismatches, rejected unconfirmed candidate ports, atomic routing-save outcomes,
+and freshness changes. Events contain IDs, counts, states, and concise reasons,
+not complete database records or raw measurement history.
 
 A future release may add controlled central collection, authentication,
-authorization, and database ingestion. Version 1.16.1 performs no upload and
-has no graphical log viewer.
+authorization, and database ingestion. The current application performs no
+support-log upload and has no graphical log viewer.

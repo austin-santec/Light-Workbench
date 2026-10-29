@@ -2,8 +2,9 @@
 
 Always-on engineering support JSONL is intentionally separate from production
 run persistence. It may contain temporary readings, hardware commands, and
-workflow context, but it does not modify CSV/JSON/unit/COC schemas and is not an
-authoritative result or immutable audit record. See `SUPPORT_LOGGING.md` for
+workflow context, but it does not modify SQL run records, legacy files, or COC
+outputs and is not an authoritative result or immutable audit record. See
+`SUPPORT_LOGGING.md` for
 the event schema, redaction, retention, and bundle policy.
 
 ## Unit and run ownership
@@ -15,9 +16,10 @@ represents one switch test of that unit.
 
 - Main board serial
 - Part number
-- Append-only replacement audit history and its current effective projection
-- Designated spare channels
-- Other information that should remain consistent when the switch changes
+- Main-board identity and product metadata
+- Historical assignments that connect a specific switch installation to the unit
+- Replacement and spare history scoped to each assignment
+- Other information that should remain consistent for the main board
 
 ### Run-level data
 
@@ -25,21 +27,28 @@ represents one switch test of that unit.
 - Switch serial
 - Operating band
 - Tested-by initials
+- Station number and run purpose
+- Wavelength mode and immutable hardware/limit snapshots
 - Start, stop, and accumulated switch-test timing
 - Accepted channel measurements
 - Run-specific metadata
 
 Reference values are measurement-session inputs and should not be treated as
-permanent unit data. Replacement analysis is derived and should be recalculated
-from the current readings rather than stored as authoritative history.
+permanent unit data. Replacement analysis is derived from assignment-scoped
+source data, but each database calculation is persisted as an immutable
+snapshot with normalized recommendations. A saved analysis is historical
+evidence, not routing authority; source changes make it stale and require a new
+calculation.
 
 ## Canonical data model
 
 New code should work with typed domain models first and serialize them second.
 The storage format should not determine how business logic represents data.
 
-The current CSV and JSON formats remain supported for compatibility. If a
-future schema changes, include a `schema_version` and provide a migration path.
+The current CSV and JSON formats remain supported for legacy compatibility.
+Opening them does not upload their contents or make them writable database
+runs. If a future file schema changes, include a
+`schema_version` and provide a migration path.
 Run JSON currently uses schema version 6; unit JSON uses schema version 3.
 Migration helpers reject newer versions instead of silently dropping fields.
 
@@ -56,8 +65,10 @@ continue to load as native SM 1310/1550 runs.
 
 ## Format responsibilities
 
-- JSON or a future repository/database: canonical structured application data.
-- CSV: human-readable measurement export and compatibility with existing tools.
+- SQL Server: canonical structured application data for new recorded hardware runs on
+  the database branch.
+- JSON/CSV: legacy viewing, explicit exports, and compatibility with existing
+  tools; they are not an automatic authoritative write path on this branch.
 - Clipboard raw-data copy: transient tab-separated text from accepted readings;
   it is not persisted and excludes metadata and pending readings.
 - Diagnostic history export: an explicit operator-selected CSV or JSON export
@@ -71,16 +82,20 @@ continue to load as native SM 1310/1550 runs.
   `-02`, and later suffixes when a same-second export already exists.
 - XLSX: COC/report output only; it is not the primary application database.
 - Replacement analysis: calculated presentation data.
-- Manually recorded replacements and spares: persistent device data. Replacement
-  history is append-only: each manual replacement records the current port,
-  replacement port, reason, operator, and UTC timestamp. A later replacement
-  creates a linked event rather than editing the earlier event, so a chain such
-  as `14 -> 41 -> 43` remains available for audit. COC and normal UI consumers
-  receive a derived effective projection (`14 -> 43`). Void/correction events
-  preserve the original record and do not query or command the switch.
+- Manually recorded replacements and spares: persistent assignment data. For
+  database runs, the logical channel, current effective port, assignment,
+  related run, identity context, and UTC timestamp are derived automatically.
+  The operator supplies or confirms the proposed port, reason, operator,
+  optional details, and that the physical reroute was completed externally.
+  Replacement history is append-only, so `logical 14: 14 -> 41 -> 43` remains
+  available for audit while COC and normal UI consumers receive the effective
+  `14 -> 43` projection. Corrections/reversals append another SQL row. Legacy
+  void events remain readable only for file-backed compatibility.
 
 Accepted reading history is stored separately from the latest-reading
-projection. Run JSON schema version 6 contains `measurement_attempts`, an
+projection. SQL Server stores every accepted attempt in `IL_MEASUREMENTS` and
+exposes the current projection through `vw_CurrentILMeasurements`. Legacy run
+JSON schema version 6 contains `measurement_attempts`, an
 append-only record for every accepted two-wavelength Write IL result. Each
 record has a stable attempt ID, run ID, logical channel, physical port, attempt
 number, both losses, UTC acceptance time, operator, write context, reference
@@ -95,8 +110,25 @@ readings are not accepted attempts. Legacy runs without this collection are
 loaded by synthesizing one `legacy_import` attempt per existing effective row;
 the legacy file is not rewritten until a later save changes the run.
 
-Numbered-run navigation keeps the loaded unit directory as its preferred
-repository context, even when that directory is nested under a descriptive
+For database-backed hardware runs, a displayed reading has an immutable
+provisional payload before it is written. The payload keeps the two loss
+values together with the operation ID, measurement UUID, logical channel,
+physical port, and database run ID. Write IL first asks the worker to accept
+that exact payload. A newer live acquisition does not invalidate a sample
+already presented for the current routed channel. The worker rejects unknown,
+cross-run, or cross-channel payloads without writing them, pauses live
+remeasurement for an accepted payload, and then asks the UI to persist it. The
+worker advances only after the database commit returns an acknowledgement
+containing the same identity plus the allocated attempt number. Commit
+failures leave the same payload and measurement UUID retryable; retrying does
+not create a second attempt or send another advance command. This two-phase
+handshake prevents a fast live-update cycle or repeated button clicks from
+saving one reading while advancing a different one. The UI also
+refreshes persisted coverage before setting a run to `complete`; missing
+planned channels leave the run open and are reported for retest.
+
+For legacy file review, numbered-run navigation keeps the loaded unit directory
+as its preferred repository context, even when that directory is nested under a descriptive
 folder or has been renamed. Before using it, the application validates the
 persisted unit identity against the setup fields: matching main-board serials
 are authoritative, part number is a fallback only when both serials are
@@ -119,29 +151,41 @@ The separate result status describes the accepted readings: `pass`,
 `pass_optimization_available`, `pass_review_recommended`,
 `fail_recoverable`, `fail_unrecoverable`, `composite_pass_available`,
 `supplemental_run`, `not_evaluated`, or `review_required`. A composite or
-supplemental status is shown only when the existing validated COC preparation
-rules find a compatible persisted run and a passing combination. This
-assessment never creates a COC, changes a measurement, or changes switch
-mapping data. It is recalculated when readings, replacements, criteria, or
-compatible runs change.
+supplemental value remains available for compatibility with older persisted
+data, but a current valid passing multi-run projection is displayed as
+`composite_pass_available`, including when the loaded run is partial. The
+status detail identifies the loaded run's supplemental role and contributing
+run numbers. The green composite status also indicates that COC creation is
+available, but it does not create a COC automatically. A composite status is
+shown only when the existing validated COC preparation rules find a compatible
+persisted run and a passing combination. This assessment uses the same
+latest-measurement projection as COC preparation. It
+never creates a COC, changes a measurement, or changes switch mapping data. It
+is recalculated when readings, replacements, criteria, or compatible runs
+change. A newer failing retest therefore supersedes an older passing reading
+in the displayed result.
 
-New run JSON files add a `run_status` object containing the completion state,
-reason, planned/completed counts, and terminal UTC timestamp. The same
-additive values are available in run metadata for a future database
-`completion_status` field. Older files remain loadable; when their original
-channel plan cannot be reconstructed, completion is reported as `unknown`
-rather than inferred from the current table filter.
+Legacy run JSON files use a `run_status` object containing the completion
+state, reason, planned/completed counts, and terminal UTC timestamp. Database
+runs persist the lifecycle vocabulary `in_progress`, `complete`, `stopped`, or
+`failed` in `IL_RUNS.completion_status`; the UI derives its richer display
+states from that lifecycle plus the saved channel plan and accepted coverage.
+Older files remain loadable; when their original channel plan cannot be
+reconstructed, completion is reported as `unknown` rather than inferred from
+the current table filter.
 
 ## Validated COC view
 
-A COC can use one persisted base run and one explicitly selected persisted
-replacement/retest run. This creates a temporary report view, not another run.
-The supplemental run replaces a complete configured wavelength pair for a
-logical channel; individual wavelengths are never mixed. Changed physical ports must agree with
-the unit's completed replacement records. Source measurements, references,
-replacement records, and hardware state remain unchanged.
+A COC can use any number of compatible persisted runs. This creates a
+temporary report view, not another run. For each logical channel, the newest
+valid complete wavelength pair wins; individual wavelengths are never mixed.
+Database recency is written UTC time, attempt number, then measurement ID.
+Legacy file records without timestamps use deterministic run/attempt order.
+Changed physical ports must agree with the unit's completed replacement
+records. Source measurements, references, replacement records, and hardware
+state remain unchanged.
 
-The three-digit channel field in the selected base run's supported OSX-100 or
+The three-digit channel field in the selected context run's supported OSX-100 or
 OSX-150 part number defines the confirmed front-panel count and required
 logical channels `1..N`. The operator does not enter this value manually.
 Every required channel must be present and valid, and each loss rounded to the
@@ -150,9 +194,22 @@ fail limit. OSX-100 uses 0.8000 dB; OSX-150 uses 2.5000 dB. Readings above the
 front-panel count may support replacement analysis but are excluded from the
 workbook.
 
-The base run metadata records the COC output path, front-panel count, selected
-source runs, and each supplemental logical-channel/physical-port override.
-This provenance does not change the base run's accepted measurement list.
+The context run metadata records the COC output path, front-panel count, all
+compatible runs considered, contributing runs, excluded-run reasons, and each
+effective logical-channel/physical-port source. This provenance does not
+change any source run's accepted measurement list.
+
+For database runs, compatibility is additionally scoped to one immutable
+unit/switch assignment. Voided (`analysis_status = excluded`) and superseded
+runs cannot contribute. Replacement analysis, status assessment, and COC
+preparation use the same newest whole-pair/current-map selection rules, so an
+older passing attempt cannot override a newer accepted failure. A replacement
+is considered verified only by a later accepted reading for the same logical
+channel on its recorded replacement physical port.
+
+Run voiding is non-destructive. `void_info_json` records UTC time, operator,
+and reason while all measurements, retests, replacements, and saved analyses
+remain queryable. The application offers no unvoid action.
 Each approved model/mode uses separate templates for capacities 1-45 and
 46-48; the exporter removes unused rows and updates merged ranges and print
 area on the copied workbook only. Output files use the local-time name format
@@ -170,7 +227,7 @@ window. The Reference panel is beside Hardware Controls below Current
 readings, while the application keeps a session-only reference bank with these
 important states:
 not referenced, calculating, valid calculated, valid manual admin, and
-invalidated. A production run requires a valid reference for the exact current
+invalidated. A recorded hardware run requires a valid reference for the exact current
 measurement context.
 
 The session bank can hold separate SM (1310/1550) and MM (850/1300)
@@ -194,8 +251,9 @@ explicit `Apply Manual Reference` action. The normal reference fields are
 read-only; diagnostic tools may use temporary values, and only an explicit
 diagnostic Apply action can authorize a calculated diagnostic snapshot.
 
-Every accepted measurement stores the snapshot used for its IL calculation in
-JSON. The CSV uses a run-local `Reference used` value such as `Ref 1` and
+Every database measurement stores the bounded reference snapshot used for its
+IL calculation in `reference_snapshot_json`. Legacy CSV uses a run-local
+`Reference used` value such as `Ref 1` and
 stores each complete immutable snapshot once in a reference catalog beside the
 metadata. A run can therefore use `Ref 1`, `Ref 2`, and later references
 without repeating the values, method, timestamp, or device identity on every
@@ -207,69 +265,140 @@ replace the active session reference.
 
 ## Persistence rules
 
-- Save only accepted/written readings.
-- Do not create empty run files for runs with no written measurements.
-- Write files atomically where possible.
+- New hardware runs are SQL Server-primary; do not create automatic local
+  CSV/JSON run files or use support logs as an outbox.
+- Save only accepted/written readings. A database reading is accepted only
+  after its complete two-wavelength transaction commits.
+- Legacy/explicit file output must be written atomically where possible and
+  must not become a second authoritative copy of a database run.
+- Do not create empty legacy run files for runs with no written measurements.
 - Validate serials and path components before using them in filenames.
 - Preserve older run layouts while loading them.
-- Keep legacy per-row reference CSVs readable while writing new runs with a
-  deduplicated run-level reference catalog.
-- Replacement records are unit-level documentation. The replacement workflow
-  does not use `CLOSe?`, change switch mappings, identify routed logical
-  channels, or verify a manually performed hardware change. General
-  `CLOSe?` behavior elsewhere remains a separate hardware concern.
+- Keep legacy per-row reference CSVs readable; explicit compatible file output
+  uses a deduplicated run-level reference catalog.
+- Avoid modifying the original COC template; create a copy for each export.
+- Preserve template graphics and unrelated cell content during COC export.
+- Keep clipboard exports read-only with respect to run and unit persistence.
+- Database replacement records are assignment-scoped documentation. Legacy
+  file-backed replacement records remain unit-level for compatibility. The
+  replacement editor does not use `CLOSe?`, change switch mappings, or verify a
+  manually performed hardware change. During measurement, `CLOSe?` confirms
+  only the requested logical route; the assignment map supplies the physical
+  port written with the reading.
+- A new main-board/switch pairing is confirmed once during Start Run. The
+  application assumes the required external module-map reset, creates a fresh
+  identity map, automatically stops unfinished runs on affected assignments,
+  and preserves all prior data under its original assignment. No mapping,
+  replacement, spare, extra-port, analysis, or COC state crosses the pairing.
+- Database replacement analyses are append-only snapshots tied to a context
+  run and its assignment-scoped source state. The JSON snapshot records every
+  accepted measurement considered across included runs, including superseded
+  attempts and replaced-channel rows, plus run states, replacements, spare
+  events, selected results, and a deterministic fingerprint. The scalar source
+  measurement ID is the maximum considered ID for compatibility and referential
+  integrity; it is not required to belong to the context run. Any source-state
+  change marks the latest snapshot stale and requires a new calculation.
+- A completed replacement may reference the recommendation that informed it
+  through `source_recommendation_id`. This records recommendation usage without
+  claiming that Light Workbench commanded or verified the physical reroute.
+  Optional operator details use `CHANNEL_REPLACEMENTS.notes`; no local routing
+  fallback is created if the database write fails.
 
 ## Rejected measurement evidence
 
 Calculated reference readings below **-40.0 dBm** are rejected before a
-production reference snapshot is authorized; exactly -40.0 dBm is not rejected
+recording reference snapshot is authorized; exactly -40.0 dBm is not rejected
 by this rule. Negative insertion loss is evaluated after rounding to the
 application's four-decimal display precision. Such samples remain temporary
 screen/support evidence only: they do not replace an accepted channel or alter
-CSV, JSON, COC, unit, comparison, or replacement-analysis data. The active
+SQL records, legacy files, COC output, comparison, or replacement-analysis
+data. The active
 reference is not automatically invalidated by one negative sample.
 
 Support logs may retain the raw evidence and a coalesced negative-reading
 episode, including its start, invalid-sample count, and cleared/ended outcome.
-- Avoid modifying the original COC template; create a copy for each export.
-- Preserve template graphics and unrelated cell content during COC export.
-- Keep clipboard exports read-only with respect to run and unit persistence.
 
-## Future multi-run analysis
+## Extra physical-port attempts
 
-If analysis grows to hundreds or thousands of runs, use a repository abstraction
-and consider a central database for indexing and aggregation. CSV should remain
-available as an export, but application-wide queries should not require scanning
-every CSV file manually.
+Extra-channel route attempts above the part-number-derived front-panel count
+are not database measurement records. Route attempts, unverified routes,
+temporary readings, retries, invalid/dark results, Stop Extra Testing, and the
+CLI-only No More Physical Ports action remain local support evidence. The
+program never updates authoritative switch capacity from one of these outcomes.
 
-The current reporting groundwork follows that boundary. `domain/reporting.py`
-defines typed, read-only summaries from accepted measurements, while
-`infrastructure/run_query.py` reads the unit's indexed CSV runs through the
-repository adapters. It is intentionally not connected to the UI yet; future
-operator reports can consume these summaries without knowing whether the
-underlying storage remains file-based or moves to a central database.
+An extra candidate enters `IL_MEASUREMENTS` only after a complete valid
+two-wavelength sample and explicit Write IL. It is stored with
+`measurement_role = extra_candidate`, `logical_channel = NULL`, and the tested
+positive `physical_port`. Normal and post-replacement readings use
+`measurement_role = logical_channel`; after a replacement, the customer-facing
+logical channel is retained while its new effective physical port is recorded.
+The normal atomic commit, append-only attempt history, reference snapshot, and
+operator identity rules are unchanged.
+Extra rows are available to replacement analysis but are excluded from
+front-panel completion and direct COC rows.
 
-The current proposal intentionally does not add SQLite. A future database
-repository should write directly to the approved central database while keeping
-CSV/JSON as the local record and recovery path. Database availability must not
-block hardware testing or local persistence.
+An explicitly selected `Extra channels only` run uses the same `IL_RUNS` and
+`IL_MEASUREMENTS` persistence path. Its `measurement_hardware_json` records
+`channel_mode: extra_channels_only`, the immutable front-panel boundary, and
+the selected extra routing method. It may contain only channels above that
+boundary; its completion status remains `in_progress`, `complete`, `stopped`,
+or `failed`, while the read-model result is `supplemental_run`. This avoids a
+fake missing-front-panel failure and keeps the readings available to later
+replacement analysis without treating the extra-only run itself as a direct
+COC source.
 
-`domain/reporting.py` provides this aggregation through
-`aggregate_run_summaries`. Timing averages exclude runs without recorded
-switch-test timing, while over-limit counts remain included. Repeatability
-measurements are intentionally not included because they are not persisted as
-accepted switch-test readings.
+The optional phase has a transient/support state of `not_offered`, `declined`,
+`in_progress`, `completed`, `stopped`, `failed`,
+`end_of_installed_ports_reported`, or `safety_ceiling_reached`. A phase failure
+does not delete or invalidate accepted front-panel data, and final required-run
+quality remains based on front-panel channels.
 
-`infrastructure/run_reports.py` combines the file query and domain reporting
-boundaries. It can aggregate one unit or all indexed `Unit-*` folders under a
-run root, which gives a future analysis screen one stable entry point without
-requiring it to know the CSV layout.
+`IL_RUNS.measurement_hardware_json` snapshots `extra_channel_routing.method`,
+the immutable front-panel count, and the last reported SCPI-configured channel
+count when known. SCPI count is diagnostic and never defines replacement
+capacity. Confirmed extras, their count, and the highest confirmed physical
+port are derived from committed measurements through `vw_ConfirmedExtraPorts`.
+Old runs without this object remain readable and use the safe historical
+default. The selected method is run provenance and is not replaced by a later
+administrator-setting change. Engineering support events additionally retain
+the method, requested/reported logical channel, documented or explicitly
+requested physical candidate, route outcome, and failure reason. No dedicated
+database column or schema migration is needed.
 
-The planned database extension is documented separately in
-`docs/DATABASE_ARCHITECTURE.md`. Its implementation milestones are in
-`docs/DATABASE_ROADMAP.md`. The database design preserves this file-backed
-model: CSV and JSON remain available, accepted/written measurements are the
-analytical inputs, and replacement recommendations remain derived data.
+## Current SQL Server persistence
+
+This branch uses SQL Server as the authoritative store for new run data.
+Existing CSV/JSON runs are legacy, development, or test data; no historical
+bulk-import milestone is planned. CSV and JSON remain explicit export,
+diagnostic, or compatibility formats, but database-backed application queries
+do not scan run folders.
+
+`Tools > Database Reports...` uses read-only database repository services for
+joined assignment/run history, measurements and retests, replacements, saved
+analysis status, and per-tab CSV export. SQL remains inside the infrastructure
+layer; UI code consumes typed report records.
+
+The approved design intentionally does not add SQLite, a shared database file,
+or a local synchronization outbox. SQL Server writes belong behind repository
+interfaces. Database-backed Start Run requires a
+successful database/schema preflight and an accepted Write IL operation is not
+complete until its atomic two-wavelength transaction commits. Red Light Test
+and Power Measurement Diagnostics may remain available without the run
+database because they do not create run records.
+
+The older `domain/reporting.py`, `infrastructure/run_query.py`, and
+`infrastructure/run_reports.py` modules remain file-compatibility/reporting
+utilities. They do not define the authoritative database-backed reporting
+path. Repeatability and Power Diagnostics samples remain outside accepted run
+measurements unless a future requirement explicitly changes that boundary.
+
+The implemented schema is documented in `docs/DATABASE_ARCHITECTURE.md`; its
+milestone history and remaining network rollout are in
+`docs/DATABASE_ROADMAP.md`. It stores new units,
+switches, assignments, runs, accepted attempts, replacement records, and spare
+events. Support logs and raw power remain local. Database-backed replacement
+analysis is stored as append-only snapshots with normalized recommendations;
+file-backed legacy runs retain session-local analysis behavior.
 
 ## Controlled quality criteria
 

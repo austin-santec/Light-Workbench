@@ -14,6 +14,7 @@ from config.app_config import (
     SUPPORT_LOG_QUEUE_CAPACITY,
     SUPPORT_LOG_RETENTION_DAYS,
     default_support_log_root,
+    default_database_config_path,
     fallback_support_log_root,
 )
 
@@ -31,5 +32,6 @@ __all__ = [
     "SUPPORT_LOG_QUEUE_CAPACITY",
     "SUPPORT_LOG_RETENTION_DAYS",
     "default_support_log_root",
+    "default_database_config_path",
     "fallback_support_log_root",
 ]

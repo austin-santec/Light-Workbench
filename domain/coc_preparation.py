@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import math
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from .limit_profiles import normalize_switch_model
+from .limit_profiles import (
+    DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB,
+    normalize_switch_model,
+)
 from .models import MeasurementRecord
 from .part_numbers import infer_front_panel_channel_count
 from .replacements import ReplacementReading, analyze_replacements
@@ -23,10 +27,14 @@ class CocSourceRun:
     """One persisted run that may contribute accepted readings to a COC."""
 
     run_number: int
-    source_path: Path
+    source_path: Path | None
     measurements: tuple[MeasurementRecord, ...]
     metadata: Mapping[str, str] = field(default_factory=dict)
     criteria: Mapping[str, object] | None = None
+    source_identifier: str = ""
+    run_purpose: str | None = None
+    run_id: int | None = None
+    assignment_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -35,10 +43,15 @@ class CocPreparedChannel:
 
     record: MeasurementRecord
     source_run_number: int
-    source_path: Path
+    source_path: Path | None
     physical_port: int
     physical_port_inferred: bool = False
     supplemental_override: bool = False
+    source_identifier: str = ""
+    source_run_id: int | None = None
+    measurement_id: int | None = None
+    attempt_number: int = 1
+    written_at_utc: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -74,8 +87,10 @@ class CocPreparationResult:
     optimization_recommendations: tuple[Mapping[str, object], ...]
     effective_criteria: Mapping[str, object]
     base_run_number: int
-    supplemental_run_number: int | None
     template_capacity: int
+    considered_run_numbers: tuple[int, ...] = ()
+    contributing_run_numbers: tuple[int, ...] = ()
+    excluded_runs: tuple[Mapping[str, object], ...] = ()
 
     @property
     def eligible(self) -> bool:
@@ -96,23 +111,46 @@ class CocPreparationResult:
             channel for channel in self.channels if channel.supplemental_override
         )
 
+    @property
+    def source_run_numbers(self) -> tuple[int, ...]:
+        """Return runs that supplied the effective front-panel readings."""
+        return self.contributing_run_numbers
+
+    @property
+    def supplemental_run_number(self) -> int | None:
+        """Compatibility view for older callers that expected one supplement."""
+        others = [
+            number
+            for number in self.contributing_run_numbers
+            if number != self.base_run_number
+        ]
+        return others[-1] if len(others) == 1 else None
+
 
 def prepare_coc(
     base_run: CocSourceRun,
     front_panel_channel_count: int,
     *,
-    supplemental_run: CocSourceRun | None = None,
+    supplemental_run: CocSourceRun | Sequence[CocSourceRun] | None = None,
+    compatible_runs: Sequence[CocSourceRun] = (),
+    source_runs: Sequence[CocSourceRun] = (),
     completed_replacements: Sequence[Mapping[str, object]] = (),
     designated_spares: Sequence[int] = (),
 ) -> CocPreparationResult:
-    """Merge explicitly selected runs and validate a production COC dataset."""
+    """Prepare a COC and advisory recovery options from compatible run history."""
     count = int(front_panel_channel_count)
     if not 1 <= count <= COC_MAX_CHANNELS:
         raise ValueError("Front-panel channel count must be between 1 and 48.")
-    if supplemental_run is not None and supplemental_run.run_number == base_run.run_number:
-        raise ValueError("Base and replacement/retest runs must be different.")
-
-    validation_issues = list(_compatibility_issues(base_run, supplemental_run))
+    candidates = list(source_runs or compatible_runs)
+    legacy_explicit_supplement = isinstance(supplemental_run, CocSourceRun)
+    if not candidates and supplemental_run is not None:
+        candidates = (
+            [supplemental_run]
+            if isinstance(supplemental_run, CocSourceRun)
+            else list(supplemental_run)
+        )
+    all_sources = _unique_sources(base_run, candidates)
+    validation_issues = list(_compatibility_issues(base_run, None))
     if any(
         issue.code in {
             "unsupported_wavelength_mode",
@@ -133,18 +171,33 @@ def prepare_coc(
             optimization_recommendations=(),
             effective_criteria=dict(base_run.criteria or {}),
             base_run_number=base_run.run_number,
-            supplemental_run_number=(
-                supplemental_run.run_number if supplemental_run is not None else None
-            ),
             template_capacity=45 if count <= 45 else 48,
+            considered_run_numbers=(base_run.run_number,),
         )
+    accepted_sources = [base_run]
+    excluded_runs = []
+    for candidate in all_sources:
+        if candidate is base_run:
+            continue
+        issues = _compatibility_issues(base_run, candidate)
+        if issues:
+            if legacy_explicit_supplement:
+                validation_issues.extend(issues)
+                accepted_sources.append(candidate)
+                continue
+            excluded_runs.append(
+                {
+                    "run_number": candidate.run_number,
+                    "source_identifier": candidate.source_identifier,
+                    "codes": tuple(issue.code for issue in issues),
+                    "reasons": tuple(issue.message for issue in issues),
+                }
+            )
+            continue
+        accepted_sources.append(candidate)
+
     replacements = _replacement_map(completed_replacements)
-    base_records = _index_last(base_run.measurements)
-    supplemental_records = (
-        _index_last(supplemental_run.measurements)
-        if supplemental_run is not None
-        else {}
-    )
+    selected_records = _select_latest_records(accepted_sources)
 
     prepared = []
     missing = []
@@ -153,69 +206,42 @@ def prepare_coc(
     assigned_ports: dict[int, int] = {}
 
     for logical_channel in range(1, count + 1):
-        base_record = base_records.get(logical_channel)
-        supplemental_record = supplemental_records.get(logical_channel)
-        selected = supplemental_record or base_record
+        selected_entry = selected_records.get(logical_channel)
+        selected = selected_entry[1] if selected_entry is not None else None
         if selected is None:
             missing.append(logical_channel)
             continue
 
-        source = supplemental_run if supplemental_record is not None else base_run
+        source = selected_entry[0]
         assert source is not None
         inferred = selected.physical_port is None
         physical_port = (
             logical_channel if selected.physical_port is None else int(selected.physical_port)
         )
-        is_override = supplemental_record is not None
-
-        if is_override and base_record is not None:
-            base_inferred = base_record.physical_port is None
-            base_port = (
-                logical_channel
-                if base_record.physical_port is None
-                else int(base_record.physical_port)
+        is_override = source.run_number != base_run.run_number
+        expected_port = _effective_port(logical_channel, replacements)
+        if inferred and expected_port != logical_channel:
+            validation_issues.append(
+                CocValidationIssue(
+                    "stale_or_unverifiable_physical_port",
+                    "Channel %d from Run %d has no persisted physical port, but "
+                    "the current recorded mapping expects physical port %d."
+                    % (logical_channel, source.run_number, expected_port),
+                )
             )
-            expected_replacement = replacements.get(base_port)
-            if inferred and expected_replacement is not None:
-                validation_issues.append(
-                    CocValidationIssue(
-                        "unverifiable_replacement_port",
-                        "Channel %d in Run %d has no persisted physical port; "
-                        "the recorded replacement from port %d to port %d cannot be verified."
-                        % (
-                            logical_channel,
-                            supplemental_run.run_number,
-                            base_port,
-                            expected_replacement,
-                        ),
-                    )
+        elif physical_port != expected_port:
+            validation_issues.append(
+                CocValidationIssue(
+                    (
+                        "unrecorded_physical_port_change"
+                        if expected_port == logical_channel
+                        else "stale_physical_port_mapping"
+                    ),
+                    "Channel %d from Run %d uses physical port %d, but the current "
+                    "recorded mapping expects physical port %d."
+                    % (logical_channel, source.run_number, physical_port, expected_port),
                 )
-            elif physical_port != base_port and physical_port != expected_replacement:
-                validation_issues.append(
-                    CocValidationIssue(
-                        "unrecorded_physical_port_change",
-                        "Channel %d changes from physical port %d in Run %d to "
-                        "physical port %d in Run %d without a matching completed replacement."
-                        % (
-                            logical_channel,
-                            base_port,
-                            base_run.run_number,
-                            physical_port,
-                            supplemental_run.run_number,
-                        ),
-                    )
-                )
-            elif base_inferred and physical_port != base_port:
-                # A legacy base may safely infer its original logical port only
-                # when the explicit supplemental route matches a recorded swap.
-                if expected_replacement != physical_port:
-                    validation_issues.append(
-                        CocValidationIssue(
-                            "unverifiable_base_physical_port",
-                            "Channel %d has no persisted base physical port, so its "
-                            "replacement route cannot be verified." % logical_channel,
-                        )
-                    )
+            )
 
         if physical_port < 1:
             validation_issues.append(
@@ -243,6 +269,11 @@ def prepare_coc(
             physical_port=physical_port,
             physical_port_inferred=inferred,
             supplemental_override=is_override,
+            source_identifier=source.source_identifier,
+            source_run_id=source.run_id,
+            measurement_id=selected.measurement_id,
+            attempt_number=selected.attempt_number,
+            written_at_utc=selected.written_at_utc,
         )
         prepared.append(prepared_channel)
         invalid.extend(_invalid_reading_issues(prepared_channel))
@@ -261,19 +292,16 @@ def prepare_coc(
         if _is_optimization_reading(channel.record, warning_limit, fail_limit)
     )
     recommendations = ()
-    if (
-        warning_limit is not None
-        and not missing
-        and not invalid
-        and not failures
-        and not validation_issues
-    ):
+    if not missing and not invalid and not validation_issues:
         recommendations = _optimization_recommendations(
             prepared,
-            base_run,
-            supplemental_run,
+            accepted_sources,
             count,
             designated_spares,
+            warning_limit=(warning_limit if warning_limit is not None else fail_limit),
+            fail_limit=fail_limit,
+            minimum_improvement=_effective_minimum_replacement_improvement(base_run),
+            model=_run_model(base_run),
         )
 
     return CocPreparationResult(
@@ -287,10 +315,14 @@ def prepare_coc(
         optimization_recommendations=tuple(recommendations),
         effective_criteria=dict(base_run.criteria or {}),
         base_run_number=base_run.run_number,
-        supplemental_run_number=(
-            supplemental_run.run_number if supplemental_run is not None else None
-        ),
         template_capacity=45 if count <= 45 else 48,
+        considered_run_numbers=tuple(
+            source.run_number for source in accepted_sources
+        ),
+        contributing_run_numbers=tuple(
+            sorted({channel.source_run_number for channel in prepared})
+        ),
+        excluded_runs=tuple(excluded_runs),
     )
 
 
@@ -298,6 +330,76 @@ def _index_last(
     measurements: Sequence[MeasurementRecord],
 ) -> dict[int, MeasurementRecord]:
     return {int(record.channel): record for record in measurements}
+
+
+def _unique_sources(
+    base_run: CocSourceRun,
+    candidates: Sequence[CocSourceRun],
+) -> tuple[CocSourceRun, ...]:
+    result = []
+    seen = set()
+    for source in (base_run, *candidates):
+        if not isinstance(source, CocSourceRun):
+            continue
+        key = source.source_identifier or ("run", source.run_id, source.run_number)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(source)
+    return tuple(result)
+
+
+def _measurement_timestamp(value) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        timestamp = value
+    else:
+        try:
+            timestamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        return None
+    return timestamp.astimezone(timezone.utc)
+
+
+def _measurement_sort_key(source, record, index):
+    timestamp = _measurement_timestamp(getattr(record, "written_at_utc", None))
+    measurement_id = getattr(record, "measurement_id", None)
+    try:
+        measurement_id = int(measurement_id) if measurement_id is not None else -1
+    except (TypeError, ValueError):
+        measurement_id = -1
+    try:
+        attempt = int(getattr(record, "attempt_number", 1) or 1)
+    except (TypeError, ValueError):
+        attempt = 1
+    # A timestamp is authoritative when present. Legacy file records use a
+    # deterministic run/attempt/order fallback rather than favorable loss.
+    return (
+        1 if timestamp is not None else 0,
+        timestamp or datetime.min.replace(tzinfo=timezone.utc),
+        source.run_number if timestamp is None else 0,
+        attempt,
+        measurement_id,
+        index,
+    )
+
+
+def _select_latest_records(sources):
+    selected = {}
+    for source in sources:
+        for index, record in enumerate(source.measurements):
+            channel = int(record.channel)
+            candidate = (_measurement_sort_key(source, record, index), source, record)
+            prior = selected.get(channel)
+            if prior is None or candidate[0] > prior[0]:
+                selected[channel] = candidate
+    return {
+        channel: (value[1], value[2])
+        for channel, value in selected.items()
+    }
 
 
 def _normalized_metadata(run: CocSourceRun, key: str) -> str:
@@ -332,10 +434,22 @@ def _effective_warning_limit(source_run: CocSourceRun) -> float | None:
     return None if value in (None, "") else float(value)
 
 
+def _effective_minimum_replacement_improvement(source_run: CocSourceRun) -> float:
+    criteria = dict(source_run.criteria or {})
+    value = criteria.get("minimum_replacement_improvement_db")
+    if value in (None, ""):
+        return DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB
+    return float(value)
+
+
 def _compatibility_issues(
     base_run: CocSourceRun,
     supplemental_run: CocSourceRun | None,
 ) -> tuple[CocValidationIssue, ...]:
+    # Run purpose is retained as provenance and reporting metadata, but it is
+    # not a technical COC eligibility criterion.  Production-analysis scope
+    # remains enforced by the reporting layer; this validator only evaluates
+    # whether the selected measurements can form a valid COC.
     issues = []
     base_signatures = _measurement_signatures(base_run)
     base_mode = _run_mode(base_run)
@@ -385,6 +499,17 @@ def _compatibility_issues(
         )
     if supplemental_run is None:
         return tuple(issues)
+    if (
+        base_run.assignment_id is not None
+        and supplemental_run.assignment_id is not None
+        and base_run.assignment_id != supplemental_run.assignment_id
+    ):
+        issues.append(
+            CocValidationIssue(
+                "incompatible_assignment",
+                "The runs belong to different active unit/switch assignments.",
+            )
+        )
     supplemental_mode = _run_mode(supplemental_run)
     supplemental_model = _run_model(supplemental_run)
     if (supplemental_model, supplemental_mode) not in {
@@ -441,6 +566,7 @@ def _compatibility_issues(
         ("Part number", "Part Number", False),
         ("Switch serial", "Switch serial", True),
         ("Operating band", "Operating band", True),
+        ("Front panel channel count", "Front-panel channel count", False),
     ):
         base_value = _normalized_metadata(base_run, key)
         supplemental_value = _normalized_metadata(supplemental_run, key)
@@ -528,6 +654,16 @@ def _replacement_map(
     return result
 
 
+def _effective_port(logical_channel: int, replacements: Mapping[int, int]) -> int:
+    """Follow the append-only replacement chain for one logical channel."""
+    current = int(logical_channel)
+    visited = set()
+    while current in replacements and current not in visited:
+        visited.add(current)
+        current = int(replacements[current])
+    return current
+
+
 def _rounded_loss(value: float) -> float:
     return float("%.4f" % float(value))
 
@@ -598,16 +734,19 @@ def _is_optimization_reading(
 
 def _optimization_recommendations(
     prepared: Sequence[CocPreparedChannel],
-    base_run: CocSourceRun,
-    supplemental_run: CocSourceRun | None,
+    source_runs: Sequence[CocSourceRun],
     channel_count: int,
     designated_spares: Sequence[int],
+    *,
+    warning_limit: float,
+    fail_limit: float,
+    minimum_improvement: float,
+    model: str,
 ) -> tuple[Mapping[str, object], ...]:
     assigned_ports = {channel.physical_port for channel in prepared}
     readings_by_port: dict[int, ReplacementReading] = {}
-    for source in (base_run, supplemental_run):
-        if source is None:
-            continue
+    latest_by_port = {}
+    for source in source_runs:
         for record in source.measurements:
             port = record.physical_port
             if port is None:
@@ -619,12 +758,17 @@ def _optimization_recommendations(
                 math.isfinite(float(value)) for value in record.ordered_losses
             ):
                 continue
-            losses = record.ordered_losses
-            readings_by_port[port] = ReplacementReading(
-                port,
-                float(losses[0]),
-                float(losses[1]),
-            )
+            key = _measurement_sort_key(source, record, 0)
+            prior = latest_by_port.get(port)
+            if prior is None or key > prior[0]:
+                latest_by_port[port] = (key, record)
+    for port, (_key, record) in latest_by_port.items():
+        losses = record.ordered_losses
+        readings_by_port[port] = ReplacementReading(
+            port,
+            float(losses[0]),
+            float(losses[1]),
+        )
 
     # Designated-spare membership is useful only when that port has a measured
     # reading; unmeasured spares cannot support an optimization recommendation.
@@ -654,9 +798,15 @@ def _optimization_recommendations(
         production,
         extras,
         channel_count,
-        COC_OPTIMIZATION_LIMIT_DB,
-        fail_limit=COC_FORMAL_LIMIT_DB,
-        model="OSX-150",
+        warning_limit,
+        minimum_improvement=minimum_improvement,
+        fail_limit=fail_limit,
+        model=model,
+        wavelengths=(
+            prepared[0].record.opm_wavelengths_nm
+            if prepared
+            else (1310, 1550)
+        ),
     )
     return tuple(result.get("recommendations", ()))
 

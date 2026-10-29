@@ -73,14 +73,14 @@ class RunPreflightResult:
         return not self.blocking_issues
 
 
-def _metadata_issue(code, label, field_id):
+def _metadata_issue(code, label, field_id, *, admin_metadata_bypassable=True):
     return RunPreflightIssue(
         code=code,
         category=RunPreflightIssueCategory.METADATA,
         label=label,
         message="Enter %s." % label.lower(),
         field_id=field_id,
-        admin_metadata_bypassable=True,
+        admin_metadata_bypassable=admin_metadata_bypassable,
     )
 
 
@@ -159,6 +159,7 @@ def validate_run_preflight(
     reference_method: str = "",
     reference_hardware_matches: bool = True,
     wavelengths: tuple[int, int] = (1310, 1550),
+    require_station_number: bool = False,
 ) -> RunPreflightResult:
     """Validate every non-side-effecting condition for a production start."""
     issues = []
@@ -209,6 +210,21 @@ def validate_run_preflight(
     for code, label, field_id in field_values:
         if not str(metadata.get(label) or "").strip():
             issues.append(_metadata_issue(code, label, field_id))
+
+    if require_station_number:
+        try:
+            station_number = int(metadata.get("Station number"))
+        except (TypeError, ValueError):
+            station_number = 0
+        if station_number <= 0:
+            issues.append(
+                _metadata_issue(
+                    "missing_station_number",
+                    "Station number",
+                    "station_number",
+                    admin_metadata_bypassable=False,
+                )
+            )
 
     if str(metadata.get("Operating band") or "").strip() not in {
         "O band",

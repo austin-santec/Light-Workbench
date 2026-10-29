@@ -2,9 +2,10 @@
 
 ## Purpose
 
-This document records the functions documented in
-`C:\Users\Austin\Documents\OPL-SDK\OP831MDLL.html`, the functions exported by
-the installed `OP815M.dll`, and the rules for using them in Light Workbench.
+This document records the functions documented in the locally installed OPL SDK
+`OP831MDLL.html`, the functions exported by the tested `OP815M.dll`, and the
+rules for using them in Light Workbench. The SDK location is workstation-
+specific and is not an application runtime dependency.
 It is intentionally explicit about commands that must not be added to normal
 production measurements.
 

@@ -4,6 +4,8 @@ from unittest.mock import patch
 from pyvisa.errors import VisaIOError
 
 from domain.models import ConnectionState, DeviceCategory
+from domain.extra_ports import PhysicalPortRouteResult, PhysicalPortRouteStatus
+from hardware.interfaces import LogicalChannelRouteResult
 from hardware.optical_switch import (
     OSX150 as HardwareOSX150,
     SANTEC_OSX100_USB_PRODUCT_ID,
@@ -153,7 +155,9 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         self.assertEqual(switch.write_termination, "\n")
         self.assertEqual(switch.get_ip_address(), "192.0.2.15")
         with patch("hardware.optical_switch.time.sleep"):
-            self.assertEqual(switch.set_channel(2), 2)
+            self.assertEqual(
+                switch.set_channel(2), LogicalChannelRouteResult(2, 2)
+            )
         names = [item["event"] for item in trace_events]
         self.assertIn("switch_identity_probe", names)
         self.assertIn("switch_configuration_validated", names)
@@ -181,6 +185,61 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
                 switch.instrument = Instrument(response)
                 with self.assertRaises(SwitchIpAddressError):
                     switch.get_ip_address()
+
+    def test_direct_physical_route_uses_ip_query_and_separate_cli_capability(self):
+        class Instrument:
+            def query(self, command):
+                if command == ":SYSTem:COMMunicate:LAN:ADDRess?":
+                    return '"192.0.2.15"'
+                raise AssertionError(command)
+
+        class CliRouter:
+            def __init__(self):
+                self.calls = []
+
+            def route(self, address, physical_port, maximum_port):
+                self.calls.append((address, physical_port, maximum_port))
+                return PhysicalPortRouteResult(
+                    physical_port,
+                    PhysicalPortRouteStatus.ACKNOWLEDGED,
+                    response="OK",
+                    network_address=address,
+                )
+
+        router = CliRouter()
+        switch = HardwareOSX150(cli_router=router)
+        switch.model = "OSX-150"
+        switch.profile = SantecSwitchProfile(model="OSX-150")
+        switch.instrument = Instrument()
+
+        with patch("hardware.optical_switch.time.sleep"):
+            result = switch.set_physical_port(49, 64)
+
+        self.assertEqual(router.calls, [("192.0.2.15", 49, 64)])
+        self.assertEqual(result.status, PhysicalPortRouteStatus.ACKNOWLEDGED)
+
+    def test_logical_route_mismatch_blocks_measurement_contract(self):
+        class Instrument:
+            def write(self, command):
+                self.command = command
+
+            def query(self, command):
+                self.query_command = command
+                return "7"
+
+        switch = HardwareOSX150()
+        switch.model = "OSX-150"
+        switch.profile = SantecSwitchProfile(model="OSX-150")
+        switch.instrument = Instrument()
+
+        with patch("hardware.optical_switch.time.sleep"):
+            with self.assertRaisesRegex(
+                RuntimeError, "reported logical channel 7"
+            ):
+                switch.set_channel(3)
+
+        self.assertEqual(switch.instrument.command, "CLOSe 3")
+        self.assertEqual(switch.instrument.query_command, "CLOSe?")
 
     def test_ip_query_reports_scpi_rejection_without_treating_it_as_visa_loss(self):
         class Instrument:
@@ -245,7 +304,9 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         self.assertEqual(switch.write_termination, "\r\n")
         self.assertIn("SCPI write ending: CRLF", switch.get_device_info().transport_details)
         with patch("hardware.optical_switch.time.sleep"):
-            self.assertEqual(switch.set_channel(3), 3)
+            self.assertEqual(
+                switch.set_channel(3), LogicalChannelRouteResult(3, 3)
+            )
         self.assertIn(("CLOSe 3", "\r\n"), manager.sessions[1].commands)
         switch.close()
         self.assertTrue(manager.sessions[1].closed)
@@ -471,7 +532,9 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         self.assertEqual(info.configured_channel_count, 100)
         self.assertEqual(info.model_detection_method, "explicit_model")
         with patch("hardware.optical_switch.time.sleep"):
-            self.assertEqual(switch.set_channel(3), 3)
+            self.assertEqual(
+                switch.set_channel(3), LogicalChannelRouteResult(3, 3)
+            )
         self.assertEqual(switch.instrument.last_write, "CLOSe 3")
         switch.close()
 

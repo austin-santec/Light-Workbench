@@ -2,545 +2,830 @@
 
 ## Status and purpose
 
-Status: approved design proposal; implementation is not yet started.
+Status: implemented through assignment-scoped iterative replacement analysis,
+permanent run voiding, persistent analysis history, and read-only database
+reporting. The current schema includes forward-only migrations through
+`0006_authoritative_channel_roles.sql`.
 
-This document defines how Light Workbench can retain its current CSV/JSON
-workflow while optionally submitting accepted switch-test data to a central
-database for multi-run and multi-computer analysis.
+Migration `0006` reclassifies only legacy measurements that are unambiguously
+extra candidates: both their stored logical channel and physical port exceed
+the run's front-panel channel count. Ambiguous development/test rows remain
+logical-channel measurements rather than having a role fabricated during
+migration.
+Database-neutral repositories and the unit, assignment, run-lifecycle,
+atomic-measurement, current/history query, and assignment-scoped routing
+boundaries are connected to the production hardware workflow.
 
-The design is intentionally incremental. The desktop application must remain
-usable with no database, no network connection, and no change to the existing
-operator workflow while database capabilities are introduced.
+This document defines the implemented SQL Server schema and persistence
+boundaries for the database-primary Light Workbench branch. The database was
+introduced as a clean start and stores newly created runs only. Existing CSV
+and JSON runs are mostly development/test or legacy data and are not scheduled
+for bulk import.
+
+On this database branch, SQL Server is authoritative for new run data. Existing
+CSV/JSON files remain viewable as legacy data and are not uploaded.
+Always-on engineering support logs remain local.
+
+## Approved deployment direction
+
+- Database engine: Microsoft SQL Server.
+- Development instance: `localhost\SQLExpress`.
+- Development database: `LWBTestDB`.
+- Authentication: Windows Authentication.
+- Production direction: the same versioned schema on a managed network SQL
+  Server using Windows/domain groups and encrypted connections.
+- No SQLite database, shared database file, local synchronization database, or
+  historical bulk-import milestone is planned.
+
+Database connection details belong in configuration and must not be embedded
+in source code or the executable. Because the supported Light Workbench
+runtime is 32-bit Python, the selected SQL Server ODBC driver and Python
+database adapter must support that runtime.
+
+Runtime endpoint settings are kept in the per-user non-secret file
+`%LOCALAPPDATA%\LightWorkbench\config\database.ini`. On first database
+initialization, Light Workbench creates this file with the local development
+defaults if it is missing. Creation is create-only; an existing file is never
+replaced by startup, an upgrade, or a rebuild. A malformed or invalid existing
+file blocks database use and reports the path and validation problem rather
+than silently falling back to hidden defaults. A tracked, credential-free
+example is available at `config/database.ini.example`.
+
+Light Workbench uses the signed-in Windows identity and does not store SQL
+usernames or passwords. The configuration includes bounded connection and command timeouts. Connections
+and cursors are short-lived and closed deterministically; write operations use
+explicit commit/rollback transaction scopes.
+
+The application performs a read-only schema preflight before database-backed
+workflows. It reports unavailable servers, authentication failures, missing
+databases, timeouts, insufficient permissions, and incompatible migration
+history as distinct categories. The preflight never applies migrations.
+Technical details recorded in local support logs exclude credentials and full
+connection strings.
+
+Application workflows depend on protocols in
+`application/database_repositories.py`. Typed request and result records live
+in `domain/database_records.py`. The in-memory contract implementation and the
+SQL Server implementation live under `infrastructure/database/`; SQL text and
+driver-specific rows do not cross that boundary. Both implementations follow
+the same idempotency and current/history semantics before UI integration.
+
+The migration tool uses `pyodbc`, Windows Authentication, and an explicitly
+provided server/database target. Local integration testing uses
+`LWBTestDB_Integration`; migrations must never be tested against development or
+production data.
+
+The guarded reset and backup/restore verification tools accept only
+`LWBTestDB_Integration`. Backup verification restores to
+`LWBTestDB_RestoreVerification`, runs `DBCC CHECKDB`, validates migration and
+schema counts, and removes the temporary database and backup unless retention
+is explicitly requested.
 
 ## Design goals
 
-- Preserve the current local CSV and JSON files.
-- Store only accepted/written switch-test measurements as analytical data.
-- Keep live readings, temporary readings, and overwritten retests out of the
-  analytical data set.
-- Support engineering and test runs that must remain local only.
-- Support invalid or skewed runs without deleting historical evidence.
-- Allow multiple computers to contribute data safely.
-- Keep local hardware testing independent of temporary database availability.
-- Support future OPM, separate laser, and alternate switch implementations.
-- Provide a stable foundation for a future reporting GUI.
-- Keep file formats and compatibility facades working during migration.
+- Store newly accepted switch-test data in one authoritative SQL Server
+  schema.
+- Preserve the unit, installed switch, run, accepted measurement, retest,
+  replacement, and designated-spare relationships.
+- Keep the two insertion-loss values in ordinary relational columns for
+  efficient reporting.
+- Use JSON only for bounded historical context that is not queried heavily:
+  hardware identity, limit criteria, references, and baseline channel maps.
+- Preserve every accepted retest attempt while exposing a simple current-value
+  view.
+- Keep production, engineering, training, and calibration runs distinguishable
+  so production-only reporting remains intentional without conflating purpose
+  with technical validity or run voiding.
+- Keep UI, hardware communication, domain rules, and SQL access separated by
+  repository boundaries.
+- Keep local support logs outside the analytical database.
 
 ## Non-goals
 
-The first database implementation should not:
+The database-primary design does not:
 
-- Replace CSV or JSON files.
-- Store every transient meter reading.
-- Change hardware timing or measurement behavior.
-- Make a hardware run wait for a network response.
-- Add SQLite as a runtime or synchronization dependency.
-- Make replacement recommendations permanent authoritative data.
-- Turn the existing COC workbook into a database format.
+- Import existing `ILM-Reads` folders in bulk.
+- Store temporary, live, invalid, or unwritten meter samples.
+- Store raw measured power in the analytical database.
+- Store COC workbooks, diagnostic exports, or support-log JSONL records.
+- Add an offline synchronization queue or local SQLite outbox.
+- Infer or command switch replacement mappings.
+- Store a mutable run pass/fail flag as measurement truth. Run/result displays
+  are derived from accepted measurements and immutable snapshots; saved
+  replacement-analysis classifications remain historical snapshots.
 
-## Recommended deployment model
+## Ownership model
 
 ```text
-Light Workbench
-    |
-    | Always writes local run files
-    v
-CSV + JSON files
-    |
-    | Direct authenticated database repository
-    |
-    v
-Central PostgreSQL or SQL Server database
-    |
-    v
-Reporting and analysis tools
+UNITS
+  |
+  | one unit may receive different switches over time
+  v
+UNIT_SWITCH_ASSIGNMENTS <----- SWITCHES
+  |
+  +---- IL_RUNS
+  |       |
+  |       +---- IL_MEASUREMENTS
+  |       +---- REPLACEMENT_ANALYSES
+  |               |
+  |               +---- REPLACEMENT_ANALYSIS_RECOMMENDATIONS
+  |
+  +---- CHANNEL_REPLACEMENTS
+  |
+  +---- DESIGNATED_SPARES
 ```
 
-The local files remain the durable workstation record and recovery path. The
-central database is the shared analytical store. There is no local SQLite
-database and no shared SQLite file.
-
-The desktop application should access the central database through an
-application-owned database repository. Database connection details and
-credentials must be supplied through managed configuration, Windows
-authentication, or another approved secret-management mechanism.
-
-The repository boundary keeps SQL and database-specific behavior out of the
-UI, hardware controllers, and domain rules. If security or IT requirements
-later call for an API, the repository can be replaced with an API client
-without changing those layers.
-
-## Why direct central database access?
-
-This design removes a second local persistence system and avoids a shared
-SQLite file entirely. All submitted workstations write to the same central
-database schema, so reporting does not need to merge multiple local indexes.
-
-Direct access is acceptable only when the database is reachable through an
-approved protected network and the database server can safely support the
-expected number of connections. The application must still:
-
-- Use connection pooling or bounded connections.
-- Use short transactions.
-- Use parameterized SQL.
-- Validate payloads before writing.
-- Use stable IDs and idempotent upserts.
-- Handle connection loss without losing local files.
-
-PostgreSQL or SQL Server is appropriate for:
-
-- Concurrent writers from multiple workstations.
-- Central reporting.
-- Transactions and constraints.
-- Backup and restore operations.
-- Server-side access control.
-
-If company IT already supports SQL Server, it is a valid equivalent to
-PostgreSQL. The application should depend on the repository contract, not on a
-specific database vendor.
-
-## Current data ownership
-
-The database must preserve the ownership rules already defined in
-`docs/DATA_ARCHITECTURE.md`.
-
-### Unit-level data
-
-Unit data describes the physical device and remains valid across runs:
-
-- Main board serial.
-- Part number.
-- Completed replacement records.
-- Designated spare channels.
-
-The database should use an internal stable `unit_id` rather than using the
-main board serial as the primary key. A serial correction must not create an
-untraceable new unit.
-
-### Run-level data
-
-Run data describes one switch test:
-
-- Run number.
-- Switch serial.
-- Operating band.
-- Tested-by initials.
-- Start, stop, and accumulated switch-test timing.
-- Accepted/written channel measurements.
-- Run-specific metadata.
-
-The switch serial is run-specific because a switch can be replaced while the
-unit remains the same.
-
-### Derived or transient data
-
-These are not authoritative permanent results:
-
-- Live IL readings that were not written.
-- Temporary current readings.
-- Temporary or superseded readings are not discarded locally. Accepted
-  superseded attempts are retained in the run's append-only history and can be
-  uploaded for later analysis; only temporary/unwritten readings stay out of
-  the authoritative production dataset.
-- Replacement recommendations.
-- Current reference offsets.
-- GUI filters and dialog state.
-- Clipboard contents.
-
-Replacement analysis should continue to be calculated from current readings.
-Manual replacement records and designated spares remain persistent unit data.
-
-## Stable identity and lineage
-
-The database design requires stable identifiers:
-
-- `unit_id`: permanent internal identity for a device.
-- `run_id`: permanent internal identity for one run.
-- `measurement_id`: identity for an accepted effective measurement record.
-- `attempt_id`: identity for every accepted reading attempt, including retests.
-- `replacement_id`: identity for a replacement record.
-
-Human-readable values remain available for searching and display:
-
-- Main board serial.
-- Run number.
-- Switch serial.
-- Folder name.
-- Source CSV and JSON paths.
-
-The existing run naming convention, such as `Run-7-switchserial`, remains a
-user-facing path convention, not the database identity. A future migration
-should add `run_id` to JSON while preserving older files through migration
-helpers.
-
-Each synchronized record should retain source lineage where available:
-
-- Original local file path.
-- Source file hash.
-- Application version.
-- Import or synchronization time.
-- Submitting workstation identity.
-
-Report metadata such as workstation and synchronization time must remain
-separate from COC production metadata. They must not be written into the COC
-unless explicitly required by a later approved change.
-
-## Logical data model
-
-### `units`
-
-One record per physical unit.
-
-| Field | Description |
-| --- | --- |
-| `unit_id` | Internal UUID primary key |
-| `main_board_serial` | Current main board serial |
-| `part_number` | Current part number |
-| `created_at` | Creation timestamp |
-| `updated_at` | Last modification timestamp |
-| `active` | Whether the unit is active |
-| `schema_version` | Record format version |
-
-### `runs`
-
-One record per switch-test run.
-
-| Field | Description |
-| --- | --- |
-| `run_id` | Internal UUID primary key |
-| `unit_id` | Associated unit |
-| `run_number` | Operator-facing run number |
-| `switch_serial` | Switch used in this run |
-| `operating_band` | O band or C band |
-| `tested_by` | Operator initials |
-| `start_time` | First switch-test start |
-| `stop_time` | Final switch-test stop |
-| `total_duration_seconds` | Accumulated switch-test duration |
-| `completion_status` | Complete, partial, stopped, or failed |
-| `run_purpose` | Production, engineering, training, or calibration |
-| `submission_policy` | Submit, local-only, or review-before-submit |
-| `submission_status` | Not submitted, pending, synced, or failed |
-| `analysis_status` | Pending, included, excluded, or superseded |
-| `analysis_exclusion_reason` | Required when excluded or superseded |
-| `superseded_by_run_id` | Preferred replacement run, if any |
-| `source_csv_path` | Original CSV path, when known |
-| `source_json_path` | Original JSON path, when known |
-| `source_file_hash` | Detects source changes |
-| `app_version` | Version that produced the run |
-| `created_at` | Database creation time |
-| `updated_at` | Last database update time |
-
-### `measurements`
-
-One record per accepted/written channel result.
-
-| Field | Description |
-| --- | --- |
-| `measurement_id` | Internal UUID primary key |
-| `run_id` | Associated run |
-| `logical_channel` | Channel shown to the operator |
-| `physical_port` | Physical port, when available |
-| `loss_1310_db` | Accepted 1310 nm loss |
-| `loss_1550_db` | Accepted 1550 nm loss |
-| `written_at` | Time accepted into the run |
-| `sequence_number` | Order accepted during the run |
-
-The normal current-result view should enforce one active accepted result per
-logical channel in a run. If future requirements need full revision history,
-old values can be retained in a separate measurement-revisions table without
-changing the current-result view.
-
-### `replacement_records`
-
-Unit-level replacement history:
-
-| Field | Description |
-| --- | --- |
-| `replacement_id` | Internal UUID primary key |
-| `unit_id` | Associated unit |
-| `current_channel` | Channel being replaced |
-| `replacement_channel` | Channel installed in its place |
-| `recorded_at` | Time recorded |
-| `recorded_by` | Operator, when available |
-| `notes` | Optional explanation |
-
-### `designated_spares`
-
-Unit-level spare designations:
-
-| Field | Description |
-| --- | --- |
-| `unit_id` | Associated unit |
-| `channel` | Designated spare channel |
-| `designated_at` | Time designated |
-| `designated_by` | Operator, when available |
-
-### `database_sync_events`
-
-The central database should retain an audit trail for direct submissions and
-status changes. This is not a local SQLite outbox. It records what the central
-database accepted after a transaction completes.
-
-| Field | Description |
-| --- | --- |
-| `event_id` | Central event identifier |
-| `entity_type` | Unit, run, measurement, replacement, or spare |
-| `entity_id` | Entity written |
-| `operation` | Insert, update, submit, exclude, or restore |
-| `source_file_hash` | Local source version, when available |
-| `submitted_by` | User or workstation identity |
-| `submitted_at` | Central acceptance time |
-
-### `database_conflicts`
-
-Conflicts must be recorded rather than silently overwritten. Examples include
-two workstations submitting different values for the same run/channel or
-simultaneously changing unit-level replacements.
-
-The conflict record should retain both versions, the submitting identities,
-timestamps, and the resolution decision.
-
-### Schema migrations
-
-The central database needs explicit schema migration versions. A migration
-must:
-
-- Be forward-only and repeatable.
-- Validate the starting schema version.
-- Preserve existing data.
-- Have a rollback or recovery plan where practical.
-- Be covered by hardware-free tests.
-
-The application must reject an unsupported future database schema rather than
-silently dropping fields.
-
-## Run classification and analysis eligibility
-
-This is a central part of the design.
-
-### Run purpose
-
-Every run should eventually have one of these purposes:
-
-- `Production` - intended for normal quality and performance analysis.
-- `Engineering/Test` - exploratory or troubleshooting work.
-- `Training/Demo` - operator training or demonstrations.
-- `Calibration/Equipment Check` - validation of hardware or fixtures.
-
-### Submission policy
-
-- `Submit when complete` - eligible for explicit submission after testing.
-- `Local only` - never uploads measurement data automatically.
-- `Review before submitting` - waits for explicit approval.
-
-### Analysis status
-
-- `Pending review` - not included until approved.
-- `Included` - eligible for normal reports.
-- `Excluded` - retained but omitted from normal reports.
-- `Superseded` - replaced by a preferred later run.
-
-The status must not be inferred from a note, filename, or operator initials.
-
-### Test-only run
-
-For a switch used only for testing, the operator selects `Engineering/Test` and
-`Local only`. The application still saves CSV and JSON normally, but does not
-submit measurement data to the central database.
-
-The run remains available locally for troubleshooting and may later be
-submitted explicitly if it is determined to be useful.
-
-### Skewed or invalid run
-
-If a run has bad readings, incorrect channel selection, a connection problem,
-or another known issue, it should be marked `Excluded` with a required reason.
-The data is retained, but normal reports ignore it.
-
-### Multiple attempts
-
-If five attempts are made, all five runs remain identifiable. The valid final
-run can be marked `Included`; earlier attempts can be marked `Excluded` or
-`Superseded`.
-
-This prevents invalid runs from affecting averages without destroying the
-history needed to investigate what happened.
-
-### Partial runs
-
-A stopped or incomplete run should be `Pending review` or `Excluded` by
-default. It should not be included in completion-time or quality statistics
-unless a report explicitly requests partial runs.
-
-### Restoring a run
-
-An excluded or local-only run may be submitted later through an explicit
-operator action. The system should record who changed the status and when.
-
-## Local persistence and direct database-write behavior
-
-The normal local workflow remains:
-
-1. The operator writes an accepted measurement.
-2. Existing CSV/JSON persistence saves it locally.
-3. A database repository writes the accepted data to the central database in a
-   short transaction.
-4. The test continues without waiting for a second local database.
-5. A background database worker may retry a failed write from the local run
-   files.
-
-No database call should be required for hardware communication, measurement,
-or local persistence. Database submission must happen after local persistence,
-so a database failure cannot remove the local record.
-
-If the network is unavailable:
-
-- CSV and JSON continue to work.
-- The run is marked pending database submission.
-- The application can retry by scanning local run files using stable IDs and
-  source hashes.
-- The user can request a manual retry or submit a selected run later.
-- Errors remain visible for diagnosis.
-
-Direct database writes must be idempotent. Retrying the same run or
-measurement must not create duplicate records. The central database should use
-unique constraints and transactionally safe upserts.
-
-### Recovery without a local database
-
-The local JSON file and its source hash act as the recovery record. The run
-should retain a small database-submission state such as `not_submitted`,
-`pending`, `submitted`, or `failed`, along with the last error when applicable.
-
-If a direct write fails, a later retry should:
-
-1. Load the run through the existing file repository.
-2. Use the stable `run_id` and measurement identities.
-3. Compare the source hash or submitted version with the central record.
-4. Insert or update only the missing/current records.
-5. Mark the local run submitted after the central transaction succeeds.
-
-If the application closes after the central transaction succeeds but before the
-local status is updated, repeating the same operation must be safe because the
-central unique keys and idempotent upserts identify the existing data.
-
-An accepted two-wavelength measurement must be submitted as one database
-transaction. A database failure must not create a 1310 nm-only analytical
-measurement.
-
-## Central database repository boundary
-
-The desktop application should use a repository such as:
-
-```text
-CentralDatabaseRepository.submit_run(run)
-CentralDatabaseRepository.submit_measurement(measurement)
-CentralDatabaseRepository.update_run_status(run_id, status)
-CentralDatabaseRepository.get_unit(unit_id)
-CentralDatabaseRepository.query_runs(filters)
-CentralDatabaseRepository.query_reports(filters)
+`UNITS` represents the product under test and its main board. It does not
+represent the ILM, OPM, or laser used to perform a measurement. Test-equipment
+identity is captured as a historical JSON snapshot on each run.
+
+The assignment table is required because a unit may receive a replacement
+switch while the unit remains the same. Runs continue to identify the exact
+unit/switch installation that produced their data.
+
+Assignment resolution is automatic for the normal same-pairing case and uses
+one confirmation for a genuinely new hardware pairing. Reconnecting the same
+unit and switch reuses their active assignment. If a switch is moved to a
+different main board, a main board receives a different switch, or both sides
+have conflicting active assignments, Light Workbench closes the affected active
+assignments, marks their unfinished runs `stopped`, and creates one new
+assignment. The operation is atomic with creation of the first run, so a
+canceled confirmation or failed transaction leaves the prior assignments
+unchanged. The operator does not enter a transfer reason.
+
+Every new main-board/switch pairing starts from a fresh identity baseline:
+logical channel 1 maps to physical port 1 through the unit's front-panel
+count. The application does not command, delete, query, or verify the physical
+module map; it assumes the required external module-map reset was completed
+before installation. Baseline maps contain every front-panel logical channel
+exactly once. The normal fresh-pairing map is the identity map; any later
+mapping change is append-only replacement documentation.
+
+## SQL Server conventions
+
+- Business primary keys use `BIGINT IDENTITY(1,1)`.
+- Application-generated retry identities use `UNIQUEIDENTIFIER` with unique
+  constraints.
+- Timestamps use UTC `DATETIME2(3)` values.
+- Insertion loss uses `DECIMAL(9,4)`.
+- Controlled vocabularies use short `VARCHAR` fields and `CHECK` constraints.
+- Human-entered text uses `NVARCHAR`.
+- JSON fields use `NVARCHAR(MAX)` with `ISJSON` checks.
+- Foreign keys do not cascade deletes.
+- Accepted attempts, replacements, and spare events are append-only for the
+  application role.
+- `SYSUTCDATETIME()` is the normal database timestamp default.
+
+Fields are required unless explicitly marked nullable below.
+
+## Logical schema
+
+### `UNITS`
+
+One record per product/main-board unit.
+
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `unit_id` | `BIGINT IDENTITY(1,1)` | Primary key |
+| `main_board_serial` | `NVARCHAR(100)` | Unique main-board serial |
+| `part_number` | `NVARCHAR(100) NULL` | Current part number |
+| `front_panel_channel_count` | `INT NULL` | Current count parsed from the part number |
+| `unit_model` | `NVARCHAR(50) NULL` | Product model or family |
+| `notes` | `NVARCHAR(MAX) NULL` | Unit-level notes |
+| `created_at_utc` | `DATETIME2(3)` | Creation time |
+| `updated_at_utc` | `DATETIME2(3)` | Last update time |
+
+Rules:
+
+- `main_board_serial` is unique.
+- `front_panel_channel_count`, when present, is greater than zero.
+- Part number and channel count remain nullable so an explicitly authorized
+  administrative exception can still be represented; normal production
+  preflight is responsible for requiring them.
+
+### `SWITCHES`
+
+One record per physical optical switch.
+
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `switch_id` | `BIGINT IDENTITY(1,1)` | Primary key |
+| `switch_serial` | `NVARCHAR(100)` | Unique switch serial |
+| `switch_model` | `NVARCHAR(30)` | OSX-100, OSX-150, or another supported model |
+| `firmware_version` | `NVARCHAR(50) NULL` | Detected switch firmware |
+| `last_reported_scpi_channel_count` | `INT` | Latest SCPI/configuration count; diagnostic routing information, not physical capacity |
+| `notes` | `NVARCHAR(MAX) NULL` | Switch notes |
+| `created_at_utc` | `DATETIME2(3)` | Creation time |
+| `updated_at_utc` | `DATETIME2(3)` | Last update time |
+
+Rules:
+
+- `switch_serial` is unique.
+- `last_reported_scpi_channel_count` is greater than zero.
+- `UNITS.front_panel_channel_count`, derived from the part number, is the
+  customer-channel boundary. No assumed total physical capacity is stored.
+- The logical channel map does not belong here because it applies to a
+  particular installation, not permanently to the switch.
+
+### `UNIT_SWITCH_ASSIGNMENTS`
+
+One record per period in which a switch is installed in a unit.
+
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `assignment_id` | `BIGINT IDENTITY(1,1)` | Primary key |
+| `unit_id` | `BIGINT` | Foreign key to `UNITS` |
+| `switch_id` | `BIGINT` | Foreign key to `SWITCHES` |
+| `installed_at_utc` | `DATETIME2(3)` | Installation time |
+| `removed_at_utc` | `DATETIME2(3) NULL` | Removal time; null while active |
+| `installed_by` | `NVARCHAR(100)` | Person recording installation |
+| `removed_by` | `NVARCHAR(100) NULL` | Person recording removal |
+| `removal_reason` | `NVARCHAR(500) NULL` | Reason the assignment ended |
+| `initial_channel_map_json` | `NVARCHAR(MAX)` | Baseline logical-to-physical map |
+| `notes` | `NVARCHAR(MAX) NULL` | Assignment notes |
+| `created_at_utc` | `DATETIME2(3)` | Creation time |
+| `updated_at_utc` | `DATETIME2(3)` | Last update time |
+
+Example baseline map:
+
+```json
+{
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "4": 4
+}
 ```
 
-The repository owns:
+Rules:
 
-- Connection setup and approved authentication.
-- Payload validation.
-- Duplicate detection.
-- Conflict detection.
-- Schema compatibility.
-- Transaction boundaries and audit records.
-- Reporting queries.
+- `initial_channel_map_json` contains valid JSON.
+- Removal cannot precede installation.
+- Filtered unique indexes allow at most one active assignment per unit and at
+  most one active assignment per switch where `removed_at_utc IS NULL`.
 
-The repository must not expose SQL or database credentials to the UI, hardware
-controllers, or domain services.
+### `IL_RUNS`
 
-An API remains a possible future security boundary, but it is not required for
-the initial direct-database proposal.
+One record per Light Workbench test run.
 
-## Reporting requirements
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `run_id` | `BIGINT IDENTITY(1,1)` | Primary key |
+| `assignment_id` | `BIGINT` | Unit/switch assignment tested |
+| `run_number` | `INT` | Operator-facing run number |
+| `client_run_uuid` | `UNIQUEIDENTIFIER` | Retry-safe application identity |
+| `run_started_at_utc` | `DATETIME2(3)` | Run start time |
+| `run_ended_at_utc` | `DATETIME2(3) NULL` | Complete, stopped, or failed time |
+| `tested_by` | `NVARCHAR(100)` | Operator |
+| `station_number` | `INT NULL` | Simple positive station identifier; legacy runs may be null |
+| `wavelength_mode` | `VARCHAR(2)` | `SM` or `MM` |
+| `operating_band` | `VARCHAR(20)` | O band or C band |
+| `application_version` | `NVARCHAR(30)` | Light Workbench version |
+| `completion_status` | `VARCHAR(20)` | Run lifecycle status |
+| `run_purpose` | `VARCHAR(30)` | Purpose of the run |
+| `analysis_status` | `VARCHAR(20)` | Analysis eligibility |
+| `void_info_json` | `NVARCHAR(MAX) NULL` | Required immutable void timestamp, operator, and reason when status is `excluded` |
+| `superseded_by_run_id` | `BIGINT NULL` | Preferred replacement run |
+| `part_number_snapshot` | `NVARCHAR(100) NULL` | Part number at test time |
+| `front_panel_channel_count` | `INT NULL` | Required channels at test time |
+| `measurement_hardware_json` | `NVARCHAR(MAX)` | ILM/OPM/laser identity plus extra-channel routing provenance and known channel counts |
+| `limit_snapshot_json` | `NVARCHAR(MAX)` | Exact criteria used |
+| `notes` | `NVARCHAR(MAX) NULL` | Run notes |
+| `created_at_utc` | `DATETIME2(3)` | Database creation time |
+| `updated_at_utc` | `DATETIME2(3)` | Last update time |
 
-Normal reports should include only runs that are:
+`client_run_uuid` is generated before the first insertion attempt and never
+changes. Retrying a create operation with the same UUID must resolve the
+existing run rather than create a duplicate.
 
-- Submitted to the central system.
-- Marked `Included`.
-- Production runs, unless a different filter is selected.
-- Complete when the report requires complete runs.
-- Based on accepted/written measurements.
+For new database-backed runs, the operator enters a positive station number in
+the Hardware Test Setup area. The station is stored on `IL_RUNS`, not in a
+station registry. It is immutable after the run starts, is preserved through
+retests and continuation, and is shown as `Not recorded` for older runs that
+predate migration 0003. Loading an older run does not replace the session's
+station default. Admin Mode cannot bypass the station requirement for a new
+database run.
 
-Separate advanced views may include test, excluded, partial, and superseded
-runs for troubleshooting.
+Operator-facing `run_number` is allocated per unit by the run repository. The
+SQL implementation locks the unit row while it calculates the next number
+across every historical assignment for that unit and inserts the run in the
+same transaction. This keeps numbering continuous when a unit receives a
+replacement switch and prevents cooperating clients from claiming the same
+next number.
 
-Future reporting screens should support:
+Controlled values:
 
-- Date range.
-- Main board serial.
-- Part number.
-- Run number.
-- Switch serial.
-- Operating band.
-- Tested by.
-- Completion status.
-- Submission and analysis status.
+| Field | Allowed values |
+| --- | --- |
+| `completion_status` | `in_progress`, `complete`, `stopped`, `failed` |
+| `run_purpose` | `production`, `engineering`, `training`, `calibration` |
+| `analysis_status` | `pending`, `included`, `excluded`, `superseded` |
+| `wavelength_mode` | `SM`, `MM` |
 
-Useful reports include:
+Recommended defaults are `in_progress`, `production`, and `pending`.
+`excluded` is displayed to operators as **Voided**. Voided rows require valid
+`void_info_json` containing nonblank `voided_at_utc`, `voided_by`, and `reason`;
+non-voided rows must keep that field null. Run purpose is descriptive and does
+not implicitly void engineering, training, or calibration data. Purpose still
+controls production-report filtering, while COC and assignment analysis apply
+the same technical eligibility rules to every purpose.
 
-- Average, median, fastest, and slowest test duration.
-- Duration normalized by tested-channel count.
-- Timing by operator.
-- Average channels over 2.0 dB or 2.5 dB.
-- Channel-specific failure frequency.
-- Unit history across runs.
-- Switch-to-switch comparison.
-- Before-and-after replacement comparison.
-- Runs pending review or database submission.
+Migration 0005 converts legacy exclusion reasons using the run's
+`updated_at_utc` and `tested_by`, removes the obsolete reason column, and
+expands the saved replacement-analysis result-state constraint.
 
-Reports should distinguish active switch-test time from elapsed calendar time.
-Incomplete and invalid runs should not silently enter production averages.
+Example hardware snapshot:
 
-## Security, backup, and operations
+```json
+{
+  "ilm": {
+    "model": "OP815",
+    "serial": "0016582",
+    "firmware": "1.2.3"
+  }
+}
+```
 
-Production deployment should provide:
+Example limit snapshot:
 
-- Encrypted database connections where supported.
-- Windows/domain authentication where available.
-- Role-based permissions.
-- No database secrets embedded in the executable.
-- Credentials stored in managed Windows credential storage or configuration.
-- Server-side validation and audit logging.
-- Scheduled database backups.
-- Periodic restore testing.
-- A documented retention policy.
-- Health checks for the database connection and server.
-- An administrator workflow for conflict resolution.
+```json
+{
+  "too_good_db": 0.5,
+  "warning_db": 2.25,
+  "failure_db": 2.5
+}
+```
 
-Database reports should be read-only initially. Editing production measurements
-should require a separate correction workflow with an audit trail.
+Completion describes how the workflow ended. It does not describe quality.
+Pass/fail and optimization remain derived from current accepted measurements,
+the front-panel count, and the immutable limit snapshot.
 
-## Compatibility rules
+### `IL_MEASUREMENTS`
 
-- Existing CSV and JSON files remain loadable.
-- Existing folder and filename conventions remain supported.
-- Existing root-level compatibility facades remain available.
-- COC output remains independent of database reporting metadata.
-- Clipboard output remains transient.
-- Database synchronization never changes the measurement calculation.
-- Database failure never prevents a local hardware run from completing.
+One append-only row per accepted Write IL operation, including retests.
 
-## Open decisions before implementation
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `measurement_id` | `BIGINT IDENTITY(1,1)` | Primary key |
+| `measurement_uuid` | `UNIQUEIDENTIFIER` | Retry-safe measurement identity |
+| `run_id` | `BIGINT` | Foreign key to `IL_RUNS` |
+| `logical_channel` | `INT NULL` | Customer-facing channel; null for unassigned extra candidates |
+| `physical_port` | `INT` | Positive tested physical port |
+| `measurement_role` | `VARCHAR(20)` | `logical_channel` or `extra_candidate` |
+| `attempt_number` | `INT` | Accepted attempt number |
+| `wavelength_1_nm` | `SMALLINT` | First wavelength |
+| `wavelength_1_il_db` | `DECIMAL(9,4)` | First insertion-loss value |
+| `wavelength_2_nm` | `SMALLINT` | Second wavelength |
+| `wavelength_2_il_db` | `DECIMAL(9,4)` | Second insertion-loss value |
+| `reference_snapshot_json` | `NVARCHAR(MAX)` | Reference used for this attempt |
+| `written_at_utc` | `DATETIME2(3)` | Acceptance time |
+| `written_by` | `NVARCHAR(100)` | Operator |
 
-1. PostgreSQL or an existing SQL Server installation.
-2. Server host and IT ownership.
-3. Windows/domain authentication versus application accounts.
-4. Whether local-only runs may later be manually submitted.
-5. Who may include, exclude, restore, or supersede a run.
-6. Historical import scope and handling of incomplete legacy metadata.
-7. Data-retention and backup requirements.
-8. Whether the first reporting screen belongs in Light Workbench or in a
-   separate Light Workbench Reports application.
+Example reference snapshot:
+
+```json
+{
+  "snapshot_id": "6fe700e0",
+  "method": "calculated",
+  "calculated_at_utc": "2026-10-09T18:42:15Z",
+  "values_dbm": {
+    "1310": -0.04,
+    "1550": 0.14
+  }
+}
+```
+
+Rules:
+
+- `measurement_uuid` is unique.
+- `(run_id, logical_channel, attempt_number)` is unique.
+- Channels, ports when present, wavelengths, and attempt numbers are positive.
+- Insertion-loss values must be present, finite, non-negative, and normalized
+  to four decimal places before insertion.
+- `reference_snapshot_json` contains valid JSON.
+- The reference snapshot must be a non-empty object for an accepted write.
+- Both wavelength results are inserted in one transaction.
+- SM runs accept the 1310/1550 pair and MM runs accept the 850/1300 pair.
+- Measurements may only be appended while their run remains `in_progress`.
+- Temporary, live, invalid, and unwritten readings are never inserted.
+- Raw measured power remains local engineering evidence, not analytical data.
+
+The application creates an immutable pending measurement and its UUID before
+the first insert attempt. The SQL repository obtains an update lock on the run
+row, calculates the next attempt number for that run and logical channel, and
+inserts both wavelength values in the same transaction. Cooperating concurrent
+writers therefore cannot claim the same attempt number. A repeated UUID
+returns the original row.
+
+The UI may update its accepted-reading projection only after the repository
+returns the committed row. If the transaction fails, the pending object and
+UUID remain available for retry; the channel does not advance and no support
+log or temporary reading becomes substitute storage.
+
+### `CHANNEL_REPLACEMENTS`
+
+Append-only documentation of manually performed channel replacements.
+
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `replacement_id` | `BIGINT IDENTITY(1,1)` | Primary key |
+| `assignment_id` | `BIGINT` | Assignment affected |
+| `logical_channel` | `INT` | Logical channel rerouted |
+| `previous_physical_port` | `INT` | Previous physical port |
+| `replacement_physical_port` | `INT` | New physical port |
+| `reason` | `NVARCHAR(500)` | Replacement reason |
+| `replaced_by` | `NVARCHAR(100)` | Person recording replacement |
+| `replaced_at_utc` | `DATETIME2(3)` | Replacement time |
+| `related_run_id` | `BIGINT NULL` | Associated run when applicable |
+| `notes` | `NVARCHAR(MAX) NULL` | Additional notes |
+| `source_recommendation_id` | `BIGINT NULL` | Saved analysis recommendation used for this replacement |
+
+All channels and ports are positive, and previous/replacement ports cannot be
+equal. A replacement belongs to an assignment rather than permanently to a
+unit so records from a removed switch cannot alter a later switch's map.
+
+New replacement records are accepted only for an active assignment. The
+reported previous port must match that logical channel's current effective
+port. A normal replacement port must be a confirmed committed extra candidate
+for the same assignment, and it cannot already route another logical channel.
+It is never compared with the SCPI-reported count. An
+optional related run must belong to the same assignment. Replacing an already
+replaced channel appends another row; earlier rows are never updated or
+deleted.
+
+Light Workbench documents replacements only. It does not command the switch,
+use `CLOSe?` to infer a replaced route, or verify the external mapping change.
+Replacement recommendations are also persisted as append-only analysis
+snapshots. They are advisory and do not change the routing map. A completed
+replacement may point to the exact recommendation that informed it through
+`source_recommendation_id`; a null value means the replacement was manually
+recorded without using a saved recommendation.
+
+The database-backed editor is logical-channel centered. It resolves the
+current effective physical port from `vw_CurrentChannelMap`, shows the complete
+ordered SQL history, and derives assignment, related run, identity context,
+and UTC time. Recommendation selection may prefill the proposed port,
+category, improvement, and editable default reason, but selection is not a
+write. The operator must still provide or confirm the reason and operator and
+explicitly confirm that the physical reroute happened outside the application.
+Optional details are stored without loss in `notes`.
+
+Corrections, reversals, and repeated replacements append new rows. The UI does
+not expose SQL history deletion or legacy void semantics. Replacement rows and
+explicit spare designation/undesignation events approved in the same dialog
+are validated and committed in one transaction. After commit or failure, the
+application reloads the authoritative routing snapshot; no local replacement
+fallback is permitted.
+
+### `REPLACEMENT_ANALYSES`
+
+One immutable snapshot of a completed replacement-analysis calculation. A run
+may have many analyses; the latest one is the default display, while the full
+history remains available for support and trend review.
+
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `analysis_id` | `BIGINT IDENTITY(1,1)` | Primary key |
+| `analysis_uuid` | `UNIQUEIDENTIFIER` | Retry-safe analysis identity |
+| `run_id` | `BIGINT` | Run analyzed |
+| `analyzed_at_utc` | `DATETIME2(3)` | Calculation time |
+| `analyzed_by` | `NVARCHAR(100)` | Operator associated with the run |
+| `application_version` | `VARCHAR(30)` | Version that calculated the result |
+| `source_measurement_high_watermark_id` | `BIGINT` | Maximum accepted measurement ID in the complete assignment-scoped source set; it may belong to any included run |
+| `front_panel_channel_count` | `INT` | Front-panel count used |
+| `wavelengths_json` | `NVARCHAR(MAX)` | Wavelength pair used |
+| `criteria_json` | `NVARCHAR(MAX)` | Limit and analysis criteria snapshot |
+| `result_status` | `VARCHAR(40)` | Classification of the saved calculation |
+| `result_details_json` | `NVARCHAR(MAX)` | Bounded result details excluding normalized recommendations |
+
+New `result_status` values are `optimized`, `recommendations_available`,
+`verification_required`, `pass_no_viable_optimization`,
+`fail_no_viable_recovery`, `incomplete_input`, and `review_required`. Legacy
+`no_viable_recommendations` and `not_applicable_no_extra_ports` values remain
+loadable. `result_details_json.source_snapshot` contains assignment/context
+identity, included run states, every considered accepted measurement ID
+(including superseded attempts and replaced-channel rows), selected measurement
+IDs, replacement/spare event IDs, watermarks, and a deterministic state
+fingerprint. Save-time validation confirms that the context run, included runs,
+measurements, replacement history, and spare history still match atomically.
+The scalar measurement high-watermark remains for compatibility and referential
+integrity; freshness uses the full fingerprint. A changed source state makes
+the snapshot stale but never mutates or removes it from history.
+
+### `REPLACEMENT_ANALYSIS_RECOMMENDATIONS`
+
+Normalized recommendation rows belonging to one saved analysis. Keeping the
+candidate and measured losses in columns supports reporting without parsing
+the result JSON.
+
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `recommendation_id` | `BIGINT IDENTITY(1,1)` | Primary key |
+| `analysis_id` | `BIGINT` | Parent analysis |
+| `recommendation_rank` | `INT` | Display/calculation order |
+| `category` | `VARCHAR(20)` | `required` or `optional` |
+| `logical_channel` | `INT` | Proposed logical channel |
+| `current_physical_port` | `INT` | Current route |
+| `candidate_physical_port` | `INT` | Measured replacement candidate |
+| `current_wavelength_1_il_db` | `DECIMAL(9,4)` | Current first-wavelength loss |
+| `current_wavelength_2_il_db` | `DECIMAL(9,4)` | Current second-wavelength loss |
+| `candidate_wavelength_1_il_db` | `DECIMAL(9,4)` | Candidate first-wavelength loss |
+| `candidate_wavelength_2_il_db` | `DECIMAL(9,4)` | Candidate second-wavelength loss |
+| `current_worst_loss_db` | `DECIMAL(9,4)` | Current worst loss |
+| `candidate_worst_loss_db` | `DECIMAL(9,4)` | Candidate worst loss |
+| `improvement_db` | `DECIMAL(9,4)` | Projected improvement |
+| `current_measurement_id` | `BIGINT NULL` | Exact logical-channel evidence used by a new recommendation |
+| `candidate_measurement_id` | `BIGINT NULL` | Exact confirmed-extra evidence used by a new recommendation |
+
+The unique analysis/rank, analysis/channel, and analysis/candidate-port
+constraints prevent duplicate recommendations inside one snapshot.
+
+### `DESIGNATED_SPARES`
+
+Append-only spare designation history.
+
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `spare_event_id` | `BIGINT IDENTITY(1,1)` | Primary key |
+| `assignment_id` | `BIGINT` | Associated assignment |
+| `physical_port` | `INT` | Spare physical port |
+| `action` | `VARCHAR(20)` | `designated` or `undesignated` |
+| `recorded_by` | `NVARCHAR(100)` | Person recording action |
+| `recorded_at_utc` | `DATETIME2(3)` | Action time |
+| `notes` | `NVARCHAR(MAX) NULL` | Explanation |
+
+The active spare set is derived from the newest event for each assignment and
+physical port.
+
+Designation and undesignation events are accepted only for an active
+assignment. A normal designation requires a confirmed extra measurement above
+the assignment's front-panel boundary and the port must not be actively mapped.
+Repeating the already-current action is rejected rather than adding a
+meaningless audit row. Spare history remains readable after an assignment is
+removed.
+
+### `SCHEMA_MIGRATIONS`
+
+Tracks forward-only SQL schema changes.
+
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `migration_id` | `INT` | Primary key and migration order |
+| `migration_name` | `NVARCHAR(200)` | Human-readable name |
+| `script_checksum` | `CHAR(64)` | SHA-256 script checksum |
+| `applied_at_utc` | `DATETIME2(3)` | Time applied |
+| `application_version` | `NVARCHAR(30)` | Associated application version |
+
+The application must reject a schema newer than it supports rather than
+silently ignoring fields.
+
+## Read-only views
+
+### `vw_CurrentILMeasurements`
+
+Returns the highest attempt for each run and measurement identity: logical
+channel for `logical_channel` rows, or physical port for `extra_candidate`
+rows.
+The main readings table, limits, run status, COC preparation, Copy Raw Data,
+and replacement recommendations use this view. Reading History and retest
+reports query all `IL_MEASUREMENTS` rows.
+
+The database repository exposes these as one stable run snapshot: current rows
+come from the view in logical-channel order, and history rows come from the
+append-only table in database commit order. Both queries execute in one
+transaction while the run row is held stable, preventing a concurrent retest
+from appearing in only one half of the snapshot.
+
+The application converts that snapshot into one shared read model. Table
+filters may choose which current rows are visible, but comparison, Copy Raw
+Data, status, analysis, COC preparation, and replacement analysis always use
+the complete unfiltered current projection. Reading History alone uses every
+accepted attempt. Database-origin COC inputs carry a stable run identifier
+rather than inventing a local source-file path.
+
+For replacement decisions, `domain/effective_replacement_analysis.py` builds
+an assignment-scoped projection across compatible runs no later than the
+selected context run. It selects one newest whole wavelength pair per logical
+channel, requires the recorded effective physical port, carries forward unused
+measured extras, derives replacement verification, and creates a deterministic
+SHA-256 source-state fingerprint. The fingerprint and source IDs are stored in
+the existing analysis JSON, so append-only analyses can be labeled current,
+stale, or historical without adding mutable watermark columns.
+
+### `vw_CurrentChannelMap`
+
+Combines `UNIT_SWITCH_ASSIGNMENTS.initial_channel_map_json` with the latest
+`CHANNEL_REPLACEMENTS` row for each logical channel. It returns the assignment,
+unit, switch, logical channel, effective physical port, replacement state, and
+latest replacement timestamp.
+
+The routing repository reads this view in logical-channel order and exposes
+the append-only replacement and spare histories in database commit order. A
+single stable routing snapshot returns the effective map, both histories, and
+the active designated-spare set. This snapshot is scoped by `assignment_id`,
+so replacing a physical switch starts from the new assignment's baseline map
+without discarding or applying the old switch's history.
+
+Existing active spares are presented as retained by default. Analysis-derived
+spare suggestions may be preselected for review, but neither recommendation
+generation nor opening the editor writes an event. An existing spare is
+undesignated only by an explicit operator selection saved as a new append-only
+event.
+
+### `vw_ConfirmedExtraPorts`
+
+Returns the newest eligible `extra_candidate` measurement for each
+`(assignment_id, physical_port)`. Voided and superseded runs are excluded. The
+view is the read-only source for normal replacement-candidate and spare
+validation. Stopping discovery does not assert that every higher port is
+absent.
+
+### `vw_ReplacementRecommendationUsage`
+
+Joins each normalized recommendation to any replacement record that cites it
+through `source_recommendation_id`. This makes recommendation adoption
+reportable without treating an advisory calculation as proof that the physical
+reroute occurred. A recommendation with no matching replacement is simply
+shown as unused.
+
+## Required indexes
+
+At minimum, create indexes for:
+
+- Unique unit main-board serial.
+- Unique switch serial.
+- Active assignment by unit and switch.
+- Unique run UUID.
+- Runs by assignment, date, completion status, purpose, and analysis status.
+- Unique measurement UUID.
+- Unique measurement attempt by run/channel/attempt number.
+- Measurements by run and logical channel.
+- Replacements by assignment, logical channel, and time.
+- Spare events by assignment, physical port, and time.
+
+Run numbers remain operator-facing. The application allocates them for the
+unit inside a transaction; `client_run_uuid` is the authoritative duplicate
+prevention key.
+
+## Database-primary runtime behavior
+
+### Starting a run
+
+Before a database-backed run begins, the application must:
+
+1. Confirm database connectivity and supported schema version.
+2. Resolve the unit, switch, and active assignment. A conflicting pairing is
+   confirmed once and then handled atomically with run creation.
+3. Validate required setup and reference state.
+4. Generate `client_run_uuid`.
+5. Insert the `in_progress` run and its historical snapshots.
+
+When a new hardware pairing is confirmed, the same transaction also stops any
+unfinished runs on the assignments being closed, records their end timestamp,
+closes those assignments, creates the fresh identity map, and inserts the new
+`in_progress` run. Historical runs, accepted measurements, replacement events,
+spare events, and saved analyses remain attached to their original assignment;
+none are carried into the new pairing.
+
+Red Light Test and Power Measurement Diagnostics do not create run
+records and may remain usable when the database is unavailable.
+
+### Writing a measurement
+
+Write IL must validate and insert the complete two-wavelength attempt in one
+short transaction. The application may show the reading as accepted and
+advance only after commit succeeds.
+
+If SQL Server becomes unavailable, the reading stays temporary in memory, the
+operator receives actionable feedback, and the application offers a retry. It
+must not use support logs as an unofficial measurement outbox.
+
+### Application interruption
+
+An unexpected process or workstation failure may leave a run `in_progress`.
+On the next connection, Light Workbench should identify stale in-progress runs
+and offer an explicit resume or close decision. It must not silently mark them
+complete.
+
+The supported stale-run decisions are:
+
+- Resume, which leaves the same run UUID and `in_progress` record intact.
+- Close as stopped, for an operator-ended incomplete run.
+- Close as failed, for a technical end state.
+
+All close decisions record `run_ended_at_utc`. Measurement quality is never
+inferred from the selected completion state.
+
+An operator-selected continuation or retest explicitly reopens the retained
+run as `in_progress` and clears its prior end timestamp before another accepted
+attempt can be appended. Finishing the resumed workflow writes a new terminal
+status and end timestamp. Accepted attempts remain append-only throughout this
+lifecycle transition.
+
+## Files that remain local
+
+- Daily support-log JSONL and compressed archives.
+- Explicit diagnostic history/trace exports.
+- Generated COC workbooks.
+- Explicit operator-requested CSV/JSON exports.
+- Application configuration, including the database endpoint.
+
+Existing run files remain viewable, but opening one does not upload it or make
+it part of the authoritative database. A legacy file-backed run cannot be
+continued or retested as if it were a database run.
+
+For database-backed COC export, the operator explicitly chooses the output
+folder because there is no authoritative local run directory. COC files remain
+derived exports and are not written back as run storage.
+
+## Read-only reporting
+
+`Tools > Database Reports...` uses a read-only application reporting service
+over the same repository and run-projection boundaries as the production UI.
+It does not issue run, measurement, assignment, replacement, or spare writes.
+The report includes:
+
+- joined unit, switch, and assignment history;
+- run history filtered by model, mode, operator, UTC date, completion status,
+  purpose, and analysis status;
+- complete accepted channel/attempt history, including superseded retests;
+- retest counts and frequency;
+- assignment replacement history with the outcome of the linked run reading;
+- pass/fail and optimization results derived from current accepted readings
+  and the immutable limit snapshot saved with that run; and
+- explicit CSV export of the currently selected report tab.
+
+Normal production metrics include only `production` runs whose
+`analysis_status` is `included` and which have not been superseded. Pending,
+excluded, superseded, engineering, training, and calibration data is available
+only when the operator explicitly selects the broader troubleshooting scope.
+CSV reports are local derived outputs, never authoritative storage or an
+automatic synchronization mechanism.
+
+## Security and operations
+
+- Use Windows Authentication and least-privilege database roles.
+- Give normal application users only the operations needed by repositories.
+- Do not grant the application role arbitrary delete access to accepted data.
+- Encrypt network SQL Server connections in production.
+- Back up the database and test restoration before production rollout.
+- Use a separate integration-test database so automated tests cannot pollute
+  development or production records.
+- Keep support logs local and governed by `docs/SUPPORT_LOGGING.md`.
+
+## Capacity planning
+
+For one 48-channel run per switch with modest JSON snapshots and a small retest
+rate, plan on roughly 60-100 KB of application data and indexes per tested
+switch. Approximate planning ranges are:
+
+| Tested switches | One run per switch | Three runs per switch |
+| ---: | ---: | ---: |
+| 100 | 6-10 MB | 14-25 MB |
+| 1,000 | 60-100 MB | 140-250 MB |
+| 10,000 | 600 MB-1 GB | 1.4-2.5 GB |
+
+Actual MDF/LDF allocation can be larger because SQL Server preallocates data
+and transaction-log space. Notes, retest frequency, indexes, and JSON size also
+affect growth. Capacity should be measured during the pilot rather than treated
+as a fixed per-run guarantee.
+
+## Resolved and remaining decisions
+
+Resolved:
+
+- SQL Server is the target engine.
+- Development uses `localhost\SQLExpress`, `LWBTestDB`, and Windows
+  Authentication.
+- The database was introduced as a clean start; no historical bulk import is
+  planned.
+- SQL Server is authoritative for new run data on the database branch.
+- Support logs remain local.
+- The ten-table schema and four read-only views are the approved
+  baseline.
+- Read-only reporting lives in Light Workbench and uses application/repository
+  boundaries rather than SQL in Qt presentation code.
+
+Remaining before production:
+
+1. Network SQL Server host and IT ownership.
+2. Windows/domain groups and permissions.
+3. Backup, restore, retention, and archival policy.
+4. Exact production behavior for stale `in_progress` runs.
 
 ## Related documents
 
-- `docs/DATA_ARCHITECTURE.md` - current unit/run ownership and file formats.
+- `docs/DATA_ARCHITECTURE.md` - current SQL-primary data behavior and legacy
+  file-compatibility boundary.
 - `docs/DATABASE_ROADMAP.md` - implementation milestones and exit criteria.
-- `docs/REFACTOR_ROADMAP.md` - broader application refactor history.
-- `docs/PROJECT_LAYOUT.md` - placement of future repository and service code.
+- `docs/PROJECT_LAYOUT.md` - repository and source placement.
+- `docs/SUPPORT_LOGGING.md` - local engineering-log ownership.
+- `docs/TESTING_AND_RELEASE.md` - required validation and release checks.
+Run purpose is selected when a new run begins and is persisted in `IL_RUNS`.
+Production is the default; Engineering, Training, and Calibration are retained
+for provenance and reporting but are not implicitly voided. Completion and
+analysis are separate: a completed run is finalized as included, while stopped
+or failed runs remain pending. Continuations and retests inherit the original
+purpose. COC export is purpose-neutral: all purposes may contribute when they
+satisfy the same assignment, measurement, compatibility, routing, and limit
+requirements.

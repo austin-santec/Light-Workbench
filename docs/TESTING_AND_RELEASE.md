@@ -18,20 +18,103 @@ Use for Qt worker lifecycle, controller state transitions, run continuation,
 file persistence, COC export, and dialog behavior. Use fakes rather than real
 hardware.
 
+SQL Server migration and repository tests must use a dedicated disposable
+integration database such as `LWBTestDB_Integration`, never the development or
+production database. Cover migrations, constraints, transaction rollback, UUID
+idempotency, atomic two-wavelength writes, attempt numbering, current-value
+views, and database-unavailable behavior. Historical bulk-import tests are not
+required by the approved clean-start design.
+
+Run the current migration integration tests explicitly on Windows:
+
+```powershell
+$env:LWB_TEST_SQL_CONNECTION_STRING = "DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost\SQLEXPRESS;DATABASE=LWBTestDB_Integration;Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes;"
+python -m tools.migrate_database --server "localhost\SQLEXPRESS" --database "LWBTestDB_Integration" --trust-server-certificate
+python -m unittest tests.test_database_migrations tests.test_database_maintenance
+Remove-Item Env:LWB_TEST_SQL_CONNECTION_STRING
+```
+
+Without that environment variable, SQL integration cases are skipped while
+the hardware-free migration-runner tests still run. Never substitute
+`LWBTestDB` or a production database in the integration-test command.
+
+To prove that the integration environment can be recreated and restored, use
+the guarded maintenance commands. Both commands reject any database name other
+than `LWBTestDB_Integration` and require the name to be repeated explicitly:
+
+```powershell
+python -m tools.reset_integration_database --server "localhost\SQLEXPRESS" --database "LWBTestDB_Integration" --confirm-reset "LWBTestDB_Integration" --trust-server-certificate
+python -m tools.verify_database_backup --server "localhost\SQLEXPRESS" --database "LWBTestDB_Integration" --confirm-database "LWBTestDB_Integration" --trust-server-certificate
+```
+
+The verification command creates a temporary SQL Server backup, restores it as
+`LWBTestDB_RestoreVerification`, runs `DBCC CHECKDB`, verifies the migration
+and object counts, then removes both the restored database and temporary backup.
+Use `--keep-backup` only when an administrator intentionally wants to retain
+that integration backup.
+
 COC coverage must include whole-pair multi-run overrides, run/criteria/physical
 port compatibility, strict 2.5000 dB publication blocking, optimization
 confirmation, 45/48 template selection, row trimming, merged ranges, print
 area, source-template immutability, and preservation of source run readings.
 
+Run-purpose coverage must verify the Production default, production-report
+filtering, terminal completion policy, purpose display for loaded runs,
+continuation/retest preservation, and purpose-neutral COC/replacement-analysis
+eligibility. Purpose alone must never create a void record. Legacy file-backed
+runs without a purpose remain loadable for historical review.
+
+Iterative replacement coverage must verify assignment isolation, newest
+whole-pair selection, current-map matching, unused-extra carry-forward,
+replacement chains and verification states, every persisted result state,
+deterministic source fingerprints, permanent run voiding, and COC/status
+consistency. Migration tests must discover migration 0005, preserve old rows,
+convert excluded reasons to valid JSON, and retain legacy analysis statuses.
+They must also discover migration 0006, preserve ambiguous historical rows,
+and reclassify only unambiguous extra-candidate measurements.
+
 Persistent-connection tests must verify partial connection success, duplicate
 session prevention, exclusive lease conflicts, release without disconnect,
 single-thread native calls, laser-safe shutdown, and application-close cleanup.
+
+Extra-channel coverage must remain hardware-free. Verify that missing admin
+configuration defaults to SCPI; SCPI extras use the exact finite configured
+range, call only `set_channel()`, treat the requested configured channel as the
+physical candidate identity, confirm the same logical value through `CLOSe?`,
+skip accepted continuation rows, hide No More Physical Ports, and never save a
+failed route. Preserve CLI coverage for exact `b0 writereg mems.ch <port>\r\n`
+formatting, TCP port 2323, raw (not Telnet) transport, bounded reads, separate
+initial/idle timeouts, text and binary response classification, binary hex
+capture, acknowledgement/error/unverified classification, optional readback, sequential
+unknown-capacity probing, retry/discard behavior, and safety-ceiling
+enforcement. Both methods must verify routing serialization, part-number
+front-panel planning, explicit-write-only persistence, support provenance, and
+no automatic method fallback. Fake hardware/sockets must be used; CI must never
+require a reachable switch LAN interface.
+
+Extra-channel coverage must also verify the `Extra channels only` mode: a new
+OSX-150 database run starts at `N + 1` without front-panel readings, a stopped
+or incomplete extra-only run can resume while preserving its saved routing
+method, a front-panel run cannot be continued in that mode, OSX-100 is blocked,
+SCPI reaches its configured endpoint, CLI starts sequential probing, explicit
+Write IL is required for persistence, and the result is supplemental rather
+than a false missing-front-panel failure. No normal post-full-pass offer should
+be shown for an explicitly selected extra-only run.
 
 ### Manual hardware smoke tests
 
 Required before a release that changes driver behavior, worker lifecycle, or
 measurement timing. Verify the ILM, switch, driver, VISA resource ownership,
 reference calculation, start/stop, and clean close behavior.
+
+For SCPI-mapped extras, verify the configured range on representative OSX-150
+firmware, including `CLOSe?` logical-channel confirmation and mismatch failure
+handling. Confirm that no test treats its response as a physical port. For
+direct physical-port routing, additionally verify TCP/2323 framing and
+termination on both supported models/firmware families, capture actual success
+and error responses, confirm whether an approved readback exists, test the
+operator-confirmed unverified path, and prove that returning to a normal
+channel uses `CLOSe` and logical `CLOSe?` confirmation.
 
 ## Required checks
 
@@ -77,13 +160,17 @@ machine that only runs the packaged executable.
 - Build from a clean or controlled environment when preparing a release.
 - Verify that support files, templates, assets, documentation, and
   `OP815M.dll` are present beside/in the packaged application as intended.
+- Treat every file in `infrastructure/database/sql_migrations/` as a required
+  immutable runtime resource. `ilm_app.spec` discovers the `.sql` files
+  dynamically and places them under
+  `_internal/infrastructure/database/sql_migrations/` in the one-folder build.
 - Smoke-test the packaged executable separately from running the source.
 
 ## Generated files
 
-`build/`, `dist/`, `__pycache__/`, packaged ZIP files, and local production run
-data are generated artifacts. They should not be treated as source modules or
-used as the location for architecture decisions.
+`build/`, `dist/`, `__pycache__/`, packaged ZIP files, explicit exports, and
+legacy/sample local run data are generated artifacts. They should not be
+treated as source modules or used as the location for architecture decisions.
 
 ## Release checklist
 
@@ -92,7 +179,7 @@ used as the location for architecture decisions.
   indefinite retention, over-size warnings, redaction, bounded queues, fallback writing,
   trace fan-out, bundles, and UI dialogs without using real hardware.
 - Tests pass.
-- Production Start Run preflight tests cover normal-operator field blocking,
+- Start Run preflight tests cover normal-operator field blocking,
   channel-mode validation, reference authorization, the Admin metadata-only
   exception, and no-file/no-hardware-side-effect failures.
 - Build succeeds.
@@ -104,7 +191,11 @@ used as the location for architecture decisions.
 
 `build_windows.ps1` calls `verify_release.ps1` automatically after copying the
 support files. The verifier checks the executable, installation guide,
-dependency checker, operator guide, and PyInstaller `_internal` directory.
+dependency checker, operator guide, PyInstaller `_internal` directory, and COC
+templates. It also requires the source and packaged SQL migration directories
+to exist, verifies that the source set is nonempty, and compares every packaged
+migration with source by filename and SHA-256 hash. Missing, altered, or stale
+packaged migrations fail verification; the verifier never repairs a release.
 
 `package_release.ps1` repeats that verification, reads the version from
 `config\app_info.py`, and creates `releases\LightWorkbench-v<version>.zip`. It does

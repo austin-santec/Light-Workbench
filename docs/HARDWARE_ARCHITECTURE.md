@@ -11,6 +11,8 @@ Application workflows should depend on capability contracts in
   closes.
 - `OpticalSwitch`: connects, reports configured logical channels, selects a
   logical channel, and closes.
+- `DirectPhysicalPortRouter`: optional engineering capability that routes a
+  validated physical port without treating it as a configured logical channel.
 
 The current `SantecPowerMeter` and `SantecOpticalSwitch` classes are adapters for these
 capabilities. The application should not import `OP815`, `pyvisa`, `ctypes`,
@@ -54,11 +56,12 @@ adapter opens a fresh session and probes only `*IDN?`
 with LF, then CRLF if needed. A supported identity selects the session ending.
 It then queries `CFG:SWT:END?` and requires a positive configured channel count
 before the switch is considered ready. `CLOSe?` is not used during connection;
-it is only used to verify the physical port after a `CLOSe <channel>` routing
-command. A zero count, SCPI error, timeout, or nonnumeric response retains the
+after `CLOSe <channel>`, it reports the active logical channel and confirms that
+the requested logical route became active. It does not report or verify the
+underlying physical mapping. A zero count, SCPI error, timeout, or nonnumeric response retains the
 known model, serial, firmware, address, ending, command, and response in
 transient diagnostics while safely closing the session and blocking routing.
-These details are hardware status only and do not alter run CSV/JSON data or
+These details are hardware status only and do not alter persisted run data or
 measurement timing.
 
 Normal switch VISA failures are classified at the hardware boundary before
@@ -81,6 +84,88 @@ not route a channel, change a mapping, connect automatically, or write run data.
 Transport failures use the existing VISA classification; a firmware-level SCPI
 rejection or invalid address is reported as an unsupported/invalid IP response
 without claiming that the switch was physically disconnected.
+
+## Logical routing and direct physical-port routing
+
+Normal channels `1..N`, where `N` is parsed from the unit part number, continue
+to use USB/VISA `CLOSe <logical channel>`, the existing 250 ms switch-settling
+delay, and `CLOSe?` logical-channel confirmation. The adapter returns a typed
+result containing requested and reported logical channels; a mismatch blocks
+measurement. The documented physical port comes from the assignment's
+effective channel map, not from switch readback. A larger `CFG:SWT:END?` result
+does not expand the normal pass beyond `N`.
+
+The administrator-selected extra-channel method is fixed for a run. The
+default `scpi_mapped` method treats `CFG:SWT:END?` as the known configured
+logical endpoint `M`. If `M > N`, it offers exactly `N + 1..M`, routes each
+candidate through the same verified `set_channel()` SCPI path, and completes
+automatically at `M`. The requested configured extra channel is retained as the
+physical candidate identity, while `CLOSe?` confirms only the same logical
+target. `M = N` means no SCPI extras are configured; `M < N`
+is a blocking configuration mismatch. Operators must temporarily configure
+the extra mappings outside Light Workbench; the application does not edit the
+module map.
+
+The Hardware test setup `Channel mode` also provides `Extra channels only`.
+This mode is independent of a completed front-panel pass, uses the part-number
+count as its boundary, and begins at `N + 1`. It supports a new database run or
+continuation of a stopped/incomplete extra-only run. New runs use the current
+Admin Config routing method; continuations use the saved method in run metadata.
+The mode is available only for OSX-150 and is stored as the stable metadata
+value `extra_channels_only`.
+
+The administrator-only `cli_direct` method is explicitly experimental and uses
+the separate `set_physical_port()` capability. The adapter first obtains the
+already-connected switch's configured IP through the existing LAN query, then
+`hardware/santec_cli.py` opens only that address
+on named TCP port 2323 and sends exactly:
+
+```text
+b0 writereg mems.ch <physical port>\r\n
+```
+
+It does not scan the network, accept arbitrary commands, edit permanent
+mapping, or call `CLOSe?` as a direct-port readback. The raw-TCP default uses
+CRLF, a 2.0 s connection timeout, a 1.0 s initial response timeout, a 100 ms
+post-byte idle timeout, and a 4096 byte response limit. The initial timeout
+means no response arrived. Once any bytes arrive, the idle timeout completes
+the bounded frame and is not itself a failure. Recognized success is
+`acknowledged`; configured readback can produce `verified`, but no readback
+command is enabled by default. Unknown text and binary responses are
+`unverified` and require explicit operator confirmation. Binary responses are
+retained as uppercase hexadecimal (for example `03 00 00 04`) for the
+operator and support log. CLI errors, refused connections, socket errors, and
+initial response timeouts are `failed` and cannot produce an accepted
+measurement for that attempt.
+
+These transport defaults and acknowledgement patterns have automated socket-
+seam coverage but still require validation against each supported OSX firmware.
+The profile has an isolated optional readback-command setting for future use;
+no command has been guessed. USB/VISA and TCP routes share the connection
+manager's single hardware executor and the adapter's routing lock, so they
+cannot overlap.
+
+Replacement recording is not a routing operation. The SQL-backed replacement
+editor reads the current effective assignment map from the database and records
+operator-supplied documentation only after explicit physical-completion
+confirmation. It does not call `CLOSe`, `CLOSe?`, the CLI tunnel, VISA, or any
+other switch command, and it does not claim that the external mapping was
+verified.
+
+Unknown physical capacity applies only to experimental CLI mode and is handled
+by operator-confirmed sequential discovery. The worker begins at `N + 1`; a
+command or provisional reading alone
+does not prove that a port exists. Write IL and Continue confirms and stores a
+candidate. Retry reroutes the same candidate without saving. No More Physical
+Ports records the operator-reported endpoint; Stop Extra Testing ends without
+inferring capacity. Both discard the current provisional candidate. An internal
+hard stop at physical port 512 prevents unbounded register writes. It is not
+operator- or administrator-configurable and is never treated as installed
+capacity; reaching it requires engineering review.
+
+There is no automatic fallback between SCPI and CLI. Both methods share the
+measurement, validation, persistence, and replacement-analysis pipeline, but
+only CLI mode opens TCP port 2323 or sends `writereg`.
 
 After a supported switch reaches the Connected state, the main window may use
 the serial already present in `DeviceInfo` as the setup's Main board serial and
@@ -177,9 +262,10 @@ Light Workbench does not infer the mode from ILM identity, firmware, serial
 number, product option, power readings, or cached history.
 
 The selected mode is stored with each reference and reading. New MM readings
-use the independent MM limit profile and normal analysis; the current COC
-workflow remains SM-only because its report templates and qualification rules
-are SM-specific. Historical compatibility records remain loadable for review.
+use the independent MM limit profile and normal analysis. COC export supports
+approved OSX-100 SM and MM templates and OSX-150 SM templates; OSX-150 MM
+remains blocked because no approved template/profile exists. Historical
+compatibility records remain loadable for review.
 
 Device identity and any adapter capability metadata are recorded for support,
 but they do not select or override the operator's mode. The main window does
@@ -188,9 +274,9 @@ product option. A future adapter can describe native MM hardware at the same
 boundary without changing the manual selection workflow.
 
 The application records both wavelength sets and the classification in
-references, accepted readings, diagnostic exports, traces, CSV/JSON run data,
-and accepted-attempt history. Mode changes are blocked during active hardware
-operations and select the matching session reference without deleting the
+references, accepted database readings, diagnostic exports, traces, legacy
+CSV/JSON run data, and accepted-attempt history. Mode changes are blocked during
+active hardware operations and select the matching session reference without deleting the
 other mode's reference. The laser/source order,
 settling constants, and `reference - measured power` calculation are unchanged.
 All profile-aware validation and diagnostic calls receive the active OPM pair
@@ -284,7 +370,7 @@ Transient communication errors remain distinct from confirmed disconnects.
 
 ## Measurement pipeline
 
-The intended future pipeline is:
+The current measurement pipeline is:
 
 ```text
 select channel
@@ -304,6 +390,21 @@ return a typed MeasurementResult
 
 The pipeline should be testable with simulated meter, laser, and switch
 objects. Tests should never require the vendor DLL or VISA installation.
+
+For database-backed runs, the live-reading path uses a token-bound two-phase
+write handshake. The worker publishes one immutable provisional measurement
+containing both loss values and the operation/measurement identity. The UI
+sends that exact payload back to the worker when Write IL is pressed. The
+worker keeps a small bounded set of samples presented for the current routed
+channel because a newer live acquisition may begin before an operator can
+click. It accepts the exact selected payload, pauses live remeasurement, and
+emits a persistence request. The UI commits the accepted payload to SQL Server
+and returns an acknowledgement containing the same identity and the allocated
+attempt number. The worker advances only after that acknowledgement matches.
+Unknown payloads and payloads from another run or routed channel are rejected
+without a database write, and a failed database commit leaves the same payload
+retryable. This prevents a fast live-update cycle or repeated button clicks
+from saving one reading while advancing a different one.
 
 ## Adding a new instrument
 

@@ -94,7 +94,8 @@ the historical `switch_timing.py` import remains a compatibility facade.
 
 ## Phase 3 — Domain and infrastructure separation
 
-Status: complete for the current file-backed architecture.
+Status: complete. Domain/infrastructure separation now covers both the
+SQL Server-primary runtime and legacy file compatibility.
 
 - Move insertion-loss, reference, replacement, comparison, and timing logic
   into domain services.
@@ -132,10 +133,12 @@ paths now share partial-startup cleanup behavior.
 
 ## Phase 5 — Storage and reporting
 
-- Status: complete for file-backed storage and reporting; SQLite remains intentionally deferred.
+- Status: complete for the SQL Server-primary storage/reporting runtime and
+  retained legacy file compatibility.
 
 - Add schema versions and migration functions.
-- Evaluate SQLite for multi-run analysis while preserving CSV export.
+- Maintain the implemented SQL Server repository design from
+  `docs/DATABASE_ARCHITECTURE.md` on the database-focused branch.
 - Add query/report services for operator, timing, limit, and repeatability
   analysis.
 
@@ -154,17 +157,18 @@ Do not advance a phase merely because the code was moved. The phase is done
 when behavior is covered by tests, documentation is updated, and the current
 operator workflow remains usable.
 
-Current Phase 5 increment: `infrastructure/schema.py` adds explicit run and
+Earlier Phase 5 file-compatibility work: `infrastructure/schema.py` adds explicit run and
 unit JSON schema versions. Legacy payloads are normalized through migration
 helpers, and unsupported future versions are rejected safely.
 
-Current Phase 5 reporting increment: `domain/reporting.py` and
+Earlier Phase 5 file-reporting work: `domain/reporting.py` and
 `infrastructure/run_query.py` provide typed summaries and read-only indexed-run
 queries without adding UI behavior.
 
-SQLite indexing is deferred. Current Phase 5 reporting remains file-backed and
-performs aggregation in memory, preserving CSV/JSON compatibility without
-adding a database dependency.
+SQLite is not the database direction. The database-focused branch now uses SQL
+Server for authoritative new run data and read-only database reporting. The
+file-backed reporting modules remain compatibility utilities; no historical
+bulk import is planned.
 
 The current aggregation increment adds overall and per-tester timing and
 warning-limit summaries over selected saved runs. It remains a domain service
@@ -267,5 +271,5 @@ Root modules remain compatibility facades so existing imports and integrations
 continue to work.
 
 The architecture refactor and current source-organization pass are complete.
-Future work is feature expansion (such as separate OPM/laser support, richer
-multi-run analysis, or optional SQLite persistence), not required cleanup.
+Future work is feature expansion (such as separate OPM/laser support) and the
+explicitly deferred network SQL Server pilot, not an optional SQLite migration.

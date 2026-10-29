@@ -10,6 +10,38 @@ IMPORTANT: Keep the complete LightWorkbench folder together. Do not copy or
 run LightWorkbench.exe by itself. The _internal folder contains required
 application files.
 
+DATABASE BRANCH STORAGE
+-----------------------
+
+New production runs require the configured SQL Server database and Windows
+Authentication. Start Run is blocked when connectivity or schema preflight
+fails. Write IL saves the complete two-wavelength reading to SQL Server before
+the application advances; a failed write remains pending for retry.
+
+Existing CSV/JSON runs can still be opened for review but are not uploaded and
+cannot be continued as database runs. Support logs, diagnostic exports, and COC
+workbooks remain local files. Database-backed COC export asks the operator to
+choose an output folder.
+
+DATABASE CONFIGURATION
+----------------------
+
+The database endpoint is stored in the per-user file:
+
+  %LOCALAPPDATA%\LightWorkbench\config\database.ini
+
+If the file does not exist, Light Workbench creates it automatically with
+the local development defaults. Existing files are preserved during startup,
+upgrades, and rebuilds. The file contains the SQL Server instance, database,
+ODBC driver, encryption policy, certificate policy, and bounded timeouts. It
+does not contain a username or password; Windows Authentication uses the
+signed-in Windows account.
+
+If the file is malformed or contains an invalid setting, database use is
+blocked and the application identifies the file and the setting that must be
+corrected. A credential-free example is included as
+config\database.ini.example in the source repository.
+
 
 1. WHAT IS REQUIRED
 -------------------
@@ -30,6 +62,9 @@ The target computer needs:
     cannot edit them during a run. Administrators can use Edit > Admin Mode...
     and Edit > Admin Config... to change the per-user profiles stored under
     `%LOCALAPPDATA%\\LightWorkbench\\config\\limit_profiles.ini`.
+    For OSX-150, the same administrator file stores the extra-channel routing
+    method. `SCPI mapped channels` is the default; `CLI direct physical ports`
+    is an experimental alternative.
 
 The application is 32-bit. It normally runs on both 32-bit and 64-bit Windows,
 but a 64-bit computer must still have the 32-bit VISA support installed.
@@ -71,7 +106,7 @@ No Python installation is needed.
 
 Use Help > About inside the application to view the running
 version and project capabilities. The current source version is Light Workbench
-1.29.3; an existing executable keeps its prior version until rebuilt. The main
+1.36.0; an existing executable keeps its prior version until rebuilt. The main
 window opens maximized by default and can be restored with the normal Windows
 title-bar control.
 
@@ -160,6 +195,18 @@ The front-panel channel count is derived automatically from the three-digit
 channel field in the part number. It is displayed read-only; COC preparation
 and replacement analysis do not accept a manually entered count.
 
+After a completed OSX-150 front-panel pass, extra-channel behavior follows the
+method selected in Admin Config. The default SCPI method offers only logical
+channels above the front-panel count that are already present in the switch's
+temporary module configuration, routes them with `CLOSe`, verifies them with
+logical `CLOSe?` confirmation, and stops at the configured endpoint. The query
+does not report a physical mapping; the requested configured extra channel is
+the candidate port identity. Light Workbench does not add or
+remove those mappings. The experimental CLI method instead probes direct
+physical ports sequentially and keeps the operator-controlled `No More Physical
+Ports` action because capacity is unknown. The application never falls back
+from one method to the other automatically.
+
 Real switch runs also record start time, stop time, continuation times, session
 count, and accumulated switch-test duration in the CSV metadata. Live IL and
 Red Light Test are not included in this timing.
@@ -220,12 +267,12 @@ from another numbered run for the same unit. Choose No comparison to hide those
 columns again. Comparison data is display-only and does not change analysis or
 saved run files.
 
-Write COC... derives the front-panel channel count from the selected base run's
-part number and lets the operator choose a persisted base run, with an optional
-replacement/retest run. It requires every front-panel channel and applies the
+Write COC... derives the front-panel channel count from the selected context
+run's part number and automatically evaluates all compatible persisted run
+history. It requires every front-panel channel and applies the
 selected model's fail limit: OSX-100 uses 0.8000 dB, while OSX-150 uses
-2.5000 dB. Supplemental readings
-replace complete wavelength pairs and changed physical ports must match the
+2.5000 dB. Retest readings replace complete wavelength pairs according to
+persisted recency, and changed physical ports must match the
 unit's recorded replacements. A passing result above 2.2500 dB produces an
 optimization warning only when a measured replacement candidate is available.
 
@@ -250,9 +297,13 @@ count. Missing or invalid part numbers block COC preparation; the application
 does not guess from the switch capacity or number of readings. OSX-150 MM
 remains unavailable for COC export because no approved OSX-150 MM templates
 exist.
-Replacement recommendations are calculated for the selected run but are not
-stored as permanent results. Completed replacements and designated spare ports
-are stored in the shared unit.json record.
+For database-backed runs, replacement analyses are stored as append-only
+snapshots with their criteria, source measurement high-watermark, and
+normalized recommendations. The latest analysis is restored with the run and
+is marked stale after a newer accepted measurement. Completed replacements and
+designated spare ports remain authoritative routing documentation; a replacement
+may retain the ID of the recommendation that informed it. File-backed legacy
+runs keep their existing session-local analysis behavior.
 After a successful full configured pass with every planned channel written, the
 operator is offered the same advisory replacement analysis. This offer does
 not appear for partial, selected, stopped, failed, retest-only, loaded-only,

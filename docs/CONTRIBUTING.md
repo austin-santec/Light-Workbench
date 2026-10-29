@@ -43,6 +43,9 @@ The optional package list is in `requirements-dev.txt`, and
 - Does this belong in UI, application, domain, or infrastructure code?
 - Could this work with an OPM and separate laser?
 - Does it preserve existing run-file compatibility?
+- For database work, is SQL confined to `infrastructure/`, tested against an
+  isolated integration database, and consistent with
+  `DATABASE_ARCHITECTURE.md`?
 - Is cleanup safe if the user closes the window or stops a run?
 - Is the behavior covered without requiring connected hardware?
 - Does the change need a version, README, or release-package update?

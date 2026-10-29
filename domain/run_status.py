@@ -104,6 +104,8 @@ class RunStatusAssessment:
             "Completion: %s" % self.completion_display,
             "Result: %s" % self.result_label,
         ]
+        if self.result_status == RESULT_COMPOSITE:
+            lines.append("COC creation is available.")
         if self.completion_reason:
             lines.append("Reason: %s" % self.completion_reason)
         if self.missing_channels:
@@ -144,6 +146,10 @@ def _format_channels(channels: Sequence[int]) -> str:
     return ", ".join(values)
 
 
+def _format_run_numbers(run_numbers: Sequence[int]) -> str:
+    return ", ".join(str(int(value)) for value in run_numbers)
+
+
 def planned_channels_from_metadata(metadata: Mapping[str, object]) -> tuple[int, ...] | None:
     """Load a persisted plan without guessing from a filtered table."""
     raw_channels = metadata.get("Planned channels")
@@ -180,16 +186,21 @@ def assess_run_status(
     front_panel_channel_count: int | None = None,
     replacement_analysis: Mapping[str, object] | None = None,
     composite_result=None,
+    effective_result=None,
+    effective_run_numbers: Sequence[int] = (),
     compatible_run_numbers: Sequence[int] = (),
     completion_reason: str = "",
     completed_at_utc: str = "",
+    extra_only: bool = False,
     legacy=False,
 ) -> RunStatusAssessment:
     """Assess a run using accepted records and explicit workflow state.
 
     ``planned_channels`` is intentionally optional: old files without a saved
     plan receive ``unknown`` completion rather than an unsafe inferred state.
-    ``composite_result`` is expected to be the existing validated COC result.
+    ``composite_result`` is the legacy pairwise compatibility input. New
+    callers should provide ``effective_result`` from the shared multi-run
+    projection so a newer failure cannot be hidden by an older passing run.
     """
     records = tuple(records or ())
     completed_channels = {int(record.channel) for record in records}
@@ -201,6 +212,8 @@ def assess_run_status(
         completion = COMPLETION_IN_PROGRESS
     elif terminal_status in {COMPLETION_INCOMPLETE, COMPLETION_INTERRUPTED}:
         completion = terminal_status
+    elif extra_only and terminal_status == COMPLETION_COMPLETE:
+        completion = COMPLETION_COMPLETE
     elif planned and not missing:
         completion = COMPLETION_COMPLETE
     elif planned:
@@ -217,6 +230,8 @@ def assess_run_status(
             completion_reason = "The run ended before all planned channels were accepted."
         elif completion == COMPLETION_INTERRUPTED:
             completion_reason = "The run ended because of a hardware or software error."
+        elif completion == COMPLETION_COMPLETE and extra_only:
+            completion_reason = "The extra-channel run reached its configured endpoint."
         elif completion == COMPLETION_COMPLETE:
             completion_reason = "Every planned channel has an accepted reading."
 
@@ -238,13 +253,84 @@ def assess_run_status(
         front_panel_channel_count
         and all(channel in completed_channels for channel in range(1, int(front_panel_channel_count) + 1))
     )
-    if review_required:
+    projection = effective_result
+    projection_runs = tuple(dict.fromkeys(int(value) for value in effective_run_numbers))
+    if projection is not None:
+        projection_invalid = bool(
+            getattr(projection, "invalid_readings", ())
+            or getattr(projection, "validation_issues", ())
+        )
+        projection_missing = tuple(getattr(projection, "missing_channels", ()))
+        projection_failures = tuple(getattr(projection, "failures", ()))
+        projection_optimizations = tuple(
+            getattr(projection, "optimization_channels", ())
+        )
+        if projection_invalid or review_required:
+            result = RESULT_REVIEW
+            detail = "The current effective measurement projection requires review."
+        elif projection_missing:
+            result = RESULT_NOT_EVALUATED
+            detail = "The current effective run history is missing required channels."
+        elif projection_failures:
+            recommendations = tuple(
+                getattr(projection, "optimization_recommendations", ())
+            ) or tuple((replacement_analysis or {}).get("recommendations", ()))
+            result = (
+                RESULT_FAIL_RECOVERABLE
+                if recommendations
+                else RESULT_FAIL_UNRECOVERABLE
+            )
+            detail = (
+                "The newest effective measurement for one or more channels fails; "
+                "measured extra ports provide a possible recovery path."
+                if recommendations
+                else "The newest effective measurement for one or more channels fails."
+            )
+        elif projection_optimizations:
+            recommendations = tuple(
+                getattr(projection, "optimization_recommendations", ())
+            ) or tuple((replacement_analysis or {}).get("recommendations", ()))
+            result = (
+                RESULT_PASS_OPTIMIZATION
+                if recommendations
+                else RESULT_PASS_REVIEW
+            )
+            detail = "The effective measurement history passes but has optimization-level readings."
+        elif len(projection_runs) > 1:
+            result = RESULT_COMPOSITE
+            if standalone_complete:
+                detail = (
+                    "The current result uses the newest measurements from "
+                    "combined compatible run history."
+                )
+            else:
+                detail = (
+                    "This partial run contributes to a composite pass using "
+                    "Runs %s." % _format_run_numbers(projection_runs)
+                )
+        else:
+            result = RESULT_PASS
+            detail = "All required front-panel readings are within the applicable fail limit."
+    elif review_required:
         result = RESULT_REVIEW
         detail = "One or more accepted readings is invalid or non-finite."
     elif not standalone_complete:
         if composite_result is not None and getattr(composite_result, "eligible", False):
-            result = RESULT_SUPPLEMENTAL
-            detail = "This run supplies accepted readings for a validated combined result."
+            result = RESULT_COMPOSITE
+            run_numbers = tuple(
+                dict.fromkeys(int(value) for value in (compatible_run_numbers or ()))
+            )
+            if run_numbers:
+                detail = (
+                    "This partial run contributes to a validated composite pass "
+                    "with Run%s %s."
+                    % (
+                        "s" if len(run_numbers) != 1 else "",
+                        _format_run_numbers(run_numbers),
+                    )
+                )
+            else:
+                detail = "This partial run contributes to a validated composite pass."
         else:
             result = RESULT_NOT_EVALUATED
             detail = "The run does not contain the complete front-panel channel set."
@@ -272,7 +358,24 @@ def assess_run_status(
         result = RESULT_PASS
         detail = "All required front-panel readings are within the applicable fail limit."
 
-    if completion in {COMPLETION_IN_PROGRESS, COMPLETION_INCOMPLETE, COMPLETION_INTERRUPTED} and result == RESULT_PASS:
+    if extra_only:
+        if review_required:
+            result = RESULT_REVIEW
+            detail = "One or more accepted extra-channel readings requires review."
+        elif not records:
+            result = RESULT_NOT_EVALUATED
+            detail = "No extra-channel readings have been accepted."
+        else:
+            result = RESULT_SUPPLEMENTAL
+            detail = (
+                "This independent extra-channel run provides supplemental "
+                "measurements for replacement analysis; it is not a standalone COC."
+            )
+    elif (
+        completion
+        in {COMPLETION_IN_PROGRESS, COMPLETION_INCOMPLETE, COMPLETION_INTERRUPTED}
+        and result == RESULT_PASS
+    ):
         result = RESULT_NOT_EVALUATED
         detail = "The run has not completed its planned channel set."
 

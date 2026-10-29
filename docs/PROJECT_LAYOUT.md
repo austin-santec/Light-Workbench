@@ -15,7 +15,7 @@ ui/                              Qt dialogs, status panels, and presentation wor
 tools/                           Optional dependency and environment diagnostics
 domain/                          Vendor-neutral models and business rules
 hardware/                        Hardware contracts, identity, adapters, factories, and sessions
-infrastructure/                  File repositories, CSV/unit persistence, support-log writing/bundles, loaders, COC/diagnostic export, queries, and reports
+infrastructure/                  File/SQL persistence, migrations, support logs, loaders, exports, queries, and reports
 tests/                            Hardware-free automated tests
 ```
 
@@ -34,13 +34,17 @@ docs/ILM_DLL_FUNCTION_REFERENCE.md  OP815M.dll command inventory and usage rules
 dist/LightWorkbench/             Generated one-folder executable distribution
 build/                           Generated PyInstaller intermediates
 releases/                        Generated versioned deployment ZIPs
-IL-Reads/                        Local production run data
+IL-Reads/ or ILM-Reads/          Legacy/sample run files and explicit exports
+sample_data/scenarios/           Declarative synthetic database seed scenarios
 ```
 
-`build`, `dist`, `releases`, `__pycache__`, and `IL-Reads` are generated or
-machine-specific content. They are not architecture boundaries and should not
-be used as source locations. The release scripts keep deployment output in
-`dist` and `releases` without mixing it into `docs` or application packages.
+`build`, `dist`, `releases`, `__pycache__`, and legacy/sample run directories
+are generated or machine-specific content. They are not architecture
+boundaries and should not be used as source locations. New recorded hardware
+runs are stored in SQL Server; local run files are compatibility inputs or explicit
+outputs, not the authoritative write path. The release scripts keep deployment
+output in `dist` and `releases` without mixing it into `docs` or application
+packages.
 
 ## Change placement guide
 
@@ -62,15 +66,31 @@ be used as source locations. The release scripts keep deployment output in
   not used to infer the selected mode.
 - OSX-100/OSX-150 part-number parsing and front-panel channel-count resolution:
   `domain/part_numbers.py`. This count remains separate from the switch's
-  configured physical-channel count.
+  last reported SCPI-configured channel count; this is diagnostic and not a
+  physical-capacity authority.
 - Multi-run COC merging and publication rules: `domain/coc_preparation.py`;
   repository coordination: `application/coc_workflow.py`; operator selection:
   `ui/coc_export_dialog.py`; workbook mechanics: `infrastructure/coc_export.py`.
 - Model-specific insertion-loss criteria: `domain/limit_profiles.py`.
+- Assignment-wide effective measurement selection, replacement verification,
+  iterative result classification, and source fingerprints:
+  `domain/effective_replacement_analysis.py`.
+- Stable run-purpose values and production-analysis policy:
+  `domain/run_purpose.py`.
 - Vendor-neutral contracts and composed hardware lifecycle: `hardware/`.
 - Hardware identity/status presentation: `hardware/device_identity.py` and
   `ui/hardware_status.py`.
-- CSV/JSON/XLSX/filesystem and future storage adapters: `infrastructure/`.
+- CSV/JSON/XLSX/filesystem adapters and SQL Server infrastructure:
+  `infrastructure/`. Forward-only migration logic is in
+  `infrastructure/database/migrations.py`; immutable SQL scripts are in
+  `infrastructure/database/sql_migrations/`; guarded integration reset and
+  backup/restore operations are in `infrastructure/database/maintenance.py`.
+  Database SQL remains private to this layer. Repository contracts, SQL-primary
+  orchestration, and read-only reporting live under `application/`; reporting
+  records/CSV formatting live under `domain/`; the report dialog lives in
+  `ui/database_reports.py`. Database replacement editor state and atomic
+  change orchestration live in `application/replacement_persistence_workflow.py`;
+  its SQL-aware dialog lives in `ui/database_replacements.py`.
 - Administrator criteria INI persistence: `infrastructure/limit_profile_repository.py`.
 - Session-only administrator authorization and dialogs:
   `application/admin_session.py` and `ui/admin_config.py`.
@@ -85,4 +105,8 @@ be used as source locations. The release scripts keep deployment output in
   support dialogs: `ui/support_logs.py`.
 - Compatibility behavior for older callers: existing root-level facades.
 - Packaging and deployment behavior: `ilm_app.spec` and the PowerShell release
-  scripts, not application runtime modules.
+  scripts, not application runtime modules. SQL migrations are required runtime
+  resources: `ilm_app.spec` discovers every source `.sql` migration through
+  `tools/release_resources.py` and packages it under
+  `_internal/infrastructure/database/sql_migrations/`. Release verification
+  requires the packaged filenames and SHA-256 hashes to match source.

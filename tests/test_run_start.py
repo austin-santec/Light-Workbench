@@ -1,8 +1,10 @@
 import unittest
 
+from domain.extra_ports import ExtraChannelRoutingMethod
 from application.run_start import (
     HardwareRunPreparation,
     build_hardware_run_request,
+    evaluate_extra_port_offer_eligibility,
     prepare_hardware_run,
 )
 
@@ -50,6 +52,12 @@ class RunStartPreparationTests(unittest.TestCase):
             existing_channels=[1, 2],
             resume_existing=True,
             live_write_mode=True,
+            front_panel_channel_count=48,
+            offer_extra_ports=True,
+            run_mode="continue",
+            existing_extra_physical_ports=[49, 50],
+            existing_extra_logical_channels=[49, 50],
+            extra_channel_routing_method=ExtraChannelRoutingMethod.CLI_DIRECT,
         )
 
         self.assertIs(request.power_meter_factory(), meter)
@@ -59,6 +67,73 @@ class RunStartPreparationTests(unittest.TestCase):
         self.assertTrue(request.live_write_mode)
         self.assertEqual(request.existing_channels, [1, 2])
         self.assertEqual(request.live_write_interval, 0.25)
+        self.assertEqual(request.front_panel_channel_count, 48)
+        self.assertTrue(request.offer_extra_ports)
+        self.assertEqual(request.run_mode, "continue")
+        self.assertEqual(request.existing_extra_physical_ports, [49, 50])
+        self.assertEqual(request.existing_extra_logical_channels, [49, 50])
+        self.assertEqual(
+            request.extra_channel_routing_method,
+            ExtraChannelRoutingMethod.CLI_DIRECT,
+        )
+
+    def test_extra_port_offer_allows_new_and_continued_full_passes(self):
+        for run_mode in ("new", "continue"):
+            decision = evaluate_extra_port_offer_eligibility(
+                full_pass=True,
+                manual_channel_order=False,
+                retest=False,
+                run_mode=run_mode,
+                has_part_number=True,
+            )
+            self.assertTrue(decision.eligible)
+            self.assertEqual(decision.reason, "eligible")
+
+    def test_extra_only_preparation_and_offer_policy(self):
+        preparation = prepare_hardware_run(
+            retest=False,
+            requested_channels=None,
+            channel_mode="Extra channels only",
+        )
+        self.assertTrue(preparation.extra_only)
+        self.assertEqual(preparation.channels, [])
+        decision = evaluate_extra_port_offer_eligibility(
+            full_pass=False,
+            extra_only=True,
+            manual_channel_order=False,
+            retest=False,
+            run_mode="new",
+            has_part_number=True,
+            supports_extra_channels=True,
+        )
+        self.assertTrue(decision.eligible)
+
+    def test_extra_port_offer_rejects_non_full_or_excluded_workflows(self):
+        cases = (
+            {"full_pass": False, "reason": "not_a_full_pass"},
+            {"manual_channel_order": True, "reason": "manual_channel_order"},
+            {"retest": True, "reason": "selected_retest"},
+            {"run_mode": "unknown", "reason": "unsupported_run_mode"},
+            {"has_part_number": False, "reason": "missing_part_number"},
+            {
+                "supports_extra_channels": False,
+                "reason": "switch_model_has_no_spares",
+            },
+        )
+        for case in cases:
+            values = {
+                "full_pass": True,
+                "manual_channel_order": False,
+                "retest": False,
+                "run_mode": "continue",
+                "has_part_number": True,
+                "supports_extra_channels": True,
+            }
+            expected_reason = case.pop("reason")
+            values.update(case)
+            decision = evaluate_extra_port_offer_eligibility(**values)
+            self.assertFalse(decision.eligible)
+            self.assertEqual(decision.reason, expected_reason)
 
 
 if __name__ == "__main__":

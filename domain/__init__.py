@@ -15,7 +15,7 @@ from .part_numbers import (
     parse_osx_part_number,
     resolve_front_panel_channel_count,
 )
-from .run_data import RunData
+from .run_data import RunData, analyze_measurements_with_profile
 from .measurement_attempts import (
     MeasurementAttempt,
     latest_attempt_for_channel,
@@ -74,6 +74,7 @@ __all__ = [
     "parse_osx_part_number",
     "resolve_front_panel_channel_count",
     "RunData",
+    "analyze_measurements_with_profile",
     "MeasurementAttempt",
     "latest_attempt_for_channel",
     "legacy_attempts_for_measurements",

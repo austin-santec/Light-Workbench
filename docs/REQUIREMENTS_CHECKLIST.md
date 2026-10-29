@@ -6,7 +6,7 @@ See [`Requirements.md`](../Requirements.md) for the full wording, evidence, and 
 
 **Last reviewed:** 2026-10-08
 
-**Software baseline:** Light Workbench 1.29.3
+**Software baseline:** Light Workbench 1.35.2
 
 **RevB total:** 46 requirement rows
 
@@ -44,6 +44,9 @@ items still need representative equipment testing before formal acceptance.
 - [x] **FUN-023 — Save the active criteria profile and revision with the run.** `[MVP]`
 - [x] **FUN-025 — Use the OSX-150 optimization band below the failure limit.** `[MVP]`
 - [x] **FUN-027 — Keep logical channels separate from physical ports.** `[MVP]`
+  - `CLOSe?` confirms the active logical channel only. Normal and replacement
+    readings obtain their physical port from the assignment's effective map;
+    SCPI extra candidates use the explicitly requested configured channel.
 - [x] **FUN-040 — Fit COC rows to the requested front-panel channel count.** `[MVP]`
 - [x] **FUN-047 — Autosave after every accepted reading or retest.** `[MVP]`
 - [x] **FUN-055 — Block Start Run until hardware, setup, channels, and reference are valid.** `[MVP]`
@@ -100,9 +103,9 @@ Each item already has useful behavior, but the noted work remains.
   - Works now: analysis uses both wavelengths and separates recommended/optional replacements.
   - Next: approve and display the complete ranking calculation.
 
-- [ ] **FUN-031 — Document a manually performed replacement and record the complete change.** `[MVP]`
-  - Works now: Current Port → Replacement Port, reason, operator, timestamp, and append-only replacement history are stored per unit. Repeated changes can be tracked as chains such as 14 → 41 → 43.
-  - Important boundary: Light Workbench intentionally does not execute, identify, or verify the hardware mapping. The requirement wording should be clarified to reflect this manual process.
+- [x] **FUN-031 — Document a manually performed replacement and record the complete change.** `[MVP]`
+  - Database runs now derive logical channel, current effective port, assignment, related run, unit/switch context, and UTC timestamp. The operator confirms the proposed port, reason, operator, optional details, and that the physical reroute was completed externally.
+  - Recommendations remain advisory, corrections/reversals append new rows, and the full chain such as logical 14: 14 → 41 → 43 remains visible. Light Workbench intentionally does not execute or verify the hardware mapping.
 
 - [ ] **FUN-034 — Show unassigned spares and their latest result.** `[MVP]`
   - Works now: designated spares and replacement suggestions are visible.
@@ -154,9 +157,31 @@ Each item already has useful behavior, but the noted work remains.
 
 ## Not implemented
 
-- [ ] **FUN-004 — Preserve every retest attempt and choose the active/final result.** `[MVP]`
+## Recently completed database replacement workflow
+
+- [x] Scope replacement analysis and COC source data to the current switch assignment.
+- [x] Combine compatible full and partial runs using the newest accepted whole wavelength pair.
+- [x] Keep unused measured extras available for later iterative analyses.
+- [x] Store unassigned extras as `extra_candidate` measurements and derive the
+  latest assignment-scoped candidate set through `vw_ConfirmedExtraPorts`.
+- [x] Derive replacement verification from a post-replacement logical-channel
+  reading whose recorded physical port matches the assignment map, without
+  querying or changing the switch mapping.
+- [x] Invalidate prior-port readings for status and COC purposes after a
+  documented mapping change; require a new logical-channel reading on the
+  effective replacement port.
+- [x] Provide a selected-channel replacement verification run action.
+- [x] Persist immutable analysis snapshots, recommendation usage, complete
+  assignment-scoped source provenance, and freshness fingerprints.
+- [x] Allow administrators to permanently void an invalid entire run while retaining its audit history.
+- [x] Show void details in loaded-run information and database reports.
+- [x] Validate replacement save batches against the authoritative assignment
+  map, prevent duplicate pending logical channels, preserve failed-save queues,
+  and log precise replacement validation diagnostics.
+- [x] Validate normal replacements and spare designations against committed
+  assignment-scoped extra evidence rather than the diagnostic SCPI count.
+
 - [ ] **FUN-022 — Define criteria by family, channel-count range, and wavelength.** `[MVP]`
-- [ ] **FUN-032 — Force a new two-wavelength test after a mapping change.** `[MVP]`
 - [ ] **FUN-036 — Link and retain pre- and post-optimization measurements.** `[R1]`
 
 ## Decisions still needed
@@ -164,7 +189,8 @@ Each item already has useful behavior, but the noted work remains.
 - [ ] Approve OSX-100 and OSX-150 limits by wavelength and channel-count range.
 - [ ] Confirm the OSX-150 optimization band and who may approve exceptions.
 - [ ] Approve the spare-ranking formula.
-- [ ] Decide how the final result is selected when multiple attempts exist.
+- [x] Decide how the final result is selected when multiple attempts exist.
+  - The newest valid measurement wins by UTC write time, attempt number, and measurement ID; no older passing measurement may be selected over a newer failure.
 - [ ] Define reference age and mandatory re-reference triggers.
 - [ ] Confirm supported OSX transports and command documentation.
 - [ ] Choose the report-template mapping method.
@@ -177,6 +203,7 @@ Each item already has useful behavior, but the noted work remains.
 1. [ ] Resolve the open acceptance decisions.
 2. [ ] Add family, wavelength, channel-count criteria, and final dispositions.
 3. [ ] Add full attempt history, final-result selection, traceability, and crash recovery.
+   - Latest-result selection and multi-run COC provenance are implemented; complete invalid-sample retention and crash recovery remain open.
 4. [ ] Complete reading validity, route verification, timing/retries, and reconnect behavior.
 5. [ ] Add authoritative mapping/spare status, forced retest, and the final-map debug export.
 6. [ ] Complete OSX-100 reporting, raw-session output, naming, and finalization validation.

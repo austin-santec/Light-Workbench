@@ -7,6 +7,70 @@ from .models import MeasurementRecord
 from .measurement_attempts import MeasurementAttempt, normalise_attempts
 
 
+def analyze_measurements_with_profile(measurements, profile) -> dict:
+    """Classify one current accepted-reading projection with saved criteria."""
+    records = tuple(measurements or ())
+    assessments = [
+        (record, profile.classify(*record.ordered_losses, record.opm_wavelengths_nm))
+        for record in records
+    ]
+    if records:
+        first_wavelength, second_wavelength = records[0].opm_wavelengths_nm
+    else:
+        first_wavelength, second_wavelength = (
+            (850, 1300) if getattr(profile, "wavelength_mode", "SM") == "MM"
+            else (1310, 1550)
+        )
+    failed = [record for record, assessment in assessments if assessment.is_fail]
+    first_failed = [
+        record.channel
+        for record, assessment in assessments
+        if first_wavelength in assessment.fail_wavelengths
+    ]
+    second_failed = [
+        record.channel
+        for record, assessment in assessments
+        if second_wavelength in assessment.fail_wavelengths
+    ]
+    both_failed = [
+        record.channel
+        for record, assessment in assessments
+        if first_wavelength in assessment.fail_wavelengths
+        and second_wavelength in assessment.fail_wavelengths
+    ]
+    return {
+        "limit": profile.fail_above_db,
+        "total": len(records),
+        "over_limit": len(failed),
+        "over_1310": len(first_failed),
+        "over_1310_channels": first_failed,
+        "over_1550": len(second_failed),
+        "over_1550_channels": second_failed,
+        "over_both": len(both_failed),
+        "over_both_channels": both_failed,
+        "too_good": sum(1 for _, assessment in assessments if assessment.is_too_good),
+        "too_good_channels": [
+            record.channel
+            for record, assessment in assessments
+            if assessment.is_too_good
+        ],
+        "optimization": sum(
+            1
+            for _, assessment in assessments
+            if assessment.is_optimization and not assessment.is_fail
+        ),
+        "optimization_channels": [
+            record.channel
+            for record, assessment in assessments
+            if assessment.is_optimization and not assessment.is_fail
+        ],
+        "failed": len(failed),
+        "fail_1310": len(first_failed),
+        "fail_1550": len(second_failed),
+        "fail_both": len(both_failed),
+    }
+
+
 @dataclass
 class RunData:
     """Loaded run data and derived analysis state.
@@ -66,37 +130,7 @@ class RunData:
     def analysis_with_profile(self, profile) -> dict:
         """Return model-specific quality counts for the active criteria."""
         self._require_approved_limit_mode()
-        assessments = [
-            (record, profile.classify(*record.ordered_losses, record.opm_wavelengths_nm))
-            for record in self.measurements
-        ]
-        first_wavelength, second_wavelength = self.opm_wavelengths_nm
-        failed = [record for record, assessment in assessments if assessment.is_fail]
-        fail_1310 = [record.channel for record, assessment in assessments if first_wavelength in assessment.fail_wavelengths]
-        fail_1550 = [record.channel for record, assessment in assessments if second_wavelength in assessment.fail_wavelengths]
-        fail_both = [
-            record.channel for record, assessment in assessments
-            if first_wavelength in assessment.fail_wavelengths and second_wavelength in assessment.fail_wavelengths
-        ]
-        return {
-            "limit": profile.fail_above_db,
-            "total": len(self.measurements),
-            "over_limit": len(failed),
-            "over_1310": len(fail_1310),
-            "over_1310_channels": fail_1310,
-            "over_1550": len(fail_1550),
-            "over_1550_channels": fail_1550,
-            "over_both": len(fail_both),
-            "over_both_channels": fail_both,
-            "too_good": sum(1 for _, assessment in assessments if assessment.is_too_good),
-            "too_good_channels": [record.channel for record, assessment in assessments if assessment.is_too_good],
-            "optimization": sum(1 for _, assessment in assessments if assessment.is_optimization and not assessment.is_fail),
-            "optimization_channels": [record.channel for record, assessment in assessments if assessment.is_optimization and not assessment.is_fail],
-            "failed": len(failed),
-            "fail_1310": len(fail_1310),
-            "fail_1550": len(fail_1550),
-            "fail_both": len(fail_both),
-        }
+        return analyze_measurements_with_profile(self.measurements, profile)
 
     def over_limit(self, limit: float) -> list[MeasurementRecord]:
         """Return channels exceeding the limit at either wavelength."""
@@ -142,4 +176,4 @@ class RunData:
         return None
 
 
-__all__ = ["RunData"]
+__all__ = ["RunData", "analyze_measurements_with_profile"]

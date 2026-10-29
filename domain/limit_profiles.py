@@ -12,6 +12,7 @@ from typing import Mapping
 
 SUPPORTED_SWITCH_MODELS = ("OSX-100", "OSX-150")
 SUPPORTED_WAVELENGTH_MODES = ("SM", "MM")
+DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB = 0.2
 
 
 def normalize_wavelength_mode(value: str | None) -> str:
@@ -73,6 +74,9 @@ class LimitProfile:
     warning_above_db: float | None
     fail_above_db: float
     wavelength_mode: str = "SM"
+    minimum_replacement_improvement_db: float = (
+        DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB
+    )
 
     def validate(self) -> "LimitProfile":
         model = normalize_switch_model(self.model)
@@ -81,13 +85,21 @@ class LimitProfile:
             raise ValueError("Unsupported switch model: %s" % self.model)
         if not str(self.profile_name).strip() or not str(self.revision).strip():
             raise ValueError("Profile name and revision are required.")
-        values = (self.too_good_below_db, self.fail_above_db)
+        values = (
+            self.too_good_below_db,
+            self.fail_above_db,
+            self.minimum_replacement_improvement_db,
+        )
         if any(not math.isfinite(float(value)) for value in values):
             raise ValueError("Limit values must be finite numbers.")
         if not -100 <= float(self.too_good_below_db) <= 100:
             raise ValueError("Too-good limit must be between -100 and 100 dB.")
         if not -100 <= float(self.fail_above_db) <= 100:
             raise ValueError("Fail limit must be between -100 and 100 dB.")
+        if not 0 <= float(self.minimum_replacement_improvement_db) <= 100:
+            raise ValueError(
+                "Minimum replacement improvement must be between 0 and 100 dB."
+            )
         if model != "LEGACY" and self.too_good_below_db >= self.fail_above_db:
             raise ValueError("Too-good limit must be below the fail limit.")
         if self.warning_enabled:
@@ -148,6 +160,9 @@ class LimitProfile:
                 None if self.warning_above_db is None else float(self.warning_above_db)
             ),
             "fail_above_db": float(self.fail_above_db),
+            "minimum_replacement_improvement_db": float(
+                self.minimum_replacement_improvement_db
+            ),
         }
 
     @classmethod
@@ -167,6 +182,12 @@ class LimitProfile:
             fail_above_db=float(values["fail_above_db"]),
             wavelength_mode=normalize_wavelength_mode(
                 values.get("wavelength_mode", values.get("mode", "SM"))
+            ),
+            minimum_replacement_improvement_db=float(
+                values.get(
+                    "minimum_replacement_improvement_db",
+                    DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB,
+                )
             ),
         ).validate()
 
@@ -322,6 +343,7 @@ def legacy_limit_profile(warning_limit: float) -> LimitProfile:
 __all__ = [
     "SUPPORTED_SWITCH_MODELS",
     "SUPPORTED_WAVELENGTH_MODES",
+    "DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB",
     "LimitProfileCollection",
     "LimitAssessment",
     "LimitProfile",

@@ -55,6 +55,14 @@ class HardwarePlanningTests(unittest.TestCase):
         self.assertEqual(plan.worker_channels(), [10, 11, 12, 20])
         self.assertFalse(plan.manual_channel_order)
 
+    def test_extra_only_plan_has_no_front_panel_channels(self):
+        plan = build_hardware_run_plan(ChannelMode.EXTRA_CHANNELS_ONLY)
+
+        self.assertEqual(plan.channels, ())
+        self.assertEqual(plan.worker_channels(), [])
+        self.assertFalse(plan.full_pass)
+        self.assertFalse(plan.manual_channel_order)
+
     def test_invalid_mode_is_reported_before_hardware_setup(self):
         with self.assertRaisesRegex(ValueError, "Unknown hardware channel mode"):
             build_hardware_run_plan("not a mode")

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from application.hardware_planning import HardwareRunPlan, build_hardware_run_plan
 from application.run_controller import HardwareRunRequest
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
+from domain.extra_ports import ExtraChannelRoutingMethod
+from domain.models import ChannelMode
 from hardware.interfaces import OpticalSwitch, PowerMeter
 from domain.wavelengths import MeasurementConfiguration
 
@@ -18,6 +20,52 @@ class HardwareRunPreparation:
     plan: HardwareRunPlan | None
     full_pass: bool
     manual_channel_order: bool
+
+    @property
+    def extra_only(self) -> bool:
+        return bool(
+            self.plan is not None
+            and self.plan.mode is ChannelMode.EXTRA_CHANNELS_ONLY
+        )
+
+
+@dataclass(frozen=True)
+class ExtraPortOfferEligibility:
+    """Policy decision for enabling the optional extra-port phase."""
+
+    eligible: bool
+    reason: str
+
+
+def evaluate_extra_port_offer_eligibility(
+    *,
+    full_pass: bool,
+    manual_channel_order: bool = False,
+    extra_only: bool = False,
+    retest: bool,
+    run_mode: str,
+    has_part_number: bool,
+    supports_extra_channels: bool = True,
+) -> ExtraPortOfferEligibility:
+    """Evaluate run-level conditions for offering extra physical ports.
+
+    Front-panel coverage is verified by the worker after the pass completes;
+    this decision covers the run configuration and required metadata.
+    """
+
+    if not full_pass and not extra_only:
+        return ExtraPortOfferEligibility(False, "not_a_full_pass")
+    if manual_channel_order and not extra_only:
+        return ExtraPortOfferEligibility(False, "manual_channel_order")
+    if retest:
+        return ExtraPortOfferEligibility(False, "selected_retest")
+    if run_mode not in {"new", "continue"}:
+        return ExtraPortOfferEligibility(False, "unsupported_run_mode")
+    if not has_part_number:
+        return ExtraPortOfferEligibility(False, "missing_part_number")
+    if not supports_extra_channels:
+        return ExtraPortOfferEligibility(False, "switch_model_has_no_spares")
+    return ExtraPortOfferEligibility(True, "eligible")
 
 
 def prepare_hardware_run(
@@ -71,6 +119,17 @@ def build_hardware_run_request(
     workflow_id: str = "",
     reference_snapshot: Mapping[str, object] | None = None,
     measurement_configuration: MeasurementConfiguration | None = None,
+    front_panel_channel_count: int | None = None,
+    offer_extra_ports: bool = False,
+    run_mode: str = "new",
+    retest: bool = False,
+    existing_extra_physical_ports: Sequence[int] | None = None,
+    existing_extra_logical_channels: Sequence[int] | None = None,
+    extra_channel_routing_method: ExtraChannelRoutingMethod | str = (
+        ExtraChannelRoutingMethod.SCPI_MAPPED
+    ),
+    persistence_run_id: int | None = None,
+    effective_channel_map: Mapping[int, int] | None = None,
 ) -> HardwareRunRequest:
     """Create a controller request for already-created hardware adapters."""
     return HardwareRunRequest(
@@ -91,11 +150,27 @@ def build_hardware_run_request(
         workflow_id=workflow_id,
         reference_snapshot=dict(reference_snapshot) if reference_snapshot else None,
         measurement_configuration=measurement_configuration,
+        front_panel_channel_count=front_panel_channel_count,
+        offer_extra_ports=offer_extra_ports,
+        extra_only=preparation.extra_only,
+        run_mode=run_mode,
+        retest=retest,
+        existing_extra_physical_ports=existing_extra_physical_ports,
+        existing_extra_logical_channels=existing_extra_logical_channels,
+        extra_channel_routing_method=ExtraChannelRoutingMethod.parse(
+            extra_channel_routing_method
+        ),
+        persistence_run_id=persistence_run_id,
+        effective_channel_map=(
+            dict(effective_channel_map) if effective_channel_map is not None else None
+        ),
     )
 
 
 __all__ = [
     "HardwareRunPreparation",
+    "ExtraPortOfferEligibility",
     "build_hardware_run_request",
+    "evaluate_extra_port_offer_eligibility",
     "prepare_hardware_run",
 ]

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from domain.limit_profiles import DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB
+
 
 @dataclass(frozen=True)
 class ReplacementReading:
@@ -293,7 +295,7 @@ def analyze_replacements(
     extra_readings,
     designed_channel_count,
     warning_limit,
-    minimum_improvement=0.05,
+    minimum_improvement=DEFAULT_MINIMUM_REPLACEMENT_IMPROVEMENT_DB,
     bottom_spare_count=2,
     *,
     fail_limit=None,

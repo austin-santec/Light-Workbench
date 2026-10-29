@@ -8,16 +8,35 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtGui import QCloseEvent
-from PyQt5.QtWidgets import QApplication, QDialog, QGroupBox, QMessageBox
+from PyQt5.QtWidgets import (
+    QApplication,
+    QDialog,
+    QGridLayout,
+    QGroupBox,
+    QMessageBox,
+    QSizePolicy,
+)
 from PyQt5.QtCore import QEventLoop, QObject, QSettings, QTimer, Qt, pyqtSignal
 from PyQt5.QtTest import QTest
 
 from application.coc_workflow import CocRunOption
 from app_info import APP_NAME, APP_TAGLINE, APP_VERSION
 from domain.coc_preparation import CocSourceRun, prepare_coc
+from domain.extra_ports import (
+    ExtraChannelRoutingMethod,
+    ExtraPortPhaseStatus,
+    PhysicalPortRouteResult,
+    PhysicalPortRouteStatus,
+)
 from domain.limit_profiles import default_limit_profiles
-from domain.run_status import COMPLETION_COMPLETE, RESULT_PASS
+from domain.run_status import (
+    COMPLETION_COMPLETE,
+    RESULT_FAIL_RECOVERABLE,
+    RESULT_PASS,
+    RunStatusAssessment,
+)
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
+from hardware.interfaces import LogicalChannelRouteResult
 from domain.measurement_attempts import new_measurement_attempt
 from ilm_app import (
     AboutDialog,
@@ -83,7 +102,10 @@ class ReferenceSwitch:
         return 48
 
     def set_channel(self, channel):
-        return channel
+        return LogicalChannelRouteResult(channel, channel)
+
+    def current_logical_channel(self):
+        return 1
 
     def close(self):
         self.connected = False
@@ -127,6 +149,9 @@ class MainWindowTests(unittest.TestCase):
             "ilm_app.bundled_asset_path", return_value=None
         ), patch("ilm_app.MainWindow", return_value=window), patch(
             "ilm_app.sys.argv", ["ilm_app.py"]
+        ), patch(
+            "infrastructure.database.runtime.build_database_primary_workflow",
+            return_value=MagicMock(),
         ):
             result = app_main()
 
@@ -210,6 +235,108 @@ class MainWindowTests(unittest.TestCase):
         window.reading_filter.setCurrentIndex(2)
         window.refresh_table()
         self.assertEqual(window.result_status_label.text(), "Result: Pass")
+        window.close()
+
+    def test_composite_pass_is_green_and_advertises_coc_availability(self):
+        window = MainWindow()
+        profile = default_limit_profiles().for_model_mode("OSX-150", "SM")
+        window.run_data = RunData(
+            Path("saved.csv"),
+            [MeasurementRecord(1, 1.0, 1.1, 1)],
+            {
+                "Part number": "OSX-150-1A-002-09-FA-00B-1H",
+                "Run number": "1",
+                "Planned channel count": "1",
+            },
+            criteria_snapshot=profile.as_dict(),
+        )
+        window._run_terminal_status = COMPLETION_COMPLETE
+
+        class Composite:
+            eligible = True
+            source_run_numbers = (1, 2)
+
+        window._status_composite_candidate = lambda: (Composite(), (2,))
+        window.refresh_analysis()
+
+        expected_color = "#72d19a" if window.dark_mode_enabled else "#28704a"
+        self.assertEqual(
+            window.result_status_label.text(),
+            "Result: Composite pass available",
+        )
+        self.assertIn(expected_color, window.result_status_label.styleSheet())
+        self.assertIn(
+            "COC creation is available.",
+            window.result_status_label.toolTip(),
+        )
+        window.close()
+
+    def test_recovery_available_status_is_yellow(self):
+        window = MainWindow()
+        assessment = RunStatusAssessment(
+            completion_status=COMPLETION_COMPLETE,
+            result_status=RESULT_FAIL_RECOVERABLE,
+            planned_channel_count=48,
+            completed_channel_count=48,
+        )
+
+        with patch.object(
+            window,
+            "_calculate_run_status",
+            return_value=assessment,
+        ):
+            for dark_mode_enabled, expected_color in (
+                (True, "#ffd166"),
+                (False, "#946200"),
+            ):
+                window.dark_mode_enabled = dark_mode_enabled
+                window.refresh_run_status()
+                self.assertEqual(
+                    window.result_status_label.text(),
+                    "Result: Fail \u00b7 recovery available",
+                )
+                self.assertIn(
+                    expected_color,
+                    window.result_status_label.styleSheet(),
+                )
+        window.close()
+
+    def test_run_purpose_defaults_to_production_and_warns_for_nonproduction(self):
+        window = MainWindow()
+        self.assertEqual(window.hardware_run_purpose.currentData(), "production")
+        self.assertTrue(window.run_purpose_notice_label.isHidden())
+        window.hardware_run_purpose.setCurrentIndex(
+            window.hardware_run_purpose.findData("engineering")
+        )
+        self.assertIn("does not block", window.run_purpose_notice_label.text())
+        self.assertFalse(window.run_purpose_notice_label.isHidden())
+        self.assertIn("Engineering", window.run_purpose_status_label.text())
+        window.close()
+
+    def test_run_purpose_control_does_not_overlap_load_run_button(self):
+        window = MainWindow()
+        setup_layout = window.hardware_setup_box.content_widget.layout()
+
+        purpose_position = setup_layout.getItemPosition(
+            setup_layout.indexOf(window.hardware_run_purpose)
+        )
+        load_position = setup_layout.getItemPosition(
+            setup_layout.indexOf(window.load_run_button)
+        )
+
+        purpose_cells = {
+            (row, column)
+            for row in range(purpose_position[0], purpose_position[0] + purpose_position[2])
+            for column in range(
+                purpose_position[1], purpose_position[1] + purpose_position[3]
+            )
+        }
+        load_cells = {
+            (row, column)
+            for row in range(load_position[0], load_position[0] + load_position[2])
+            for column in range(load_position[1], load_position[1] + load_position[3])
+        }
+        self.assertTrue(purpose_cells.isdisjoint(load_cells))
         window.close()
 
     def test_open_csv_starts_in_default_run_folder(self):
@@ -497,7 +624,7 @@ class MainWindowTests(unittest.TestCase):
             window.hardware_configured_channel_count = 15
             context = window._front_panel_channel_context_for_active_run()
             self.assertEqual(context["front_panel_channel_count"], 12)
-            self.assertEqual(context["configured_physical_channel_count"], 15)
+            self.assertEqual(context["scpi_configured_channel_count"], 15)
 
             window.run_data.metadata["Part number"] = (
                 "OSX-150-1A-016-09-FA-00B-2HD"
@@ -867,6 +994,7 @@ class MainWindowTests(unittest.TestCase):
             [
                 "Switch VISA Address...",
                 "Get IP...",
+                "Database Reports...",
                 "Check Dependencies...",
                 "Red Light Test...",
                 "Live IL Reading...",
@@ -894,6 +1022,80 @@ class MainWindowTests(unittest.TestCase):
         window = MainWindow()
         self.assertFalse(window.admin_config_action.isEnabled())
         self.assertFalse(window.admin_session.is_active)
+        window.close()
+
+    def test_void_run_control_requires_admin_and_safe_idle_database_context(self):
+        window = MainWindow()
+        context = MagicMock()
+        context.run.analysis_status = "included"
+        window.database_run_context = context
+
+        window._refresh_void_run_control()
+        self.assertFalse(window.void_run_button.isEnabled())
+
+        window.admin_session.authenticate("lwb")
+        window._refresh_void_run_control()
+        self.assertTrue(window.void_run_button.isEnabled())
+
+        window.hardware_thread = MagicMock()
+        window._refresh_void_run_control()
+        self.assertFalse(window.void_run_button.isEnabled())
+
+        window.hardware_thread = None
+        window._database_write_request_in_flight = True
+        window._refresh_void_run_control()
+        self.assertFalse(window.void_run_button.isEnabled())
+
+        window._database_write_request_in_flight = False
+        context.run.analysis_status = "excluded"
+        window._refresh_void_run_control()
+        self.assertFalse(window.void_run_button.isEnabled())
+        window.close()
+
+    def test_verification_run_preselects_only_awaiting_replacement_channels(self):
+        window = MainWindow()
+        awaiting_20 = MagicMock()
+        awaiting_20.state = "awaiting_retest"
+        awaiting_20.replacement.logical_channel = 20
+        awaiting_20.replacement.previous_physical_port = 20
+        awaiting_20.replacement.replacement_physical_port = 49
+        awaiting_20.replacement.source_recommendation_id = 12
+        awaiting_21 = MagicMock()
+        awaiting_21.state = "awaiting_retest"
+        awaiting_21.replacement.logical_channel = 21
+        awaiting_21.replacement.previous_physical_port = 21
+        awaiting_21.replacement.replacement_physical_port = 50
+        awaiting_21.replacement.source_recommendation_id = 13
+        verified = MagicMock()
+        verified.state = "verified_passing"
+        context = MagicMock()
+        context.assignment.removed_at_utc = None
+        context.effective_projection.verifications = (
+            awaiting_20,
+            awaiting_21,
+            verified,
+        )
+        context.run.run_number = 4
+        context.run.run_id = 44
+        context.run.assignment_id = 5
+        context.unit.unit_id = 7
+        historical_context = MagicMock()
+        historical_context.run.run_number = 4
+        window.database_run_context = context
+        window.database_workflow = MagicMock()
+        window.database_workflow.list_for_unit.return_value = (historical_context,)
+
+        with patch.object(QDialog, "exec_", return_value=QDialog.Accepted), patch.object(
+            window, "start_hardware"
+        ) as start_hardware:
+            window.start_replacement_verification_run()
+
+        self.assertEqual(
+            window.hardware_channel_mode.currentText(), "Specific channels/ranges"
+        )
+        self.assertEqual(window.hardware_channel_ranges.text(), "20, 21")
+        self.assertEqual(window.hardware_run_number.value(), 5)
+        start_hardware.assert_called_once_with()
         window.close()
 
     def test_admin_mode_switches_lulu_icon_and_restores_it_on_exit(self):
@@ -1110,6 +1312,35 @@ class MainWindowTests(unittest.TestCase):
         # A channel being measured remains visible in every filtered view.
         window.hardware_operator_required(6, 54)
         self.assertEqual(visible_channels(), [4, 6])
+        window.close()
+
+    def test_channel_status_uses_concise_pass_and_verification_labels(self):
+        window = MainWindow()
+        window.run_data = RunData(
+            Path("test-run"),
+            [
+                MeasurementRecord(1, 1.0, 1.0),
+                MeasurementRecord(2, 0.4, 0.4),
+            ],
+            {},
+        )
+
+        window.refresh_table()
+        self.assertEqual(window.table.item(0, 3).text(), "Pass")
+        self.assertEqual(
+            window.table.item(1, 3).text(), "Too good, please verify"
+        )
+
+        window.current_loss_1310 = 1.0
+        window.current_loss_1550 = 1.0
+        window.refresh_current_reading()
+        self.assertEqual(window.reading_status_label.text(), "Pass")
+        window.current_loss_1310 = 0.4
+        window.current_loss_1550 = 0.4
+        window.refresh_current_reading()
+        self.assertEqual(
+            window.reading_status_label.text(), "Too good, please verify"
+        )
         window.close()
 
     def test_previous_run_comparison_can_be_shown_and_cleared(self):
@@ -1694,20 +1925,39 @@ class MainWindowTests(unittest.TestCase):
             self.assertGreaterEqual(left_ratio, 0.45)
             self.assertLessEqual(left_ratio, 0.65)
             self.assertEqual(window.start_hardware_button.text(), "Start Run")
+            hardware_grid = window.hardware_controls_box.layout().itemAt(0).layout()
+            self.assertIsInstance(hardware_grid, QGridLayout)
+            self.assertEqual(hardware_grid.columnStretch(0), 1)
+            self.assertEqual(hardware_grid.columnStretch(1), 1)
             for button in (
                 window.start_hardware_button,
                 window.stop_hardware_button,
                 window.continue_hardware_button,
                 window.write_hardware_button,
             ):
-                self.assertEqual(button.minimumWidth(), 125)
+                self.assertEqual(button.minimumWidth(), 0)
                 self.assertEqual(button.minimumHeight(), 48)
+                self.assertEqual(
+                    button.sizePolicy().horizontalPolicy(),
+                    QSizePolicy.Expanding,
+                )
                 self.assertEqual(button.objectName(), "hardware_primary_control")
             for button in (window.write_coc_button, window.copy_raw_data_button):
-                self.assertEqual(button.minimumWidth(), 125)
-                self.assertEqual(button.maximumWidth(), 125)
+                self.assertEqual(button.minimumWidth(), 0)
+                self.assertGreater(button.maximumWidth(), button.minimumWidth())
                 self.assertEqual(button.minimumHeight(), 48)
-                self.assertEqual(button.maximumHeight(), 48)
+                self.assertEqual(
+                    button.sizePolicy().horizontalPolicy(),
+                    QSizePolicy.Expanding,
+                )
+            self.assertEqual(
+                window.controls_reference_row.layout().stretch(0),
+                3,
+            )
+            self.assertEqual(
+                window.controls_reference_row.layout().stretch(1),
+                2,
+            )
             self.assertIn(
                 "QPushButton#hardware_primary_control { padding: 11px 20px; font-size: 16px",
                 window.styleSheet(),
@@ -1736,6 +1986,107 @@ class MainWindowTests(unittest.TestCase):
             else:
                 settings.setValue("workspace_splitter_state", saved_splitter_state)
 
+    def test_extra_port_write_button_uses_compact_dynamic_label(self):
+        window = MainWindow()
+        try:
+            window.hardware_extra_port_phase_changed(
+                ExtraPortPhaseStatus.IN_PROGRESS.value,
+                49,
+                {"routing_method": ExtraChannelRoutingMethod.SCPI_MAPPED.value},
+            )
+            self.assertEqual(
+                window.write_hardware_button.title_label.text(),
+                "Write & Continue",
+            )
+            self.assertEqual(
+                window.write_hardware_button.accessibleName(),
+                "Write & Continue",
+            )
+            self.assertFalse(window.retry_extra_port_button.isHidden())
+            self.assertEqual(
+                window.retry_extra_port_button.text(), "Retry Current Channel"
+            )
+            self.assertTrue(window.no_more_extra_ports_button.isHidden())
+            window.hardware_extra_port_phase_changed(
+                ExtraPortPhaseStatus.COMPLETED.value,
+                None,
+                {"routing_method": ExtraChannelRoutingMethod.SCPI_MAPPED.value},
+            )
+            self.assertEqual(
+                window.write_hardware_button.title_label.text(),
+                "Write IL",
+            )
+        finally:
+            window.close()
+
+    def test_binary_extra_port_confirmation_detail_shows_hex_response(self):
+        result = PhysicalPortRouteResult(
+            49,
+            PhysicalPortRouteStatus.UNVERIFIED,
+            detail="The switch returned a binary response.",
+            response_type="binary",
+            response_hex="03 00 00 04",
+            response_length=4,
+        )
+
+        detail = MainWindow._extra_port_confirmation_detail(result)
+
+        self.assertIn("binary response", detail)
+        self.assertIn("Response: 03 00 00 04", detail)
+        self.assertIn("independently confirmed", detail)
+
+    def test_cli_extra_port_controls_keep_unknown_capacity_action(self):
+        window = MainWindow()
+        try:
+            window.hardware_extra_port_phase_changed(
+                ExtraPortPhaseStatus.IN_PROGRESS.value,
+                49,
+                {"routing_method": ExtraChannelRoutingMethod.CLI_DIRECT.value},
+            )
+
+            self.assertEqual(window.retry_extra_port_button.text(), "Retry Current Port")
+            self.assertFalse(window.no_more_extra_ports_button.isHidden())
+        finally:
+            window.close()
+
+    def test_continued_database_run_preserves_saved_extra_routing_method(self):
+        window = MainWindow()
+        try:
+            context = MagicMock()
+            context.run.measurement_hardware = {
+                "extra_channel_routing": {"method": "cli_direct"}
+            }
+            window.database_run_context = context
+            window.extra_channel_routing_method = (
+                ExtraChannelRoutingMethod.SCPI_MAPPED
+            )
+
+            self.assertEqual(
+                window._extra_channel_routing_method_for_run("continue"),
+                ExtraChannelRoutingMethod.CLI_DIRECT,
+            )
+            self.assertEqual(
+                window._extra_channel_routing_method_for_run("new"),
+                ExtraChannelRoutingMethod.SCPI_MAPPED,
+            )
+        finally:
+            window.close()
+
+    def test_old_run_without_extra_routing_metadata_uses_safe_default(self):
+        window = MainWindow()
+        try:
+            context = MagicMock()
+            context.run.measurement_hardware = {}
+            window.database_run_context = context
+            window.run_data = RunData(Path("legacy.csv"), [], {})
+
+            self.assertEqual(
+                window._extra_channel_routing_method_for_run("continue"),
+                ExtraChannelRoutingMethod.SCPI_MAPPED,
+            )
+        finally:
+            window.close()
+
     def test_hardware_setup_can_collapse_without_clearing_values(self):
         window = MainWindow()
         try:
@@ -1762,6 +2113,22 @@ class MainWindowTests(unittest.TestCase):
             self.assertTrue(window.hardware_setup_box.content_widget.isVisible())
             self.assertEqual(window.hardware_main_board_serial.text(), "MB-123")
             self.assertEqual(window.hardware_single_channel.value(), 7)
+        finally:
+            window.close()
+
+    def test_extra_only_mode_hides_front_panel_selectors(self):
+        window = MainWindow()
+        try:
+            window.show()
+            self.application.processEvents()
+            window.hardware_channel_mode.setCurrentText("Extra channels only")
+            self.application.processEvents()
+
+            self.assertFalse(window.channel_mode_context.isVisible())
+            self.assertFalse(window.hardware_channel_ranges.isVisible())
+            self.assertFalse(window.manual_channel_order_checkbox.isVisible())
+            self.assertTrue(window.extra_channel_routing_label.isVisible())
+            self.assertIn("Extra-only run", window.extra_channel_routing_label.text())
         finally:
             window.close()
 
@@ -1828,6 +2195,24 @@ class MainWindowTests(unittest.TestCase):
             self.assertTrue(window.write_coc_button.isEnabled())
             self.assertTrue(window.write_coc_action.isEnabled())
             window.close()
+
+    def test_coc_controls_treat_database_measurements_as_persisted(self):
+        window = MainWindow()
+        criteria = default_limit_profiles()["OSX-150"].as_dict()
+        window.run_data = RunData(
+            Path("database-run-42"),
+            [MeasurementRecord(1, 1.0, 1.1)],
+            {"Wavelength mode": "SM"},
+            criteria_snapshot=criteria,
+        )
+        window.database_run_context = MagicMock()
+        window.database_run_context.run.analysis_status = "included"
+
+        window.refresh_coc_controls()
+
+        self.assertTrue(window.write_coc_button.isEnabled())
+        self.assertTrue(window.write_coc_action.isEnabled())
+        window.close()
 
     def test_coc_controls_enable_for_osx100_mm_runs(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2041,6 +2426,17 @@ class MainWindowTests(unittest.TestCase):
                 window.hardware_completed()
 
             analysis.assert_called_once_with(launch_source="post_run_prompt")
+        finally:
+            window.close()
+
+    def test_manual_analysis_button_uses_named_launch_source(self):
+        window = MainWindow()
+        try:
+            window.replacement_analysis_button.setEnabled(True)
+            with patch.object(window, "show_replacement_analysis") as analysis:
+                window.replacement_analysis_button.click()
+
+            analysis.assert_called_once_with(launch_source="manual_button")
         finally:
             window.close()
 

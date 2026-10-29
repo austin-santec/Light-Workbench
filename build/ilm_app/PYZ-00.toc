@@ -42,6 +42,26 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\coc_workflow.py',
    'PYMODULE'),
+  ('application.database_diagnostics',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\database_diagnostics.py',
+   'PYMODULE'),
+  ('application.database_primary_workflow',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\database_primary_workflow.py',
+   'PYMODULE'),
+  ('application.database_reporting',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\database_reporting.py',
+   'PYMODULE'),
+  ('application.database_repositories',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\database_repositories.py',
+   'PYMODULE'),
+  ('application.database_run_read_model',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\database_run_read_model.py',
+   'PYMODULE'),
   ('application.diagnostic_trace',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\diagnostic_trace.py',
@@ -61,6 +81,10 @@
   ('application.live_controller',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\live_controller.py',
+   'PYMODULE'),
+  ('application.measurement_persistence_workflow',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\measurement_persistence_workflow.py',
    'PYMODULE'),
   ('application.measurement_worker',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -82,9 +106,21 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\reference_session.py',
    'PYMODULE'),
+  ('application.replacement_analysis_persistence',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\replacement_analysis_persistence.py',
+   'PYMODULE'),
+  ('application.replacement_persistence_workflow',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\replacement_persistence_workflow.py',
+   'PYMODULE'),
   ('application.run_controller',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\run_controller.py',
+   'PYMODULE'),
+  ('application.run_lifecycle_workflow',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\run_lifecycle_workflow.py',
    'PYMODULE'),
   ('application.run_preflight',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -101,6 +137,10 @@
   ('application.timing',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\timing.py',
+   'PYMODULE'),
+  ('application.unit_switch_workflow',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\unit_switch_workflow.py',
    'PYMODULE'),
   ('argparse',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\argparse.py',
@@ -243,6 +283,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\config\\app_info.py',
    'PYMODULE'),
+  ('config.database_config',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\config\\database_config.py',
+   'PYMODULE'),
   ('configparser',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\configparser.py',
    'PYMODULE'),
@@ -306,6 +350,18 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\comparison.py',
    'PYMODULE'),
+  ('domain.database_records',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\database_records.py',
+   'PYMODULE'),
+  ('domain.database_reporting',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\database_reporting.py',
+   'PYMODULE'),
+  ('domain.database_run_lifecycle',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\database_run_lifecycle.py',
+   'PYMODULE'),
   ('domain.diagnostic_analysis',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\diagnostic_analysis.py',
@@ -313,6 +369,14 @@
   ('domain.diagnostic_trace',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\diagnostic_trace.py',
+   'PYMODULE'),
+  ('domain.effective_replacement_analysis',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\effective_replacement_analysis.py',
+   'PYMODULE'),
+  ('domain.extra_ports',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\extra_ports.py',
    'PYMODULE'),
   ('domain.hardware_connection',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -362,6 +426,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\run_data.py',
    'PYMODULE'),
+  ('domain.run_purpose',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\run_purpose.py',
+   'PYMODULE'),
   ('domain.run_status',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\run_status.py',
@@ -373,6 +441,10 @@
   ('domain.timing',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\timing.py',
+   'PYMODULE'),
+  ('domain.unit_switch_assignments',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\unit_switch_assignments.py',
    'PYMODULE'),
   ('domain.wavelengths',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -492,6 +564,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\hardware\\power_meter.py',
    'PYMODULE'),
+  ('hardware.santec_cli',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\hardware\\santec_cli.py',
+   'PYMODULE'),
   ('hardware.session',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\hardware\\session.py',
@@ -600,6 +676,42 @@
   ('infrastructure.csv_run_loader',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\csv_run_loader.py',
+   'PYMODULE'),
+  ('infrastructure.database',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\__init__.py',
+   'PYMODULE'),
+  ('infrastructure.database.connection',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\connection.py',
+   'PYMODULE'),
+  ('infrastructure.database.maintenance',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\maintenance.py',
+   'PYMODULE'),
+  ('infrastructure.database.memory_repositories',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\memory_repositories.py',
+   'PYMODULE'),
+  ('infrastructure.database.migrations',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\migrations.py',
+   'PYMODULE'),
+  ('infrastructure.database.preflight',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\preflight.py',
+   'PYMODULE'),
+  ('infrastructure.database.runtime',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\runtime.py',
+   'PYMODULE'),
+  ('infrastructure.database.settings_repository',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\settings_repository.py',
+   'PYMODULE'),
+  ('infrastructure.database.sql_repositories',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\sql_repositories.py',
    'PYMODULE'),
   ('infrastructure.diagnostic_export',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -1469,6 +1581,14 @@
   ('ui.collapsible_group_box',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\collapsible_group_box.py',
+   'PYMODULE'),
+  ('ui.database_replacements',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\database_replacements.py',
+   'PYMODULE'),
+  ('ui.database_reports',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\database_reports.py',
    'PYMODULE'),
   ('ui.hardware_status',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '

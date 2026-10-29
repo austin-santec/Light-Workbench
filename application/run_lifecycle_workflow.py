@@ -1,0 +1,212 @@
+"""Application workflow for database-backed run identity and lifecycle."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from datetime import datetime
+from typing import Protocol
+from uuid import UUID, uuid4
+
+from application.database_repositories import RunRepository
+from domain.database_records import (
+    PendingRunStartSpec,
+    RunRecord,
+    RunStartSpec,
+    RunVoidInfo,
+    utc_now,
+)
+from domain.database_run_lifecycle import StaleRunDecision
+from domain.run_purpose import default_analysis_policy, normalize_run_purpose
+
+
+class DatabaseReadinessResult(Protocol):
+    ready: bool
+    operator_message: str
+
+
+class DatabaseRunUnavailableError(RuntimeError):
+    """Raised when database readiness prevents a new run from starting."""
+
+    def __init__(self, preflight_result) -> None:
+        super().__init__(preflight_result.operator_message)
+        self.preflight_result = preflight_result
+
+
+class RunLifecycleWorkflow:
+    """Coordinate retry-safe run creation, closure, and stale-run decisions."""
+
+    def __init__(
+        self,
+        repository: RunRepository,
+        readiness_check: Callable[[], DatabaseReadinessResult],
+    ) -> None:
+        self._repository = repository
+        self._readiness_check = readiness_check
+
+    def start_run(
+        self,
+        *,
+        assignment_id: int,
+        tested_by: str,
+        wavelength_mode: str,
+        operating_band: str,
+        application_version: str,
+        measurement_hardware: Mapping,
+        limit_snapshot: Mapping,
+        part_number_snapshot: str | None,
+        front_panel_channel_count: int | None,
+        station_number: int | None = None,
+        run_purpose: str = "production",
+        analysis_status: str | None = None,
+        void_info: RunVoidInfo | None = None,
+        notes: str | None = None,
+        client_run_uuid: UUID | None = None,
+        started_at_utc: datetime | None = None,
+    ) -> RunRecord:
+        return self._repository.create_next(
+            self.prepare_start_spec(
+                tested_by=tested_by,
+                wavelength_mode=wavelength_mode,
+                operating_band=operating_band,
+                application_version=application_version,
+                measurement_hardware=measurement_hardware,
+                limit_snapshot=limit_snapshot,
+                part_number_snapshot=part_number_snapshot,
+                front_panel_channel_count=front_panel_channel_count,
+                station_number=station_number,
+                run_purpose=run_purpose,
+                analysis_status=analysis_status,
+                void_info=void_info,
+                notes=notes,
+                client_run_uuid=client_run_uuid,
+                started_at_utc=started_at_utc,
+            ).with_assignment_id(assignment_id)
+        )
+
+    def prepare_start_spec(
+        self,
+        *,
+        tested_by: str,
+        wavelength_mode: str,
+        operating_band: str,
+        application_version: str,
+        measurement_hardware: Mapping,
+        limit_snapshot: Mapping,
+        part_number_snapshot: str | None,
+        front_panel_channel_count: int | None,
+        station_number: int | None = None,
+        run_purpose: str = "production",
+        analysis_status: str | None = None,
+        void_info: RunVoidInfo | None = None,
+        notes: str | None = None,
+        client_run_uuid: UUID | None = None,
+        started_at_utc: datetime | None = None,
+    ) -> PendingRunStartSpec:
+        """Validate run fields before an assignment transaction is opened."""
+        preflight = self._readiness_check()
+        if not getattr(preflight, "ready", False):
+            raise DatabaseRunUnavailableError(preflight)
+        purpose = normalize_run_purpose(run_purpose)
+        if analysis_status is None:
+            analysis_status, _default_reason = default_analysis_policy(purpose)
+        return PendingRunStartSpec(
+            client_run_uuid=client_run_uuid or uuid4(),
+            run_started_at_utc=started_at_utc or utc_now(),
+            tested_by=tested_by,
+            station_number=station_number,
+            wavelength_mode=wavelength_mode,
+            operating_band=operating_band,
+            application_version=application_version,
+            measurement_hardware=measurement_hardware,
+            limit_snapshot=limit_snapshot,
+            run_purpose=purpose,
+            analysis_status=analysis_status,
+            void_info=void_info,
+            part_number_snapshot=part_number_snapshot,
+            front_panel_channel_count=front_panel_channel_count,
+            notes=notes,
+        )
+
+    def finish_run(
+        self,
+        run_id: int,
+        completion_status: str,
+        ended_at_utc: datetime | None = None,
+    ) -> RunRecord:
+        current = self._repository.get(run_id)
+        if current is None:
+            raise ValueError("Run was not found")
+        if completion_status == "complete":
+            analysis_status = "included"
+        else:
+            analysis_status = "pending"
+        return self._repository.finish(
+            run_id,
+            completion_status,
+            ended_at_utc or utc_now(),
+            analysis_status=analysis_status,
+        )
+
+    def resume_run(self, run_id: int) -> RunRecord:
+        """Explicitly reopen a retained run for continuation or a retest."""
+        return self._repository.resume(run_id)
+
+    def set_analysis_status(
+        self,
+        run_id: int,
+        analysis_status: str,
+        *,
+        void_info: RunVoidInfo | None = None,
+        superseded_by_run_id: int | None = None,
+    ) -> RunRecord:
+        current = self._repository.get(run_id)
+        if current is None:
+            raise ValueError("Run was not found")
+        return self._repository.set_analysis_status(
+            run_id,
+            analysis_status,
+            void_info,
+            superseded_by_run_id,
+        )
+
+    def void_run(
+        self,
+        run_id: int,
+        *,
+        voided_by: str,
+        reason: str,
+        voided_at_utc: datetime | None = None,
+    ) -> RunRecord:
+        """Permanently exclude one retained run from effective analysis."""
+        current = self._repository.get(run_id)
+        if current is None:
+            raise ValueError("Run was not found")
+        if current.analysis_status == "excluded":
+            raise ValueError("Run is already voided")
+        return self._repository.void_run(
+            run_id,
+            RunVoidInfo(voided_at_utc or utc_now(), voided_by, reason),
+        )
+
+    def find_stale_runs(self, before_utc: datetime) -> tuple[RunRecord, ...]:
+        return self._repository.find_stale_in_progress(before_utc)
+
+    def resolve_stale_run(
+        self,
+        run_id: int,
+        decision: StaleRunDecision | str,
+        decided_at_utc: datetime | None = None,
+    ) -> RunRecord:
+        current = self._repository.get(run_id)
+        if current is None:
+            raise ValueError("Run was not found")
+        if current.completion_status != "in_progress":
+            raise ValueError("Only an in-progress run can be resolved as stale")
+        choice = StaleRunDecision(decision)
+        if choice is StaleRunDecision.RESUME:
+            return current
+        status = "stopped" if choice is StaleRunDecision.CLOSE_STOPPED else "failed"
+        return self.finish_run(run_id, status, decided_at_utc)
+
+
+__all__ = ["DatabaseRunUnavailableError", "RunLifecycleWorkflow"]

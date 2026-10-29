@@ -9,7 +9,8 @@ testing and measurement. Its current workflow measures insertion loss in
 
 The operator moves the output cable when prompted. The program changes the
 switch channel, takes both wavelength readings, displays the calculated losses,
-and saves accepted readings to a CSV file that opens directly in Excel.
+and saves accepted production readings to SQL Server on the database branch.
+Existing CSV/JSON runs remain available through the legacy viewing workflow.
 
 ## What the application can do
 
@@ -42,6 +43,13 @@ limits. OSX-100 data can be reviewed, analyzed, and exported through the
 matching SM or MM COC workflow. OSX-150 MM data remains reviewable and
 analyzable, but OSX-150 MM COC export is not supported.
 
+Each new hardware run also has a **Run purpose** selector. It defaults to
+**Production** and offers Engineering, Training, and Calibration for non-production
+work. Non-production runs remain saved and reviewable but are excluded from normal
+production analysis; the selected purpose is stored with the run and cannot be
+changed on a loaded historical run. The purpose is also shown beside the run
+completion/result status and in Run information.
+
 For every channel, it can:
 
 - Automatically route the connected OSX-100/OSX-150 to the requested logical channel.
@@ -51,8 +59,8 @@ For every channel, it can:
 - Display both insertion-loss values before saving them.
 - Accept the displayed reading with Enter.
 - Discard and retest the same channel by entering `-` and pressing Enter.
-- Record switch and main-board metadata and automatically detect swapped ports
-  encountered during the selected test channels.
+- Record switch and main-board metadata and apply the assignment's documented
+  logical-to-physical map to accepted readings.
 - Use the entered serial numbers in the run folder and CSV names.
 - Preserve every previously accepted row if the run is stopped with Ctrl+C.
 - Store multiple numbered runs for one unit while sharing completed replacements
@@ -85,8 +93,8 @@ From `Tools > Red Light Test...`, the operator can open a separate pre-test
 window for checking a switch with a VFL. Opening the menu item does not connect
 to the switch. Click `Start Red Light Test` to connect and select channel 1;
 then use the channel number, Up/Down keys, Previous/Next buttons, or a typed
-channel number to route the switch. The dialog reports the physical port
-returned by the switch and releases it when stopped or closed. The switch
+channel number to route the switch. The dialog reports logical-channel
+confirmation from the switch and releases it when stopped or closed. The switch
 remains connected to Light Workbench for later use. It does not
 measure IL, create run files, or affect COC data.
 
@@ -172,6 +180,7 @@ redaction, and support-bundle details.
 | `domain/reference_catalog.py` | Stable run-local reference labels and snapshot deduplication |
 | `domain/raw_export.py` | Pure tab-separated formatting for copying accepted readings to Excel |
 | `domain/coc_preparation.py` | Pure multi-run COC merge, provenance, completeness, port-map, and publication rules |
+| `domain/run_purpose.py` | Stable run-purpose options and production-analysis policy |
 | `domain/diagnostic_analysis.py` | In-memory diagnostic samples and variation statistics |
 | `domain/diagnostic_trace.py` | Typed in-memory hardware trace event model |
 | `domain/support_events.py` | Typed allowlisted engineering support-event schema |
@@ -279,7 +288,7 @@ py -3.11-32 ilm_app.py
 
 Use `Help > About` to view the running application's version, a
 summary of supported capabilities, and copyable project information. The
-current source version is **1.29.3**; an existing executable keeps its prior
+current source version is **1.36.0**; an existing executable keeps its prior
 version until rebuilt.
 
 The desktop application opens maximized by default while retaining the normal
@@ -295,6 +304,14 @@ Use `Tools > Dark Mode` to switch between the light and dark application
 themes. New installations start in dark mode, and the last selected theme is
 saved for the next launch. The red operator-action accent remains the same in
 both themes.
+
+Use `Tools > Database Reports...` on the database branch to search read-only
+unit/switch assignment, run, channel/retest, and replacement history. Normal
+production metrics include only production runs marked `included`; uncheck the
+production-only scope to inspect pending, excluded, superseded, engineering,
+training, or calibration records while troubleshooting. Report calculations
+use each run's saved measurements and limit snapshot. Exporting the current
+report tab creates an explicit CSV file and does not modify database records.
 
 It can open an existing CSV, display both wavelength values, show recorded
 metadata, highlight channels over the configurable loss limit, and summarize
@@ -451,7 +468,35 @@ not written back to either run.
 
 Some 48-channel switches contain extra physical ports, such as ports 49 and
 50, while the finished switch is still designed to use only 48 channels. After
-a full pass, open `Analyze Replacements` in the analysis panel. The application
+a full front-panel pass, Light Workbench can optionally measure those spares.
+The `Extra channels only` channel mode is also available when the operator wants
+to run the supplemental phase independently. It starts at the first physical
+channel after the part-number front-panel count, can create a new database run,
+or can continue a stopped/incomplete extra-only run. It does not require a
+front-panel pass in the same run and is available for OSX-150 only.
+The administrator-selected routing method is fixed for the run:
+
+- `SCPI mapped channels` is the default. Extra channels must be temporarily
+  present in the switch module configuration. Light Workbench tests the exact
+  configured range above the front-panel count with `CLOSe` and logical
+  `CLOSe?` confirmation, treats each requested configured channel as that
+  candidate's physical identity, and stops at the configured endpoint.
+- `CLI direct physical ports (Experimental)` retains sequential unknown-capacity
+  discovery over TCP port 2323. It is available only through Admin Config and
+  requires the operator to identify the last installed port.
+
+  CLI direct uses raw TCP (not Telnet) and sends the fixed
+  `b0 writereg mems.ch <physical port>\r\n` payload. A short binary response is
+  captured and shown as hexadecimal, but remains unverified until the operator
+  explicitly confirms it. No bytes during the initial response timeout is a
+  failure; a short idle period after bytes arrive completes the response frame.
+
+Light Workbench never edits the switch mapping and never changes methods
+automatically during an extra-channel phase. The selected method and known
+channel counts are retained in run hardware metadata; route attempts and
+outcomes are recorded in the engineering support log.
+
+After measuring extras, open `Analyze Replacements` in the analysis panel. The application
 derives the designed/front-panel channel count from the three-digit channel
 field in the saved OSX part number; it does not ask the operator to enter a
 second count. Rows beyond that derived count are treated as measured extras.
@@ -460,7 +505,8 @@ is reported as not applicable.
 
 The analysis recommends a swap only when the extra is at or below the warning
 limit at both wavelengths and improves the target channel's worse wavelength by
-at least the selected minimum improvement (0.05 dB by default). It processes
+at least the administrator-configured minimum improvement (0.2 dB by default).
+It processes
 the worst production channels first, removes each selected extra from the
 candidate pool, adds displaced production ports back into the spare pool, and
 then designates the best remaining readings as the requested spares. The
@@ -484,15 +530,25 @@ switch mappings, or COC output. The prompt is not shown for partial, selected,
 stopped, failed, retest-only, loaded-only, or unsupported MM runs.
 
 After physically performing swaps, use `Manage Port Replacements...` in the
-Replacement analysis panel. The operator records the `Current Port`,
-`Replacement Port`, reason, and initials; the application supplies the UTC
-timestamp. Recommended swaps can be pre-filled, and designated spare ports
-remain available. Replacement events are append-only, so a later change such
-as `14 -> 41 -> 43` preserves the entire chain while normal COC consumers use
-the effective `14 -> 43` projection. Records and designated spares are saved
-in the unit's shared `unit.json`; recording them does not alter measurements
-or recommendations and never commands or verifies the switch. The workflow
-does not use `CLOSe?`; general routing behavior is documented separately.
+Replacement analysis panel. For a database run, the operator selects a logical
+channel and the application supplies the assignment, current effective port,
+unit/switch context, related run, and UTC timestamp. Choosing an analysis
+recommendation also fills its proposed port, category, measured improvement,
+and a suggested editable reason. Manual replacements remain available. The
+operator supplies or confirms the proposed port, reason, operator, optional
+details, and an explicit statement that the physical reroute was completed
+outside Light Workbench. Opening or canceling the dialog records nothing.
+
+SQL replacement history is append-only. A later change such as
+`logical 14: 14 -> 41 -> 43` preserves both database rows while normal COC
+consumers use the effective `14 -> 43` projection. Corrections and reversals
+also append a row; they never delete history. Existing designated spares start
+selected, newly recommended spares are preselected for review, and spare
+events are written only when the operator saves. The replacement and spare
+changes from one approval are committed atomically and then reloaded from SQL
+Server. Legacy file-backed runs retain their compatible unit-record workflow.
+Recording replacements never commands or verifies the switch and does not use
+`CLOSe?`; general routing behavior is documented separately.
 Use `Copy Replacement Notes` beside the management button to copy the active
 replacement records with their available reason, operator, and timestamp for
 pasting into the Unit Editor notes.
@@ -501,8 +557,10 @@ pasting into the Unit Editor notes.
 
 `Write COC...` opens a preparation dialog instead of immediately exporting the
 active table. The dialog derives the front-panel channel count from the
-selected base run's part number, displays it read-only, and lets the operator
-choose one persisted base run and optionally one replacement/retest run.
+selected context run's part number, displays it read-only, and evaluates all
+compatible persisted run history automatically. The newest valid measurement
+for each logical channel wins; the operator cannot cherry-pick an older passing
+measurement or limit the operation to two runs.
 COC preparation starts only when the operator explicitly clicks the Hardware
 Controls button or selects File > Write COC...; completing, stopping, or
 failing a hardware run does not automatically ask whether to create a COC.
@@ -515,8 +573,9 @@ logs with a `coc_attempt_id`; if the workbook was created but provenance
 metadata could not be saved, the operator is told where the partially saved
 workbook is located.
 Saved readings remain available for a later explicit export.
-Supplemental readings replace complete configured wavelength pairs by logical
-channel; the source run and reported physical port remain traceable. A changed
+Retest readings replace complete configured wavelength pairs by logical
+channel according to persisted recency. The source run, measurement ID,
+attempt, timestamp, and documented physical port remain traceable. A changed
 physical port must match a completed Current Port -> Replacement Port record.
 
 The report is blocked if a required front-panel channel is missing, invalid,
@@ -542,12 +601,13 @@ below the final required channel are removed, affected merged ranges are
 repaired, and the print area ends at the completed report.
 
 The first output is named `COC <OSX-100 or OSX-150> <Main Board serial>_YYMMDD-HHMMSS.xlsx`
-and is saved in the selected base run folder. Existing files receive a numeric suffix instead of being
+and is saved in the selected context run folder for file-backed runs. Existing files receive a numeric suffix instead of being
 overwritten. The original template is never modified. The COC export uses
 `openpyxl`, so Microsoft Excel is not required on the target computer.
-Template graphics are preserved when present. Base/supplemental run numbers,
-front-panel count, and supplemental channel/physical-port overrides are stored
-as COC provenance in the base run metadata.
+Template graphics are preserved when present. The compatible runs considered,
+contributing run numbers, front-panel count, excluded-run reasons, and
+per-channel source/physical-port provenance are stored as COC provenance in
+the context run metadata where file-backed metadata is available.
 
 The three-digit channel field in a supported OSX-100/OSX-150 part number is the
 front-panel count. A Full configured pass may measure additional physical
@@ -574,6 +634,14 @@ unfinished channels, metadata, analysis, replacements, and designated spares
 are excluded. The table's display filter does not affect the copied rows, and
 copying does not create or modify CSV, JSON, COC, or other output files.
 
+Hardware Controls uses a responsive two-column button layout. The controls
+panel receives more width than the adjacent Reference panel so action labels
+remain readable at normal window sizes. During extra physical-port testing,
+the Write IL button is labeled `Write & Continue` while it saves the reading
+and advances to the next channel or port. SCPI mode has a known configured
+endpoint and completes automatically; experimental CLI mode retains `No More
+Physical Ports` because its endpoint is unknown.
+
 The Hardware test setup includes a Part number field and a lookup button. The
 default lookup folder is
 `U:\Product Log\Units-COCs-Param Files\OSX-150`. For a Main Board serial such
@@ -589,7 +657,10 @@ hardware or prevent manual entry.
 The Part number field is also an editable drop-down containing the current
 standard OSX-150 part numbers. Operating band is selected from `O band` or
 `C band`. The `Tested by` field accepts the operator's initials and is saved
-with the run and copied into `G4` of the COC workbook.
+with the run and copied into `G4` of the COC workbook. Database-backed runs
+also record a simple positive Station number. It identifies which testing
+station produced the run; it is not a station registry or workstation
+auto-detection system.
 The read-only `Front-panel channels` value beside the setup fields is derived
 from the part number's three-digit channel field. It is not manually editable.
 
@@ -769,6 +840,8 @@ source `1` is 1550 nm.
 
 The program always requests a **logical test channel**, such as channel 2. The
 OSX-150 applies whatever replacement mapping is saved in its own configuration.
+On approved firmware, `CLOSe?` reports that logical channel; it does not reveal
+the underlying physical route.
 
 For example, if logical channel 2 has been replaced by physical port 49:
 
@@ -776,20 +849,17 @@ For example, if logical channel 2 has been replaced by physical port 49:
 OSX-150 test channel 2 is using replacement physical port 49.
 ```
 
-This is informational and does not stop the test. The CSV records logical
-channel `2`, because that is the position being tested. The same behavior works
-for other replacements, including physical ports 50-56, without hard-coded
-mappings in Python.
+Light Workbench confirms logical channel `2`, then obtains physical port `49`
+from the assignment's append-only replacement history. The accepted database
+measurement stores both values. A post-replacement reading is valid evidence
+only when it was taken after the replacement and its recorded physical port
+matches the current effective assignment map. Light Workbench does not infer or
+repair that map from `CLOSe?`.
 
-Every mismatch encountered while routing a tested channel is automatically
-added to the `Swapped ports` metadata row in the form `2->49, 36->52`. If no
-mismatches are encountered, the row says `None detected in tested channels`.
-For a one-channel or partial-range run, this describes only the channels tested
-in that run; the program does not move through unselected channels merely to
-inspect their mappings.
-
-The full-pass and range limits come from `CFG:SWT:END?`, so the program adapts
-to different switches and configured logical channel counts.
+For a full pass, the required front-panel range comes from the part number.
+`CFG:SWT:END?` supplies the configured logical count: fewer configured channels
+than the front-panel count blocks the run, while additional configured channels
+are offered separately as SCPI-mapped spares when that routing method is active.
 
 ## Output names
 
@@ -858,8 +928,12 @@ The readings table also shows `Run` and `Result` status beside `Compare with:`.
 Run status reports progress against that run's own channel plan. Result status
 separately reports pass/fail quality, optimization or review recommendations,
 and validated opportunities to combine compatible runs. A partial retest may
-be complete for its own plan while being marked supplemental for production
-coverage. These statuses do not generate a COC or modify run data.
+be complete for its own plan while contributing to a composite pass for the
+unit. A valid passing multi-run projection is displayed as `Composite pass
+available`, with the status detail identifying the partial run and contributing
+run numbers. The green `Composite pass available` status also indicates that
+COC creation is available; it does not generate a COC automatically. These
+statuses do not modify run data.
 
 The operating band is currently hardcoded to `O band`. A `TODO` comment in
 `ILMReadLoss.py` marks this as something to query or prompt for later.

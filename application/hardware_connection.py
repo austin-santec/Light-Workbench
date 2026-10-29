@@ -826,6 +826,12 @@ class ManagedOpticalSwitch(_ManagedDevice):
     def set_channel(self, channel):
         return self._invoke("set_channel", channel)
 
+    def current_logical_channel(self):
+        return self._invoke("current_logical_channel")
+
+    def set_physical_port(self, physical_port, maximum_port):
+        return self._invoke("set_physical_port", physical_port, maximum_port)
+
     def get_ip_address(self):
         return self._invoke("get_ip_address")
 

@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from domain.extra_ports import ExtraChannelRoutingMethod
 from domain.limit_profiles import default_limit_profiles
 from infrastructure.limit_profile_repository import LimitProfileRepository
 
@@ -12,6 +13,14 @@ class LimitProfileRepositoryTests(unittest.TestCase):
             profiles = LimitProfileRepository(Path(directory) / "limits.ini").load_profiles()
             self.assertEqual(profiles["OSX-100"].fail_above_db, 0.8)
 
+    def test_missing_routing_setting_defaults_to_scpi_mapped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = LimitProfileRepository(Path(directory) / "limits.ini")
+            self.assertEqual(
+                repository.load_extra_channel_routing_method(),
+                ExtraChannelRoutingMethod.SCPI_MAPPED,
+            )
+
     def test_profiles_round_trip_to_ini(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = LimitProfileRepository(Path(directory) / "limits.ini")
@@ -19,7 +28,42 @@ class LimitProfileRepositoryTests(unittest.TestCase):
             repository.save_profiles(profiles)
             loaded = repository.load_profiles()
             self.assertEqual(loaded["OSX-150"].warning_above_db, 2.25)
+            self.assertEqual(
+                loaded["OSX-150"].minimum_replacement_improvement_db,
+                0.2,
+            )
             self.assertTrue(repository.path.is_file())
+
+    def test_extra_channel_routing_method_round_trips(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = LimitProfileRepository(Path(directory) / "limits.ini")
+            repository.save_profiles(
+                default_limit_profiles(),
+                ExtraChannelRoutingMethod.CLI_DIRECT,
+            )
+
+            self.assertEqual(
+                repository.load_extra_channel_routing_method(),
+                ExtraChannelRoutingMethod.CLI_DIRECT,
+            )
+
+            repository.save_profiles(default_limit_profiles())
+            self.assertEqual(
+                repository.load_extra_channel_routing_method(),
+                ExtraChannelRoutingMethod.CLI_DIRECT,
+            )
+
+    def test_invalid_extra_channel_routing_method_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "limits.ini"
+            path.write_text(
+                "[hardware-routing]\n"
+                "osx_150_extra_channel_method=automatic_fallback\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "Extra-channel routing"):
+                LimitProfileRepository(path).load_extra_channel_routing_method()
 
     def test_invalid_profile_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

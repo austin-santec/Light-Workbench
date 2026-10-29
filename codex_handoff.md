@@ -1,7 +1,7 @@
 # Light Workbench — AI Handoff
 
 This document is a working orientation guide for another AI or developer
-continuing this project. It was last reviewed on 2026-10-02. The files on disk
+continuing this project. It was last reviewed on 2026-10-13. The files on disk
 and the Git worktree are the source of truth.
 
 ## Mission
@@ -21,7 +21,7 @@ report a different physical port when the switch has a replacement mapping.
 
 ## Current architecture
 
-The current source release is **Light Workbench 1.29.3**. The single
+The current source release is **Light Workbench 1.36.0**. The single
 source of truth for the displayed name, version, tagline, and About text is
 `config/app_info.py`; bump the patch version for small fixes, the minor version for
 backward-compatible features, and the major version for incompatible changes.
@@ -55,9 +55,80 @@ SM and MM use matching COC workflows; OSX-150 MM remains blocked from COC
 export. Historical compatibility classifications are preserved when loading
 older records.
 
+The database-focused branch has completed its SQL Server-primary cutover
+through Milestone 10. Development targets
+`localhost\SQLExpress`, database `LWBTestDB`, with Windows Authentication. The
+per-user endpoint file is `%LOCALAPPDATA%\LightWorkbench\config\database.ini`.
+The application creates it with documented local defaults on first database
+initialization when missing, never replaces an existing file, and blocks
+database use with actionable feedback if an existing file is malformed or
+invalid. The tracked `config/database.ini.example` file contains no
+credentials.
+The forward-only migration runner and initial eight-table/two-view schema are in
+`infrastructure/database/`; migration 0003 adds the nullable positive
+`IL_RUNS.station_number` field. Guarded reset and backup/restore tools operate only
+on `LWBTestDB_Integration`. Backup verification restores to a temporary
+database, runs `DBCC CHECKDB`, validates the schema, and cleans up. The
+clean-start schema is
+future-data-only: it does not include historical run import, SQLite, or a local
+synchronization outbox. Its core tables are `UNITS`, `SWITCHES`,
+`UNIT_SWITCH_ASSIGNMENTS`, `IL_RUNS`, `IL_MEASUREMENTS`,
+`CHANNEL_REPLACEMENTS`, `DESIGNATED_SPARES`, and `SCHEMA_MIGRATIONS`, with
+read-only current-measurement and current-channel-map views. New production
+runs and accepted measurements use SQL Server as their authority. Existing
+CSV/JSON runs remain viewable but are not uploaded or writable database runs.
+Support logs, diagnostic exports, and generated COC files remain local. See
+`docs/DATABASE_ARCHITECTURE.md` and `docs/DATABASE_ROADMAP.md` before database
+work.
+
+New hardware runs require a recorded purpose: Production (the default),
+Engineering, Training, or Calibration. Non-production runs are retained for
+support/review but are excluded from normal production analysis. Completion and
+analysis status are finalized together for database runs; completed production
+runs become included, while stopped/failed production runs remain pending and
+non-production runs remain excluded. Loaded purposes are displayed in Run
+information and beside the table status, and continuation/retest operations
+retain the original purpose. COC preparation is purpose-neutral: explicitly
+production, engineering, training, and calibration database sources are all
+eligible when they satisfy the technical COC requirements, while legacy files
+with no purpose metadata remain compatible.
+
+New database runs also require a simple positive station number. It is stored
+directly on `IL_RUNS`, shown in Run information and database reports, included
+in relevant local support events and COC provenance, and preserved for
+continuations/retests. Older runs may display `Not recorded`; loading them does
+not change the session's station default.
+
+`Tools > Database Reports...` is the read-only reporting surface. It includes
+assignment and run history, selected-run channel/retest attempts, replacement
+outcomes, saved-limit result derivation, and CSV export. Its normal production
+scope includes only production runs marked `included`; the operator must
+explicitly enable troubleshooting scope to include pending, excluded,
+superseded, or non-production data.
+
+Database-backed `Manage Port Replacements...` is logical-channel centered and
+uses the assignment routing snapshot as its source of truth. It shows the real
+SQL audit history, derives the current effective port and database context,
+and keeps recommendations advisory until explicitly queued. The operator must
+confirm reason, operator, optional details, and that the physical reroute was
+completed outside Light Workbench. Replacements plus approved spare changes
+commit atomically; corrections and reversals append records, and the UI reloads
+all routing projections from SQL Server. The workflow issues no hardware
+mapping or verification command. Legacy file-backed replacement editing keeps
+its compatible event model.
+
+SQL migration scripts are required packaged runtime resources. `ilm_app.spec`
+discovers every `.sql` file under
+`infrastructure/database/sql_migrations/` and places it at the same package-
+relative path under PyInstaller's `_internal` directory. `verify_release.ps1`
+uses `tools/release_resources.py` to require an exact filename and SHA-256
+match between source and package. Runtime resolution remains
+`Path(__file__).with_name("sql_migrations")`; missing resources fail database
+preflight rather than falling back to a developer checkout.
+
 | File | Responsibility |
 | --- | --- |
-| ilm_app.py | Current PyQt5 desktop viewer and real-hardware UI. Loads CSV runs, analyzes limits, starts hardware runs, displays readings, and commits accepted results. The header includes the bundled Lulu - CandC logo; the UI uses a light-grey shell and `#e60013` primary accent. |
+| ilm_app.py | Current PyQt5 desktop viewer and real-hardware UI. Loads database or legacy CSV runs, analyzes limits, starts hardware runs, displays readings, and commits accepted production results through the database workflow. The header includes the bundled Lulu - CandC logo; the UI uses a light-grey shell and `#e60013` primary accent. |
 | application/measurement_worker.py | Qt worker/orchestrator. Connects instruments, routes channels, waits for operator cable placement, supports repeated reads, emits readings/progress, and always closes instruments. |
 | measurement_worker.py | Compatibility facade for the application measurement worker. |
 | application/live_controller.py | Shared meter worker lifecycle used by Live IL and the main-window reference calculation. |
@@ -76,6 +147,7 @@ older records.
 | application/ | Workflow controllers, measurement worker, planning, and transient hardware-run state. |
 | domain/ | Vendor-neutral models, calculations, replacement rules, timing, and reporting. |
 | domain/raw_export.py | Pure Excel-compatible TSV formatting for accepted run measurements; it does not persist data. |
+| domain/run_purpose.py | Stable purpose choices, labels, normalization, and production-analysis policy. |
 | domain/coc_preparation.py | Pure COC source compatibility, merge, completeness, threshold, physical-port, and optimization validation. |
 | application/coc_workflow.py | Discovers persisted unit runs, hydrates report source data, and delegates COC preparation without reading UI widgets. |
 | domain/diagnostic_analysis.py | In-memory diagnostic samples and separate repeatability/stability statistics. |
@@ -102,11 +174,13 @@ older records.
 | red_light_test.py | Compatibility facade for the Red Light presentation module. |
 | ui/live_il_reading.py | Meter-only Live IL Reading dialog. It connects only to the OP815, calculates both wavelength losses from editable references, supports non-persistent reconnect repeatability testing and timed live updates, and never controls the switch or persists data. |
 | ui/power_measurement_diagnostics.py | Non-recording raw-power diagnostic dialog showing absolute readings and exact IL math, with optional independent switch routing and opt-in trace export. |
-| ui/coc_export_dialog.py | Prepare COC modal for front-panel count, explicit base/supplemental run selection, validation summary, and blocked-export guidance. |
+| ui/coc_export_dialog.py | Prepare COC modal for front-panel count, automatic compatible-history aggregation, validation summary, and blocked-export guidance. |
+| ui/database_replacements.py | SQL-aware logical-channel replacement editor with recommendation review, physical-completion confirmation, designated-spare approval, and real append-only audit history. |
 | live_il_reading.py | Compatibility facade for the Live IL presentation module. |
 | config/app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
 | app_info.py | Compatibility facade for application release metadata. |
 | tools/dependency_check.py | Non-destructive prerequisite and connection diagnostics. |
+| tools/release_resources.py | Deterministic SQL migration discovery and source-to-package integrity verification used by release tooling. |
 | dependency_check.py | Compatibility facade for dependency diagnostics. |
 | domain/run_data.py | RunData and over-limit analysis rules; the root `run_data.py` remains a compatibility facade. |
 | infrastructure/csv_run_loader.py | Current and legacy CSV parsing for RunData. |
@@ -262,6 +336,24 @@ short range.
 8. On completion or stop, the workflow releases its leases and healthy
    instruments remain connected. A failed device is closed and marked Error. Rows
    accepted before interruption remain persisted.
+8a. A new automatic full pass uses the part-number-derived front-panel count,
+not a larger temporary `CFG:SWT:END?` value, as its required logical plan. Once
+all required readings are written, the worker offers one safe-default Finish
+Run choice or an optional Test Extra Ports phase. The extra phase starts at
+`front_panel_count + 1` and routes through TCP/2323 with the fixed command
+`b0 writereg mems.ch <port>\r\n`. Each candidate remains provisional until Write IL;
+Retry, No More Physical Ports, Stop Extra Testing, invalid readings, and route
+failures create no database measurement. No More records an operator-reported
+endpoint, while Stop makes no capacity inference. Accepted extras remain
+replacement-analysis candidates and never become direct COC rows. The default
+administrator safety ceiling is 64.
+The `Extra channels only` channel mode starts that supplemental phase directly
+in an independent database run, without requiring front-panel readings in the
+same run. It can continue a stopped/incomplete extra-only run using its saved
+routing method; it cannot turn a front-panel run into an extra-only continuation,
+and it is blocked for OSX-100. Its stable hardware metadata value is
+`extra_channels_only`, and its result status is supplemental rather than a
+standalone COC result.
 9. Existing CSVs can be opened for analysis. The table highlights either
 wavelength over the warning limit and Select Over-Limit selects rows for
 retest.
@@ -290,10 +382,10 @@ for direct pasting into an existing Excel table. It ignores the table filter,
 excludes pending/live readings and metadata, and does not create or modify run
 files.
 11. COC export uses a validated preparation workflow over persisted run data.
-The selected base run's OSX part number supplies the read-only front-panel
-channel count; the operator chooses one base run and may choose one compatible
-replacement/retest run. Supplemental complete pairs
-override the base by logical channel only when any changed physical port is
+The selected context run's OSX part number supplies the read-only front-panel
+channel count; all compatible persisted runs are evaluated automatically. The
+newest valid complete pair for each logical channel is used, and a retest
+replaces an older value only when any changed physical port is
 supported by a completed unit replacement record. Every required channel must
 be present, finite, nonnegative, and below the selected model's fail limit after
 display rounding; there is no incomplete or failing override. OSX-100 uses a
@@ -395,7 +487,35 @@ information but block routing and close the session safely. It uses:
 
 - CFG:SWT:END? for the configured logical-channel count;
 - CLOSe <logical channel> to route a test channel;
-- CLOSe? to read the physical port actually selected.
+- CLOSe? to confirm the active logical channel after routing.
+
+OSX-150 extra-channel routing is administrator-selected and fixed for the run.
+The default `scpi_mapped` path offers the finite configured range above the
+part-number-derived front-panel count and routes it with the same verified
+`CLOSe`/logical-`CLOSe?` behavior. The requested configured extra channel is
+the physical candidate identity; the query is not physical readback. Operators
+must temporarily add those mappings to the
+module configuration outside Light Workbench; the application never edits the
+map. A configured count below the front-panel count blocks a full pass.
+
+The optional `cli_direct` engineering path is deliberately separate and marked
+experimental. It queries
+the connected switch IP over VISA, opens only that address on raw TCP port 2323,
+and sends `b0 writereg mems.ch <physical port>\r\n` using raw TCP, not Telnet. It does
+not use `CLOSe?`, alter permanent mapping, scan the network, or accept arbitrary
+CLI input. The initial response timeout is separate from a short post-byte idle
+timeout, so binary frames such as `03 00 00 04` are captured instead of being
+misclassified as timeouts. Responses are bounded and classified as verified,
+acknowledged, unverified, or failed; unverified routing requires explicit operator
+confirmation and failed routing cannot be accepted. The current timeout,
+framing, acknowledgement patterns, and absence of a default readback command
+still require physical firmware validation.
+
+No automatic fallback mixes SCPI and CLI methods. The run's
+`measurement_hardware_json` records the method and known channel counts, while
+support events retain route commands, outcomes, returned ports, and failures.
+Both paths feed the same accepted-reading and replacement-analysis workflows;
+extra rows remain excluded from required front-panel COC rows.
 
 `CLOSe?` must not be used as a connection probe. It is valid only after
 `CLOSe <logical channel>` has routed a channel.
@@ -417,9 +537,10 @@ possible rather than asserting it. The connection manager still marks the
 switch as Error and requires an explicit reconnect; it never resumes a failed
 route automatically.
 
-The switch applies its own replacement mapping. Python should request the
-logical test channel and record the reported physical port; it should not
-hardcode replacement mappings.
+The switch applies its own replacement mapping. Python requests and confirms
+the logical test channel, while the assignment's effective map supplies the
+documented physical port persisted with the reading. `CLOSe?` must never be
+used to infer replacement mapping.
 
 ## Output formats and locations
 
@@ -500,9 +621,9 @@ for that run's 1310 nm and 1550 nm values, matched by logical channel. Selecting
 run's analysis, filtering, or saved output.
 
 COC export metadata includes `Part number`, `COC output file`, `COC output
-path`, `COC exported at`, `COC template`, front-panel channel count, base and
-supplemental run numbers, source runs, and supplemental channel/physical-port
-overrides. The current XLSX mapping is
+path`, `COC exported at`, `COC template`, front-panel channel count, context
+run number, all contributing source runs, and retest/replacement channel and
+physical-port overrides. The current XLSX mapping is
 `OSX Template!D11:D55` and `E11:E55` for channels 1-45,
 `D67:D69` and `E67:E69` for channels 46-48, `B4` for the merged part-number
 cell, `D4` for the merged Main Board serial cell, `F4` for the date, and `G4`

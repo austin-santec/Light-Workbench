@@ -1,7 +1,7 @@
 import unittest
 
 from hardware.factory import HardwareFactory
-from hardware.interfaces import OpticalSwitch, PowerMeter
+from hardware.interfaces import LogicalChannelRouteResult, OpticalSwitch, PowerMeter
 
 
 class FakeMeter:
@@ -22,6 +22,9 @@ class FakeMeter:
 
 
 class FakeSwitch:
+    def __init__(self):
+        self.current = 1
+
     def connect(self):
         pass
 
@@ -29,7 +32,11 @@ class FakeSwitch:
         return 48
 
     def set_channel(self, channel):
-        return channel
+        self.current = int(channel)
+        return LogicalChannelRouteResult(channel, channel)
+
+    def current_logical_channel(self):
+        return self.current
 
     def close(self):
         pass

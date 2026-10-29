@@ -131,6 +131,10 @@ class CocWorkflow:
             measurements=measurements,
             metadata=dict(run_data.metadata),
             criteria=criteria,
+            run_purpose=(
+                str(run_data.metadata.get("run_purpose") or "").strip().lower()
+                or None
+            ),
         )
 
     def prepare(
@@ -138,14 +142,18 @@ class CocWorkflow:
         base_run: CocSourceRun,
         front_panel_channel_count: int,
         *,
+        source_runs=(),
+        compatible_runs=(),
         supplemental_run: CocSourceRun | None = None,
         completed_replacements=(),
         designated_spares=(),
     ) -> CocPreparationResult:
-        """Prepare one validated COC result from explicit source selections."""
+        """Prepare one validated COC result from compatible run history."""
         return prepare_coc(
             base_run,
             front_panel_channel_count,
+            source_runs=source_runs,
+            compatible_runs=compatible_runs,
             supplemental_run=supplemental_run,
             completed_replacements=completed_replacements,
             designated_spares=designated_spares,

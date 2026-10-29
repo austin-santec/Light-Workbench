@@ -1,7 +1,7 @@
 """User-facing Light Workbench identity and release information."""
 
 APP_NAME = "Light Workbench"
-APP_VERSION = "1.29.3"
+APP_VERSION = "1.36.0"
 APP_TAGLINE = "Make light work, light work! Ha!"
 APP_DESCRIPTION = (
     "Optical testing and measurement software for insertion-loss testing, "
@@ -22,6 +22,7 @@ def about_text():
             "- SM 1310/1550 nm and MM 850/1300 nm insertion-loss modes",
             "- Operator-selected SM/MM wavelength modes with independent limits",
             "- Santec OSX-100/OSX-150 channel control and Red Light Test",
+            "- Independent OSX-150 extra-channel-only database runs",
             "- Over-limit filtering and replacement analysis",
             "- XLSX COC export and saved run review",
             "- Validated multi-run COC preparation with replacement provenance",
@@ -36,6 +37,8 @@ def about_text():
             "- Always-on engineering support logs and local support bundles",
             "- Numbered runs grouped by unit with shared replacements and spares",
             "- Append-only accepted-reading and retest history with run viewer",
+            "- SQL Server-primary production run and measurement persistence",
+            "- Run-purpose selection with production-analysis safeguards",
             "",
             "Designed for Windows optical production testing.",
         )

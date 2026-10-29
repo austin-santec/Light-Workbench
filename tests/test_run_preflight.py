@@ -168,6 +168,24 @@ class RunPreflightTests(unittest.TestCase):
 
         self.assertEqual(metadata, before)
 
+    def test_database_run_requires_positive_station_number(self):
+        missing = validate_run_preflight(
+            **valid_kwargs(require_station_number=True)
+        )
+        self.assertEqual(
+            [issue.code for issue in missing.metadata_issues],
+            ["missing_station_number"],
+        )
+        self.assertFalse(missing.is_valid_for_admin)
+
+        valid = validate_run_preflight(
+            **valid_kwargs(
+                require_station_number=True,
+                metadata={**complete_metadata(), "Station number": "4"},
+            )
+        )
+        self.assertTrue(valid.is_valid_for_normal_operator)
+
 
 if __name__ == "__main__":
     unittest.main()

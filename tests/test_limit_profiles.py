@@ -21,6 +21,14 @@ class LimitProfileTests(unittest.TestCase):
         self.assertEqual(profiles["OSX-150"].warning_above_db, 2.25)
         self.assertEqual(profiles["OSX-150"].fail_above_db, 2.5)
         self.assertEqual(profiles["OSX-150/MM"].warning_above_db, 2.25)
+        self.assertEqual(
+            profiles["OSX-100/SM"].minimum_replacement_improvement_db,
+            0.2,
+        )
+        self.assertEqual(
+            profiles["OSX-150/MM"].minimum_replacement_improvement_db,
+            0.2,
+        )
 
     def test_model_and_mode_profiles_are_independent(self):
         profiles = default_limit_profiles()
@@ -61,6 +69,13 @@ class LimitProfileTests(unittest.TestCase):
     def test_legacy_limit_remains_valid_for_old_runs(self):
         profile = legacy_limit_profile(2.0)
         self.assertTrue(profile.classify(2.01, 1.0).is_fail)
+        self.assertEqual(profile.minimum_replacement_improvement_db, 0.2)
+
+    def test_old_profile_mapping_uses_default_minimum_improvement(self):
+        values = default_limit_profiles()["OSX-150/SM"].as_dict()
+        values.pop("minimum_replacement_improvement_db")
+        profile = LimitProfile.from_mapping(values)
+        self.assertEqual(profile.minimum_replacement_improvement_db, 0.2)
 
     def test_loaded_osx100_mm_snapshot_uses_the_saved_mm_profile(self):
         profiles = default_limit_profiles()

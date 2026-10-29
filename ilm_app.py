@@ -68,6 +68,7 @@ from application.hardware_planning import parse_hardware_channels
 from application.hardware_session import HardwareRunSession
 from application.run_start import (
     build_hardware_run_request,
+    evaluate_extra_port_offer_eligibility,
     prepare_hardware_run,
 )
 from application.run_preflight import (
@@ -80,7 +81,13 @@ from application.part_number_lookup import (
     classify_part_lookup_error,
 )
 from application.coc_workflow import CocRunOption, CocWorkflow
+from application.database_primary_workflow import DatabaseRunContext
+from application.replacement_persistence_workflow import (
+    ReplacementBatchValidationError,
+)
+from application.run_lifecycle_workflow import DatabaseRunUnavailableError
 from application.reference_session import ReferenceSession
+from infrastructure.database.connection import DatabaseConnectionError
 from domain.measurement import (
     calculate_insertion_loss,
     format_dark_reference_error,
@@ -105,7 +112,19 @@ from domain.hardware_connection import (
     HardwareCapability,
     HardwareNotReadyError,
 )
-from domain.models import ConnectionState, DeviceCategory
+from domain.models import (
+    ChannelMode,
+    ConnectionState,
+    DeviceCategory,
+    MeasurementPersistenceAcknowledgement,
+    PendingMeasurementToken,
+    ProvisionalMeasurement,
+)
+from domain.extra_ports import (
+    ExtraChannelRoutingMethod,
+    ExtraPortPhaseStatus,
+    PhysicalPortRouteStatus,
+)
 from domain.limit_profiles import (
     LimitProfile,
     default_limit_profiles,
@@ -122,7 +141,22 @@ from domain.measurement_attempts import (
 )
 from domain.raw_export import format_raw_measurements
 from domain.part_numbers import parse_osx_part_number
+from domain.database_records import (
+    MEASUREMENT_ROLE_EXTRA_CANDIDATE,
+    MEASUREMENT_ROLE_LOGICAL_CHANNEL,
+    SwitchSpec,
+    UnitSpec,
+)
+from domain.unit_switch_assignments import (
+    AssignmentChangeRequiredError,
+    NewHardwarePairingConfirmationRequired,
+)
 from domain.coc_preparation import CocSourceRun
+from domain.run_purpose import (
+    RUN_PURPOSE_OPTIONS,
+    normalize_run_purpose,
+    run_purpose_label,
+)
 from domain.run_status import (
     COMPLETION_COMPLETE,
     COMPLETION_INCOMPLETE,
@@ -178,6 +212,8 @@ from ui.admin_config import AdminConfigDialog, AdminPasswordDialog
 from ui.reading_history import ReadingHistoryDialog
 from ui.coc_export_dialog import CocExportDialog, format_optimization_warning
 from ui.switch_ip import SwitchIpAddressDialog
+from ui.database_reports import DatabaseReportsDialog
+from ui.database_replacements import DatabaseReplacementDialog
 from ui.collapsible_group_box import CollapsibleGroupBox
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
@@ -772,11 +808,14 @@ class ShortcutButton(QPushButton):
         self.title_label = QLabel(title, self)
         self.title_label.setObjectName("button_title")
         self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setWordWrap(True)
+        self.title_label.setMinimumWidth(0)
         self.title_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         self.shortcut_label = QLabel("[Unassigned]", self)
         self.shortcut_label.setObjectName("button_shortcut")
         self.shortcut_label.setAlignment(Qt.AlignCenter)
+        self.shortcut_label.setMinimumWidth(0)
         self.shortcut_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         button_layout = QVBoxLayout(self)
@@ -791,6 +830,11 @@ class ShortcutButton(QPushButton):
         text = shortcut.toString() if isinstance(shortcut, QKeySequence) else str(shortcut)
         self.shortcut_label.setText("[%s]" % (text or "Unassigned"))
 
+    def set_title(self, title):
+        """Update the visible and accessible action title."""
+        self.title_label.setText(str(title))
+        self.setAccessibleName(str(title))
+
 
 class MainWindow(QMainWindow):
     reference_values_changed = pyqtSignal(float, float)
@@ -800,6 +844,7 @@ class MainWindow(QMainWindow):
         initial_path: str | None = None,
         support_logger=None,
         part_lookup_controller=None,
+        database_workflow=None,
     ):
         super().__init__()
         self.support_logger = support_logger or get_support_logging_service()
@@ -808,14 +853,26 @@ class MainWindow(QMainWindow):
         self._post_run_recommendation_prompted = False
         self._last_run_status_key = None
         self._active_planned_channels = None
+        self._active_extra_only = False
         self._run_terminal_status = None
         self._run_completion_reason = ""
         self._run_completed_at_utc = ""
+        self._run_purpose_editable = True
+        self._station_session_default = None
+        self._station_editable = True
         self._loaded_run_profile_unavailable = False
         self._loaded_run_profile_reason = ""
         self.reference_workflow = None
         self._support_log_size_warning_shown = False
         self.run_data: RunData | None = None
+        self.database_workflow = database_workflow
+        self.database_run_context: DatabaseRunContext | None = None
+        self.database_pending_measurement = None
+        self.hardware_pending_token = None
+        self._last_measurement_acknowledgement = None
+        self._database_persistence_payload = None
+        self._database_write_request_in_flight = False
+        self._database_persistence_waiting_for_ack = False
         self.admin_session = AdminSession()
         self.reference_session = ReferenceSession()
         self.active_run_reference_snapshot = None
@@ -823,9 +880,13 @@ class MainWindow(QMainWindow):
         self._syncing_reference_widgets = False
         self.limit_profile_repository = LimitProfileRepository()
         self.limit_profiles = default_limit_profiles()
+        self.extra_channel_routing_method = ExtraChannelRoutingMethod.SCPI_MAPPED
         self.limit_profile_error = None
         try:
             self.limit_profiles = self.limit_profile_repository.load_profiles()
+            self.extra_channel_routing_method = (
+                self.limit_profile_repository.load_extra_channel_routing_method()
+            )
         except (OSError, ValueError, TypeError) as error:
             self.limit_profile_error = str(error)
         self.active_limit_profile = self.limit_profiles[profile_key("OSX-150", "SM")]
@@ -908,6 +969,8 @@ class MainWindow(QMainWindow):
         self.unit_directory = None
         self.unit_record = {}
         self.replacement_analysis = None
+        self.replacement_analysis_history = ()
+        self.replacement_analysis_stale = False
         self.replacement_history = []
         self.completed_replacements = []
         self.designated_spares = []
@@ -1039,9 +1102,33 @@ class MainWindow(QMainWindow):
         self.hardware_controller.operator_required.connect(
             self.hardware_operator_required
         )
-        self.hardware_controller.reading_ready.connect(self.hardware_reading_ready)
+        # Database-backed runs use one atomic payload containing the displayed
+        # values and their worker token.  Keeping the legacy four-value signal
+        # available on the controller preserves compatibility for lightweight
+        # callers without exposing the UI to the token-delivery race.
+        self.hardware_controller.provisional_measurement_ready.connect(
+            self.hardware_provisional_measurement_ready
+        )
+        self.hardware_controller.persistence_requested.connect(
+            self.hardware_persistence_requested
+        )
+        self.hardware_controller.persistence_request_rejected.connect(
+            self.hardware_persistence_request_rejected
+        )
         self.hardware_controller.device_status_changed.connect(
             self._hardware_device_status_changed
+        )
+        self.hardware_controller.extra_port_offer_required.connect(
+            self.hardware_extra_port_offer_required
+        )
+        self.hardware_controller.extra_port_phase_changed.connect(
+            self.hardware_extra_port_phase_changed
+        )
+        self.hardware_controller.extra_port_confirmation_required.connect(
+            self.hardware_extra_port_confirmation_required
+        )
+        self.hardware_controller.extra_port_issue.connect(
+            self.hardware_extra_port_issue
         )
         self.hardware_controller.progress_changed.connect(
             self.hardware_progress_changed
@@ -1329,10 +1416,89 @@ class MainWindow(QMainWindow):
             else "Connect the measurement hardware before calculating a reference."
         )
         self._refresh_reference_controls()
+        self._set_run_purpose_editable(self._run_purpose_editable)
+        self._set_station_editable(self._station_editable)
         self.retest_button.setEnabled(
             bool(self.run_data and self.run_data.measurements)
             and run_available
         )
+        self._refresh_void_run_control()
+
+    def _set_run_purpose_editable(self, editable: bool):
+        """Keep purpose immutable for loaded history and active runs."""
+
+        self._run_purpose_editable = bool(editable)
+        if hasattr(self, "hardware_run_purpose"):
+            self.hardware_run_purpose.setEnabled(
+                self._run_purpose_editable and not self.hardware_run_active
+            )
+
+    def _set_station_editable(self, editable: bool):
+        """Keep a loaded database run's station immutable."""
+
+        self._station_editable = bool(editable)
+        if hasattr(self, "hardware_station_number"):
+            self.hardware_station_number.setEnabled(
+                self._station_editable and not self.hardware_run_active
+            )
+
+    def _station_number_selection_changed(self, value):
+        if getattr(self, "_station_editable", True) and int(value) > 0:
+            self._station_session_default = int(value)
+
+    def _set_station_number(self, value, *, editable=True):
+        self.hardware_station_number.blockSignals(True)
+        try:
+            self.hardware_station_number.setValue(
+                int(value) if value is not None and int(value) > 0 else 0
+            )
+        except (TypeError, ValueError):
+            self.hardware_station_number.setValue(0)
+        finally:
+            self.hardware_station_number.blockSignals(False)
+        self._set_station_editable(editable)
+
+    def _station_number_value(self):
+        value = int(self.hardware_station_number.value())
+        return value if value > 0 else None
+
+    def _restore_station_session_default(self):
+        self._set_station_number(self._station_session_default, editable=True)
+
+    def _run_purpose_selection_changed(self, *_args):
+        if not hasattr(self, "hardware_run_purpose"):
+            return
+        purpose = str(self.hardware_run_purpose.currentData() or "production")
+        if purpose == "production":
+            self.run_purpose_notice_label.clear()
+            self.run_purpose_notice_label.hide()
+        else:
+            self.run_purpose_notice_label.setText(
+                "%s is retained as run provenance. It does not block technically "
+                "eligible COC or replacement analysis." % run_purpose_label(purpose)
+            )
+            self.run_purpose_notice_label.show()
+        if hasattr(self, "run_purpose_status_label"):
+            self.run_purpose_status_label.setText(
+                "Purpose: %s" % run_purpose_label(purpose)
+            )
+
+    def _set_run_purpose(self, value, *, editable: bool):
+        """Apply a persisted purpose without changing it through UI signals."""
+
+        try:
+            purpose = normalize_run_purpose(value)
+        except ValueError:
+            purpose = "production"
+        index = self.hardware_run_purpose.findData(purpose)
+        if index >= 0:
+            self.hardware_run_purpose.blockSignals(True)
+            try:
+                self.hardware_run_purpose.setCurrentIndex(index)
+            finally:
+                self.hardware_run_purpose.blockSignals(False)
+        self._run_purpose_selection_changed()
+        self._set_run_purpose_editable(editable)
 
     def _hardware_connection_operation_finished(self, operation_name, results):
         if hasattr(self, "connect_hardware_button"):
@@ -1477,6 +1643,10 @@ class MainWindow(QMainWindow):
         )
         self.get_switch_ip_action.triggered.connect(self.show_switch_ip)
         tools_menu.addAction(self.get_switch_ip_action)
+        self.database_reports_action = QAction("Database Reports...", self)
+        self.database_reports_action.setEnabled(self.database_workflow is not None)
+        self.database_reports_action.triggered.connect(self.show_database_reports)
+        tools_menu.addAction(self.database_reports_action)
         dependency_action = QAction("Check Dependencies...", self)
         dependency_action.triggered.connect(self.show_dependency_check)
         tools_menu.addAction(dependency_action)
@@ -1655,7 +1825,7 @@ class MainWindow(QMainWindow):
         hardware_setup_box.set_content_layout(hardware_setup_layout)
         hardware_setup_layout.addWidget(QLabel("Channel mode:"), 0, 0)
         self.hardware_channel_mode = QComboBox()
-        self.hardware_channel_mode.addItems(["Full configured pass", "Single channel", "Specific channels/ranges"])
+        self.hardware_channel_mode.addItems([mode.value for mode in ChannelMode])
         self.hardware_channel_mode.currentIndexChanged.connect(
             self.update_channel_mode_controls
         )
@@ -1685,6 +1855,16 @@ class MainWindow(QMainWindow):
             2,
             1,
             2,
+        )
+        self.extra_channel_routing_label = QLabel()
+        self.extra_channel_routing_label.setWordWrap(True)
+        self.extra_channel_routing_label.setStyleSheet("color: #d89b00;")
+        hardware_setup_layout.addWidget(
+            self.extra_channel_routing_label,
+            5,
+            0,
+            1,
+            4,
         )
         self.hardware_channel_ranges_label = QLabel("Channels/ranges:")
         hardware_setup_layout.addWidget(self.hardware_channel_ranges_label, 1, 0)
@@ -1757,8 +1937,41 @@ class MainWindow(QMainWindow):
             "Enter the operator's initials. They are saved with the run and COC."
         )
         hardware_setup_layout.addWidget(self.hardware_tested_by, 6, 1)
+        hardware_setup_layout.addWidget(QLabel("Station:"), 6, 2)
+        self.hardware_station_number = QSpinBox()
+        self.hardware_station_number.setRange(0, 9999)
+        self.hardware_station_number.setSpecialValueText("Not recorded")
+        self.hardware_station_number.setToolTip(
+            "Optional positive station number. New database runs require it."
+        )
+        self.hardware_station_number.valueChanged.connect(
+            self._station_number_selection_changed
+        )
+        hardware_setup_layout.addWidget(self.hardware_station_number, 6, 3)
         self.reference_status_label = QLabel("Reference status: Not referenced")
         self.reference_status_label.setWordWrap(True)
+        hardware_setup_layout.addWidget(QLabel("Run purpose:"), 8, 2)
+        self.hardware_run_purpose = QComboBox()
+        for label, value in RUN_PURPOSE_OPTIONS:
+            self.hardware_run_purpose.addItem(label, value)
+        self.hardware_run_purpose.setToolTip(
+            "Choose why this run is being performed. Purpose is retained for "
+            "reporting and does not replace technical eligibility checks."
+        )
+        self.hardware_run_purpose.currentIndexChanged.connect(
+            self._run_purpose_selection_changed
+        )
+        hardware_setup_layout.addWidget(self.hardware_run_purpose, 8, 3)
+        self.run_purpose_notice_label = QLabel()
+        self.run_purpose_notice_label.setWordWrap(True)
+        self.run_purpose_notice_label.setStyleSheet("color: #d89b00;")
+        hardware_setup_layout.addWidget(
+            self.run_purpose_notice_label,
+            8,
+            0,
+            1,
+            2,
+        )
         hardware_setup_layout.addWidget(QLabel("Run number:"), 7, 0)
         self.hardware_run_number = QSpinBox()
         self.hardware_run_number.setRange(1, 9999)
@@ -1782,7 +1995,7 @@ class MainWindow(QMainWindow):
         )
         hardware_setup_layout.addWidget(
             self.front_panel_channel_count_label,
-            8,
+            9,
             2,
             1,
             2,
@@ -1794,43 +2007,53 @@ class MainWindow(QMainWindow):
         self._refresh_reference_controls()
         self._refresh_wavelength_mode_ui()
         self._refresh_front_panel_channel_count_label()
+        self._run_purpose_selection_changed()
+        self._set_run_purpose_editable(True)
         self.update_channel_mode_controls(self.hardware_channel_mode.currentIndex())
         controls_box = QGroupBox("Hardware controls")
         self.hardware_controls_box = controls_box
         controls_layout = QVBoxLayout(controls_box)
         controls_layout.setSpacing(8)
 
-        run_controls_layout = QHBoxLayout()
+        hardware_button_grid = QGridLayout()
+        hardware_button_grid.setHorizontalSpacing(8)
+        hardware_button_grid.setVerticalSpacing(8)
+        hardware_button_grid.setColumnStretch(0, 1)
+        hardware_button_grid.setColumnStretch(1, 1)
+
         self.start_hardware_button = QPushButton("Start Run")
         self.start_hardware_button.setObjectName("hardware_primary_control")
         self.start_hardware_button.setToolTip(
             "Start a real OP815 and supported Santec OSX-100/OSX-150 hardware run."
         )
         self.start_hardware_button.clicked.connect(self.start_hardware)
-        run_controls_layout.addWidget(self.start_hardware_button)
         self.stop_hardware_button = QPushButton("Stop run")
         self.stop_hardware_button.setObjectName("hardware_primary_control")
         self.stop_hardware_button.setToolTip("Stop the hardware run and keep completed readings.")
         self.stop_hardware_button.setEnabled(False)
         self.stop_hardware_button.clicked.connect(self.stop_hardware)
-        run_controls_layout.addWidget(self.stop_hardware_button)
-        controls_layout.addLayout(run_controls_layout)
+        hardware_button_grid.addWidget(self.start_hardware_button, 0, 0)
+        hardware_button_grid.addWidget(self.stop_hardware_button, 0, 1)
 
-        measurement_controls_layout = QHBoxLayout()
         self.continue_hardware_button = ShortcutButton("Read IL")
         self.continue_hardware_button.setToolTip("Read both wavelengths for the current channel.")
         self.continue_hardware_button.setObjectName("hardware_primary_control")
         self.continue_hardware_button.setEnabled(False)
         self.continue_hardware_button.clicked.connect(self.continue_hardware)
-        measurement_controls_layout.addWidget(self.continue_hardware_button)
         self.write_hardware_button = ShortcutButton("Write IL")
         self.write_hardware_button.setToolTip("Accept and save the current IL reading.")
         self.write_hardware_button.setObjectName("hardware_primary_control")
         self.write_hardware_button.setEnabled(False)
         self.write_hardware_button.clicked.connect(self.write_hardware)
-        measurement_controls_layout.addWidget(self.write_hardware_button)
-        controls_layout.addLayout(measurement_controls_layout)
+        hardware_button_grid.addWidget(self.continue_hardware_button, 1, 0)
+        hardware_button_grid.addWidget(self.write_hardware_button, 1, 1)
 
+        self.retry_extra_port_button = QPushButton("Retry Current Port")
+        self.retry_extra_port_button.clicked.connect(self.retry_extra_port)
+        self.no_more_extra_ports_button = QPushButton("No More Physical Ports")
+        self.no_more_extra_ports_button.clicked.connect(self.no_more_extra_ports)
+        self.stop_extra_testing_button = QPushButton("Stop Extra Testing")
+        self.stop_extra_testing_button.clicked.connect(self.stop_extra_testing)
         self.change_hardware_channel_button = QPushButton("Change Channel...")
         self.change_hardware_channel_button.setToolTip(
             "Change the channel being measured without stopping the run."
@@ -1844,17 +2067,8 @@ class MainWindow(QMainWindow):
         self.retest_button.setToolTip("Retest the selected completed channels.")
         self.retest_button.setEnabled(False)
         self.retest_button.clicked.connect(self.retest_selected)
-
-        # Keep channel navigation actions together beneath the primary
-        # measurement buttons.  Change Channel keeps the compact height of a
-        # normal control button while matching the primary button width. Keep
-        # Retest selected fixed as well so it does not stretch across the row.
-        channel_controls_layout = QHBoxLayout()
-        self.change_hardware_channel_button.setFixedWidth(125)
-        self.retest_button.setFixedWidth(125)
-        channel_controls_layout.addWidget(self.change_hardware_channel_button)
-        channel_controls_layout.addWidget(self.retest_button)
-        controls_layout.addLayout(channel_controls_layout)
+        hardware_button_grid.addWidget(self.change_hardware_channel_button, 2, 0)
+        hardware_button_grid.addWidget(self.retest_button, 2, 1)
         self.demo_channel_label = QLabel("No hardware run active")
         self.demo_channel_label.setWordWrap(True)
         # Retain the internal status target for existing run updates, but keep
@@ -1870,30 +2084,39 @@ class MainWindow(QMainWindow):
         )
         self.copy_raw_data_button.clicked.connect(self.copy_raw_data)
         self.copy_raw_data_button.setEnabled(False)
-        for button in (self.write_coc_button, self.copy_raw_data_button):
-            button.setFixedSize(125, 48)
-        output_controls_layout = QHBoxLayout()
-        output_controls_layout.addWidget(self.write_coc_button)
-        output_controls_layout.addWidget(self.copy_raw_data_button)
-        controls_layout.addLayout(output_controls_layout)
+        hardware_button_grid.addWidget(self.write_coc_button, 3, 0)
+        hardware_button_grid.addWidget(self.copy_raw_data_button, 3, 1)
+        controls_layout.addLayout(hardware_button_grid)
+
+        extra_controls_layout = QVBoxLayout()
+        extra_controls_layout.setSpacing(8)
         for button in (
+            self.retry_extra_port_button,
+            self.no_more_extra_ports_button,
+            self.stop_extra_testing_button,
+        ):
+            button.setVisible(False)
+            button.setEnabled(False)
+            button.setMinimumWidth(0)
+            button.setMinimumHeight(42)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            extra_controls_layout.addWidget(button)
+        controls_layout.addLayout(extra_controls_layout)
+
+        standard_hardware_buttons = (
             self.start_hardware_button,
+            self.stop_hardware_button,
             self.continue_hardware_button,
             self.write_hardware_button,
             self.change_hardware_channel_button,
-            self.stop_hardware_button,
             self.retest_button,
             self.write_coc_button,
             self.copy_raw_data_button,
-        ):
-            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-        for button in (
-            self.start_hardware_button,
-            self.stop_hardware_button,
-            self.continue_hardware_button,
-            self.write_hardware_button,
-        ):
-            button.setMinimumSize(125, 48)
+        )
+        for button in standard_hardware_buttons:
+            button.setMinimumWidth(0)
+            button.setMinimumHeight(48)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         controls_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.update_shortcuts()
 
@@ -1979,15 +2202,18 @@ class MainWindow(QMainWindow):
         table_filter_layout.addWidget(self.comparison_run_combo)
         self.completion_status_label = QLabel("Run: Not started")
         self.result_status_label = QLabel("Result: Not evaluated")
+        self.run_purpose_status_label = QLabel("Purpose: Production")
         for status_label in (
             self.completion_status_label,
             self.result_status_label,
+            self.run_purpose_status_label,
         ):
             status_label.setObjectName("run_status")
             status_label.setToolTip("No run is loaded.")
             status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         table_filter_layout.addWidget(self.completion_status_label)
         table_filter_layout.addWidget(self.result_status_label)
+        table_filter_layout.addWidget(self.run_purpose_status_label)
         table_filter_layout.addStretch()
         table_panel_layout.addLayout(table_filter_layout)
         self.table = QTableWidget(0, 4)
@@ -2030,7 +2256,7 @@ class MainWindow(QMainWindow):
         self.metric_title_labels = {}
         for row, (key, display) in enumerate(
             (
-                ("total", "Total channels"),
+                ("total", "Front-panel channels"),
                 ("over_limit", "Failed channels"),
                 ("over_1310", "1310 nm failed"),
                 ("over_1550", "1550 nm failed"),
@@ -2056,8 +2282,22 @@ class MainWindow(QMainWindow):
         self.replacement_summary_label = QLabel("Not run")
         self.replacement_summary_label.setWordWrap(True)
         self.replacement_analysis_button = QPushButton("Analyze Replacements")
-        self.replacement_analysis_button.clicked.connect(self.show_replacement_analysis)
+        self.replacement_analysis_button.clicked.connect(
+            lambda _checked=False: self.show_replacement_analysis(
+                launch_source="manual_button"
+            )
+        )
         self.replacement_analysis_button.setEnabled(False)
+        self.replacement_analysis_history_button = QPushButton(
+            "Analysis History..."
+        )
+        self.replacement_analysis_history_button.setToolTip(
+            "View saved replacement analyses and which recommendations were used."
+        )
+        self.replacement_analysis_history_button.clicked.connect(
+            self.show_replacement_analysis_history
+        )
+        self.replacement_analysis_history_button.setEnabled(False)
         self.completed_replacements_label = QLabel("No completed replacements recorded")
         self.completed_replacements_label.setWordWrap(True)
         self.record_replacements_button = QPushButton("Manage Port Replacements...")
@@ -2065,6 +2305,16 @@ class MainWindow(QMainWindow):
             self.show_completed_replacements
         )
         self.record_replacements_button.setEnabled(False)
+        self.start_verification_run_button = QPushButton(
+            "Start Replacement Verification Run..."
+        )
+        self.start_verification_run_button.setToolTip(
+            "Start a selected-channel run for replacements that still need retesting."
+        )
+        self.start_verification_run_button.clicked.connect(
+            self.start_replacement_verification_run
+        )
+        self.start_verification_run_button.setEnabled(False)
         self.copy_replacement_notes_button = QPushButton("Copy Replacement Notes")
         self.copy_replacement_notes_button.setToolTip(
             "Copy the completed port swaps in a format ready to paste into Unit Editor notes."
@@ -2074,10 +2324,14 @@ class MainWindow(QMainWindow):
         )
         self.copy_replacement_notes_button.setEnabled(False)
         replacement_layout.addWidget(self.replacement_summary_label)
-        replacement_layout.addWidget(self.replacement_analysis_button)
+        analysis_buttons = QHBoxLayout()
+        analysis_buttons.addWidget(self.replacement_analysis_button)
+        analysis_buttons.addWidget(self.replacement_analysis_history_button)
+        replacement_layout.addLayout(analysis_buttons)
         replacement_layout.addWidget(self.completed_replacements_label)
         replacement_buttons = QHBoxLayout()
         replacement_buttons.addWidget(self.record_replacements_button)
+        replacement_buttons.addWidget(self.start_verification_run_button)
         replacement_buttons.addWidget(self.copy_replacement_notes_button)
         replacement_layout.addLayout(replacement_buttons)
         info_layout.addWidget(replacement_box)
@@ -2091,7 +2345,11 @@ class MainWindow(QMainWindow):
             "Switch serial",
             "Operating band",
             "Tested by",
+            "Station number",
             "Run number",
+            "Run purpose",
+            "Analysis status",
+            "Void details",
             "Source file",
         ):
             label = QLabel("-")
@@ -2105,6 +2363,13 @@ class MainWindow(QMainWindow):
         self.view_history_button.clicked.connect(self.show_reading_history)
         self.view_history_button.setEnabled(False)
         metadata_layout.addRow(self.view_history_button)
+        self.void_run_button = QPushButton("Void Run from Analysis...")
+        self.void_run_button.setToolTip(
+            "Administrator-only permanent exclusion of a retained database run."
+        )
+        self.void_run_button.clicked.connect(self.void_loaded_database_run)
+        self.void_run_button.setEnabled(False)
+        metadata_layout.addRow(self.void_run_button)
         info_layout.addWidget(metadata_box)
         info_layout.addStretch()
         self.info_scroll_area = QScrollArea()
@@ -2152,8 +2417,8 @@ class MainWindow(QMainWindow):
         controls_reference_layout = QHBoxLayout(controls_reference_row)
         controls_reference_layout.setContentsMargins(0, 0, 0, 0)
         controls_reference_layout.setSpacing(6)
-        controls_reference_layout.addWidget(controls_box, 1)
-        controls_reference_layout.addWidget(reference_box, 1)
+        controls_reference_layout.addWidget(controls_box, 3)
+        controls_reference_layout.addWidget(reference_box, 2)
         right_layout.addWidget(controls_reference_row)
         right_layout.addWidget(self.info_scroll_area, 1)
 
@@ -2653,6 +2918,7 @@ class MainWindow(QMainWindow):
                 status="success",
             )
             self._refresh_reference_controls()
+            self._refresh_void_run_control()
             return
         dialog = AdminPasswordDialog(self)
         if dialog.exec_() != QDialog.Accepted:
@@ -2679,6 +2945,7 @@ class MainWindow(QMainWindow):
             status="success",
         )
         self._refresh_reference_controls()
+        self._refresh_void_run_control()
 
     def _refresh_admin_branding(self):
         """Show the white-eyes Lulu variant only during Admin Mode."""
@@ -2718,11 +2985,19 @@ class MainWindow(QMainWindow):
             status="started",
         )
         previous_profiles = dict(self.limit_profiles)
-        dialog = AdminConfigDialog(self.limit_profiles, self.limit_profile_repository, self)
+        dialog = AdminConfigDialog(
+            self.limit_profiles,
+            self.limit_profile_repository,
+            self,
+            extra_channel_routing_method=self.extra_channel_routing_method,
+        )
         if dialog.exec_() != QDialog.Accepted:
             return
         try:
             self.limit_profiles = self.limit_profile_repository.load_profiles()
+            self.extra_channel_routing_method = (
+                self.limit_profile_repository.load_extra_channel_routing_method()
+            )
             self.limit_profile_error = None
         except (OSError, ValueError, TypeError) as error:
             self.limit_profile_error = str(error)
@@ -2752,6 +3027,9 @@ class MainWindow(QMainWindow):
             admin_mode=True,
             criteria_profile="OSX-100/OSX-150 SM/MM",
             profiles_updated=len(self.limit_profiles),
+            extra_channel_routing_method=(
+                self.extra_channel_routing_method.value
+            ),
             status="success",
         )
         self.statusBar().showMessage("Admin criteria configuration reloaded.")
@@ -3038,6 +3316,31 @@ class MainWindow(QMainWindow):
             status="started",
         )
         self.hardware_connection_manager.query_switch_ip(operation_id)
+
+    def show_database_reports(self):
+        """Open read-only SQL reporting after a bounded readiness check."""
+        if self.database_workflow is None:
+            QMessageBox.information(
+                self,
+                "Database Reports",
+                "Database reporting is not configured for this application session.",
+            )
+            return
+        try:
+            readiness = self.database_workflow.check_ready()
+        except Exception as error:
+            QMessageBox.warning(self, "Database Reports", str(error))
+            return
+        if not getattr(readiness, "ready", False):
+            QMessageBox.warning(
+                self,
+                "Database Reports",
+                getattr(readiness, "operator_message", "The database is unavailable."),
+            )
+            return
+        dialog = DatabaseReportsDialog(self.database_workflow.reporting, self)
+        dialog.apply_theme(self.dark_mode_enabled)
+        dialog.exec_()
 
     def _switch_ip_query_finished(self, operation_id, address, error):
         """Present one manager-owned IP result on the GUI thread."""
@@ -3349,15 +3652,63 @@ class MainWindow(QMainWindow):
 
     def update_channel_mode_controls(self, mode_index):
         """Show only the channel selector used by the selected run mode."""
-        single_channel_mode = mode_index == 1
-        channel_ranges_mode = mode_index == 2
-        full_pass_mode = mode_index == 0
+        mode = self.hardware_channel_mode.currentText().strip()
+        single_channel_mode = mode == ChannelMode.SINGLE_CHANNEL.value
+        channel_ranges_mode = mode == ChannelMode.SPECIFIC_CHANNELS.value
+        full_pass_mode = mode == ChannelMode.FULL_CONFIGURED_PASS.value
+        extra_only_mode = mode == ChannelMode.EXTRA_CHANNELS_ONLY.value
         self.hardware_channel_label.setVisible(single_channel_mode)
         self.hardware_single_channel.setVisible(single_channel_mode)
         self.hardware_channel_ranges_label.setVisible(channel_ranges_mode)
         self.hardware_channel_ranges.setVisible(channel_ranges_mode)
         self.manual_channel_order_checkbox.setVisible(full_pass_mode)
         self.channel_mode_context.setVisible(full_pass_mode or single_channel_mode)
+        self.extra_channel_routing_label.setVisible(extra_only_mode)
+        if extra_only_mode:
+            self._refresh_extra_channel_routing_hint()
+
+    def _is_extra_only_channel_mode(self, value=None):
+        """Recognize the UI and persisted forms of the extra-only mode."""
+        if value is None:
+            value = self.hardware_channel_mode.currentText()
+        return str(value or "").strip() in {
+            ChannelMode.EXTRA_CHANNELS_ONLY.value,
+            "extra_channels_only",
+        }
+
+    def _loaded_run_is_extra_only(self):
+        if self.database_run_context is not None:
+            value = self.database_run_context.run.measurement_hardware.get(
+                "channel_mode", ""
+            )
+            return self._is_extra_only_channel_mode(value)
+        if self.run_data is not None:
+            return self._is_extra_only_channel_mode(
+                self.run_data.metadata.get("Channel mode")
+            )
+        return False
+
+    def _refresh_extra_channel_routing_hint(self):
+        if not hasattr(self, "extra_channel_routing_label"):
+            return
+        method = self.extra_channel_routing_method
+        if self._loaded_run_is_extra_only():
+            method = self._extra_channel_routing_method_for_run("continue")
+        method_label = (
+            "SCPI mapped channels"
+            if method is ExtraChannelRoutingMethod.SCPI_MAPPED
+            else "CLI tunnel probing"
+        )
+        self.extra_channel_routing_label.setText(
+            "Extra-only run: %s. Testing starts after the part-number front-panel "
+            "channel count."
+            % method_label
+        )
+        self.extra_channel_routing_label.setToolTip(
+            "The routing method is controlled by Admin Config for a new run and "
+            "is restored from the run metadata when continuing an existing "
+            "extra-only run. OSX-150 only."
+        )
 
     def open_part_lookup_folder(self):
         """Open the fixed network folder used for part-number lookup."""
@@ -3586,12 +3937,35 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 current_run_number = None
 
+        if self.database_run_context is not None and self.database_workflow is not None:
+            try:
+                contexts = self.database_workflow.list_for_unit(
+                    self.database_run_context.unit.unit_id
+                )
+            except Exception as error:
+                contexts = ()
+                self._record_support(
+                    SupportEventCategory.CONNECTION,
+                    "database.comparison_query_failed",
+                    level=SupportLogLevel.ERROR,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    status="error",
+                )
+            for context in contexts:
+                if current_run_number == context.run.run_number:
+                    continue
+                self.comparison_run_combo.addItem(
+                    "Run %d" % context.run.run_number,
+                    "database:%d" % context.run.run_id,
+                )
+
         run_entries = [
             item
             for item in self.unit_record.get("runs", [])
             if isinstance(item, dict)
         ]
-        if self.unit_directory is not None:
+        if self.unit_directory is not None and self.database_run_context is None:
             def run_sort_key(item):
                 try:
                     return int(item.get("run_number", 0))
@@ -3643,7 +4017,22 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            comparison_data = self.run_repository.load_csv(Path(selected_path))
+            if str(selected_path).startswith("database:"):
+                if self.database_workflow is None:
+                    raise ValueError("Database workflow is unavailable")
+                context = self.database_workflow.load_run(
+                    int(str(selected_path).split(":", 1)[1])
+                )
+                metadata = self._database_metadata(context)
+                comparison_data = RunData(
+                    Path("database-run-%d" % context.run.run_id),
+                    list(context.snapshot.measurements),
+                    metadata,
+                    criteria_snapshot=dict(context.run.limit_snapshot),
+                    measurement_attempts=list(context.snapshot.measurement_attempts),
+                )
+            else:
+                comparison_data = self.run_repository.load_csv(Path(selected_path))
         except (OSError, ValueError) as error:
             self.comparison_run_combo.blockSignals(True)
             self.comparison_run_combo.setCurrentIndex(0)
@@ -3709,6 +4098,8 @@ class MainWindow(QMainWindow):
 
     def persist_unit_record(self):
         """Persist device-level replacements, spares, and the active run index."""
+        if self.database_run_context is not None:
+            return
         if self.unit_directory is None:
             return
         metadata = (
@@ -3789,6 +4180,25 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Stop the active hardware run first.")
             return
         metadata = self._current_hardware_identity()
+        if self.database_workflow is not None:
+            try:
+                context = self.database_workflow.load_for_unit(
+                    metadata.get("Main board serial", ""),
+                    self.hardware_run_number.value(),
+                )
+            except DatabaseRunUnavailableError as error:
+                QMessageBox.critical(
+                    self,
+                    "Database unavailable",
+                    str(error),
+                )
+                return
+            except (ValueError, OSError, RuntimeError) as error:
+                QMessageBox.information(self, "Run not found", str(error))
+                return
+            self._apply_database_run_context(context)
+            self.statusBar().showMessage("Database run loaded.")
+            return
         unit_directory = self._run_lookup_unit_directory(metadata)
         run_number = self.hardware_run_number.value()
         csv_path = self.run_repository.find_run_csv_for_number(
@@ -3820,6 +4230,17 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Could not open run", str(error))
             return
 
+        self.database_run_context = None
+        self._set_run_purpose(
+            run_data.metadata.get("run_purpose"),
+            editable=False,
+        )
+        self.database_pending_measurement = None
+        self.hardware_pending_token = None
+        self._last_measurement_acknowledgement = None
+        self._database_persistence_payload = None
+        self._database_write_request_in_flight = False
+        self._database_persistence_waiting_for_ack = False
         self.run_data = run_data
         self.run_recorder = None
         self._loaded_run_profile_unavailable = False
@@ -3862,7 +4283,12 @@ class MainWindow(QMainWindow):
         except ValueError:
             self._set_wavelength_mode("SM", invalidate=False)
         self._load_unit_state(self.unit_repository.infer_unit_directory(path))
-        self.replacement_analysis = None
+        # File-backed runs retain their legacy/session-local analysis only.
+        # Database analysis history is loaded by _apply_database_run_context;
+        # never reference database-only context objects from this path.
+        self.replacement_analysis_history = ()
+        self.replacement_analysis_stale = False
+        self.replacement_analysis = run_data.replacement_analysis
         self.switch_test_timer = None
         self.clear_current_reading()
         self.file_label.setText(str(path))
@@ -3884,6 +4310,9 @@ class MainWindow(QMainWindow):
             operating_band = "O band"
         self.hardware_operating_band.setCurrentText(operating_band)
         self.hardware_tested_by.setText(run_data.metadata.get("Tested by", ""))
+        self._set_station_number(
+            run_data.metadata.get("Station number"), editable=False
+        )
         try:
             self.hardware_run_number.setValue(
                 max(1, int(run_data.metadata.get("Run number", 1)))
@@ -3893,13 +4322,22 @@ class MainWindow(QMainWindow):
         self.metadata_labels["Part number"].setText(
             run_data.metadata.get("Part number", "Not recorded")
         )
-        for key in ("Main board serial", "Switch serial", "Operating band", "Tested by"):
+        for key in (
+            "Main board serial", "Switch serial", "Operating band", "Tested by",
+            "Station number",
+        ):
             value = run_data.metadata.get(key)
             if value is None and key == "Switch serial":
                 value = run_data.metadata.get("Switch serial (last 5 digits)")
             self.metadata_labels[key].setText(value or "Not recorded")
         self.metadata_labels["Run number"].setText(
             str(self.hardware_run_number.value())
+        )
+        stored_purpose = run_data.metadata.get("run_purpose")
+        self.metadata_labels["Run purpose"].setText(
+            run_purpose_label(stored_purpose)
+            if stored_purpose
+            else "Not recorded"
         )
         loaded_run_id = ""
         payload = {}
@@ -4095,6 +4533,7 @@ class MainWindow(QMainWindow):
             {
                 "Operating band": "O band",
                 "Tested by": self.hardware_tested_by.text().strip(),
+                "Station number": "",
                 "Mode": "Simulation",
                 "Run number": "1",
                 "Wavelength mode": configuration.wavelength_profile.code,
@@ -4112,6 +4551,7 @@ class MainWindow(QMainWindow):
             metadata={
                 "Operating band": "O band",
                 "Tested by": self.hardware_tested_by.text().strip(),
+                "Station number": "",
                 "Mode": "Simulation",
                 "Run number": "1",
                 "Wavelength mode": configuration.wavelength_profile.code,
@@ -4320,7 +4760,474 @@ class MainWindow(QMainWindow):
             "Switch serial": self.hardware_switch_serial.text().strip(),
             "Operating band": self.hardware_operating_band.currentText().strip(),
             "Tested by": self.hardware_tested_by.text().strip(),
+            "Station number": (
+                str(self._station_number_value())
+                if self._station_number_value() is not None
+                else ""
+            ),
         }
+
+    @property
+    def database_run_active(self):
+        return self.database_run_context is not None
+
+    def _database_measurement_hardware_snapshot(
+        self,
+        preparation,
+        front_panel_channel_count=None,
+        extra_channel_routing_method=None,
+    ):
+        meter = self.hardware_connection_manager.snapshot(
+            HardwareCapability.MEASUREMENT
+        ).device_info
+        switch = self.hardware_connection_manager.snapshot(
+            HardwareCapability.OPTICAL_SWITCH
+        ).device_info
+        planned = (
+            list(self._active_planned_channels)
+            if self._active_planned_channels is not None
+            else []
+        )
+        routing_method = ExtraChannelRoutingMethod.parse(
+            extra_channel_routing_method or self.extra_channel_routing_method
+        )
+        return {
+            "ilm": {
+                "model": meter.model,
+                "serial": meter.serial_number,
+                "firmware": meter.firmware_version,
+            },
+            "switch": {
+                "model": switch.model,
+                "serial": switch.serial_number,
+                "firmware": switch.firmware_version,
+                "scpi_configured_channel_count": switch.configured_channel_count,
+            },
+            "channel_mode": (
+                "extra_channels_only"
+                if preparation.extra_only
+                else preparation.plan.mode.value
+                if preparation.plan is not None
+                else "Retest"
+            ),
+            "planned_channels": planned,
+            "measurement_classification": (
+                self.measurement_configuration.classification.value
+            ),
+            "opm_wavelengths_nm": list(
+                self.measurement_configuration.opm_wavelengths_nm
+            ),
+            "source_wavelengths_nm": list(
+                self.measurement_configuration.source_wavelengths_nm
+            ),
+            "source_ids": list(self.measurement_configuration.source_ids),
+            "source_profile": (
+                self.measurement_configuration.source_profile.profile_id
+            ),
+            "source_profile_origin": (
+                self.measurement_configuration.source_profile.origin
+            ),
+            "mode_selection_method": self._wavelength_mode_selection_method,
+            "extra_channel_routing": {
+                "method": routing_method.value,
+                "front_panel_channel_count": front_panel_channel_count,
+                "scpi_configured_channel_count": switch.configured_channel_count,
+            },
+        }
+
+    def _extra_channel_routing_method_for_run(self, run_mode):
+        """Return immutable saved provenance for continuations when available."""
+        if run_mode == "new":
+            return self.extra_channel_routing_method
+        value = None
+        if self.database_run_context is not None:
+            routing = self.database_run_context.run.measurement_hardware.get(
+                "extra_channel_routing", {}
+            )
+            if hasattr(routing, "get"):
+                value = routing.get("method")
+        if value is None and self.run_data is not None:
+            value = self.run_data.metadata.get("Extra channel routing method")
+        if value:
+            try:
+                return ExtraChannelRoutingMethod.parse(value)
+            except ValueError:
+                self._record_support(
+                    SupportEventCategory.WORKFLOW,
+                    "extra_ports.saved_routing_method_invalid",
+                    saved_value=str(value),
+                    fallback=ExtraChannelRoutingMethod.SCPI_MAPPED.value,
+                    status="warning",
+                )
+        return ExtraChannelRoutingMethod.SCPI_MAPPED
+
+    def _database_metadata(self, context):
+        hardware = context.run.measurement_hardware
+        routing = hardware.get("extra_channel_routing", {})
+        if not hasattr(routing, "get"):
+            routing = {}
+        metadata = dict(context.snapshot.metadata)
+        metadata.update(
+            {
+                "Mode": "Real hardware",
+                "Main board serial": context.unit.main_board_serial,
+                "Switch serial": context.switch.switch_serial,
+                "Part number": context.run.part_number_snapshot
+                or context.unit.part_number
+                or "",
+                "Switch model": context.switch.switch_model,
+                "Run number": str(context.run.run_number),
+                "Run purpose": run_purpose_label(context.run.run_purpose),
+                "run_purpose": context.run.run_purpose,
+                "OPM wavelengths nm": ",".join(
+                    str(value)
+                    for value in hardware.get(
+                        "opm_wavelengths_nm",
+                        (1310, 1550) if context.run.wavelength_mode == "SM" else (850, 1300),
+                    )
+                ),
+                "Source wavelengths nm": ",".join(
+                    str(value)
+                    for value in hardware.get("source_wavelengths_nm", ())
+                ),
+                "Source IDs": ",".join(
+                    str(value) for value in hardware.get("source_ids", ())
+                ),
+                "Source profile": str(hardware.get("source_profile") or ""),
+                "Source profile origin": str(
+                    hardware.get("source_profile_origin") or ""
+                ),
+                "Mode selection method": str(
+                    hardware.get("mode_selection_method") or "manual_operator_selection"
+                ),
+                "Measurement classification": str(
+                    hardware.get("measurement_classification") or "native"
+                ),
+                "Channel mode": str(hardware.get("channel_mode") or ""),
+                "Planned channels": ",".join(
+                    str(value) for value in hardware.get("planned_channels", ())
+                ),
+                "Extra channel routing method": str(
+                    routing.get("method") or ""
+                ),
+                "SCPI-configured channels": str(
+                    routing.get("scpi_configured_channel_count")
+                    or routing.get("configured_channel_count")
+                    or ""
+                ),
+            }
+        )
+        metadata["Planned channel count"] = str(
+            len(hardware.get("planned_channels", ()))
+        )
+        return metadata
+
+    def _database_coc_source(self, context):
+        front_panel_count = context.run.front_panel_channel_count
+        logical_measurements = tuple(
+            record
+            for record in context.snapshot.measurements
+            if front_panel_count is None
+            or int(record.channel) <= int(front_panel_count)
+        )
+        return CocSourceRun(
+            run_number=context.run.run_number,
+            source_path=None,
+            source_identifier="database-run:%d" % context.run.run_id,
+            measurements=logical_measurements,
+            metadata=self._database_metadata(context),
+            criteria=dict(context.run.limit_snapshot),
+            run_purpose=context.run.run_purpose,
+            run_id=context.run.run_id,
+            assignment_id=context.run.assignment_id,
+        )
+
+    def _apply_database_run_context(self, context, *, update_setup=True):
+        """Publish one committed database snapshot to existing UI consumers."""
+        previous_analysis_id = (
+            self.database_run_context.replacement_analysis.record.analysis_id
+            if self.database_run_context is not None
+            and self.database_run_context.replacement_analysis is not None
+            else None
+        )
+        previous_freshness = (
+            "stale" if self.replacement_analysis_stale else "current"
+        )
+        self.database_run_context = context
+        self.database_pending_measurement = None
+        self.hardware_pending_token = None
+        self._last_measurement_acknowledgement = None
+        metadata = self._database_metadata(context)
+        self.run_data = RunData(
+            Path("database-run-%d" % context.run.run_id),
+            list(context.snapshot.measurements),
+            metadata,
+            criteria_snapshot=dict(context.run.limit_snapshot),
+            measurement_attempts=list(context.snapshot.measurement_attempts),
+        )
+        self.run_recorder = None
+        self.unit_directory = None
+        self.unit_record = {}
+        self.replacement_history = []
+        replacement_by_id = {
+            item.replacement_id: item
+            for item in context.routing.replacement_history
+        }
+        self.completed_replacements = [
+            {
+                "current_port": item.initial_physical_port,
+                "replacement_port": item.effective_physical_port,
+                "logical_channel": item.logical_channel,
+                "reason": (
+                    replacement_by_id[item.latest_replacement_id].reason
+                    if item.latest_replacement_id in replacement_by_id
+                    else ""
+                ),
+                "operator": (
+                    replacement_by_id[item.latest_replacement_id].replaced_by
+                    if item.latest_replacement_id in replacement_by_id
+                    else ""
+                ),
+                "recorded_at_utc": (
+                    replacement_by_id[item.latest_replacement_id]
+                    .replaced_at_utc.isoformat()
+                    if item.latest_replacement_id in replacement_by_id
+                    else ""
+                ),
+                "reason_details": (
+                    replacement_by_id[item.latest_replacement_id].notes or ""
+                    if item.latest_replacement_id in replacement_by_id
+                    else ""
+                ),
+            }
+            for item in context.routing.channel_map
+            if item.effective_physical_port != item.initial_physical_port
+        ]
+        self.designated_spares = list(context.routing.active_spares)
+        self.run_data.completed_replacements = list(self.completed_replacements)
+        planned = context.run.measurement_hardware.get("planned_channels", ())
+        self._active_planned_channels = tuple(int(value) for value in planned) or None
+        self._active_extra_only = self._loaded_run_is_extra_only()
+        status = context.run.completion_status
+        self._run_terminal_status = {
+            "complete": COMPLETION_COMPLETE,
+            "stopped": COMPLETION_INCOMPLETE,
+            "failed": COMPLETION_INTERRUPTED,
+        }.get(status, COMPLETION_IN_PROGRESS)
+        self._run_completed_at_utc = (
+            context.run.run_ended_at_utc.isoformat()
+            if context.run.run_ended_at_utc is not None
+            else ""
+        )
+        if update_setup:
+            self.hardware_main_board_serial.setText(context.unit.main_board_serial)
+            self.hardware_switch_serial.setText(context.switch.switch_serial)
+            self.hardware_part_number.setCurrentText(metadata["Part number"])
+            self.hardware_operating_band.setCurrentText(context.run.operating_band)
+            self.hardware_tested_by.setText(context.run.tested_by)
+            self._set_station_number(context.run.station_number, editable=False)
+            self.hardware_run_number.setValue(context.run.run_number)
+            self._set_wavelength_mode(context.run.wavelength_mode, invalidate=False)
+            saved_channel_mode = str(metadata.get("Channel mode") or "")
+            if saved_channel_mode in {
+                ChannelMode.FULL_CONFIGURED_PASS.value,
+                ChannelMode.SINGLE_CHANNEL.value,
+                ChannelMode.SPECIFIC_CHANNELS.value,
+                ChannelMode.EXTRA_CHANNELS_ONLY.value,
+                "extra_channels_only",
+            }:
+                self.hardware_channel_mode.setCurrentText(
+                    ChannelMode.EXTRA_CHANNELS_ONLY.value
+                    if saved_channel_mode == "extra_channels_only"
+                    else saved_channel_mode
+                )
+        self._set_run_purpose(context.run.run_purpose, editable=False)
+        self.file_label.setText(
+            "Database: %s / Run %d"
+            % (context.unit.main_board_serial, context.run.run_number)
+        )
+        self.metadata_labels["Source file"].setText("SQL Server")
+        for key in (
+            "Part number",
+            "Main board serial",
+            "Switch serial",
+            "Operating band",
+            "Tested by",
+            "Station number",
+            "Run number",
+            "Run purpose",
+        ):
+            self.metadata_labels[key].setText(metadata.get(key) or "Not recorded")
+        if context.run.analysis_status == "excluded":
+            self.metadata_labels["Analysis status"].setText(
+                "Voided - excluded from analysis"
+            )
+            info = context.run.void_info
+            self.metadata_labels["Void details"].setText(
+                "%s by %s: %s"
+                % (
+                    info.voided_at_utc.isoformat() if info else "Unknown time",
+                    info.voided_by if info else "Unknown operator",
+                    info.reason if info else "No reason recorded",
+                )
+            )
+        else:
+            self.metadata_labels["Analysis status"].setText(
+                str(context.run.analysis_status).title()
+            )
+            self.metadata_labels["Void details"].setText("Not voided")
+        self.replacement_analysis_history = context.replacement_analysis_history
+        self.replacement_analysis_stale = False
+        if context.replacement_analysis is not None:
+            source_state = (
+                context.effective_projection.fingerprint
+                if context.effective_projection is not None
+                else context.snapshot.measurement_high_watermark_id
+            )
+            self.replacement_analysis_stale = not context.replacement_analysis.is_current(
+                source_state
+            )
+            self.replacement_analysis = (
+                None
+                if self.replacement_analysis_stale
+                else context.replacement_analysis.to_result_dict()
+            )
+        else:
+            self.replacement_analysis = None
+        current_analysis_id = (
+            context.replacement_analysis.record.analysis_id
+            if context.replacement_analysis is not None
+            else None
+        )
+        current_freshness = (
+            "stale"
+            if context.replacement_analysis is not None
+            and self.replacement_analysis_stale
+            else "current"
+            if context.replacement_analysis is not None
+            else "not_analyzed"
+        )
+        if (
+            current_analysis_id != previous_analysis_id
+            or current_freshness != previous_freshness
+        ):
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "replacement.analysis_freshness_changed",
+                run_id=context.run.run_id,
+                analysis_id=current_analysis_id,
+                freshness=current_freshness,
+                status="updated",
+            )
+        self.run_data.replacement_analysis = self.replacement_analysis
+        self.clear_current_reading()
+        self.refresh_comparison_runs()
+        self.refresh_analysis()
+        self._refresh_void_run_control()
+
+    def _refresh_void_run_control(self):
+        if not hasattr(self, "void_run_button"):
+            return
+        context = self.database_run_context
+        enabled = bool(
+            context is not None
+            and self.admin_session.is_active
+            and not self.hardware_run_active
+            and context.run.analysis_status != "excluded"
+            and not self._database_write_request_in_flight
+            and self.database_pending_measurement is None
+        )
+        self.void_run_button.setEnabled(enabled)
+
+    def void_loaded_database_run(self):
+        """Collect an administrator reason and permanently void the loaded run."""
+        context = self.database_run_context
+        self._refresh_void_run_control()
+        if context is None or not self.void_run_button.isEnabled():
+            return
+        operator = (
+            self.hardware_tested_by.text().strip()
+            or context.run.tested_by
+            or "Administrator"
+        )
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Void Run from Analysis")
+        dialog.setMinimumWidth(560)
+        layout = QFormLayout(dialog)
+        for label, value in (
+            ("Unit serial:", context.unit.main_board_serial),
+            ("Switch serial:", context.switch.switch_serial),
+            ("Assignment ID:", context.assignment.assignment_id),
+            ("Run number:", context.run.run_number),
+            ("Completion status:", context.run.completion_status),
+            ("Accepted measurements:", len(context.snapshot.measurement_attempts)),
+            ("Administrator/operator:", operator),
+        ):
+            layout.addRow(label, QLabel(str(value)))
+        warning = QLabel(
+            "This run and its readings will remain in the database, but they "
+            "will no longer contribute to effective run status, replacement "
+            "analysis, or COC generation."
+        )
+        warning.setWordWrap(True)
+        layout.addRow(warning)
+        reason = QPlainTextEdit()
+        reason.setPlaceholderText("Required reason for voiding this entire run")
+        reason.setMaximumHeight(90)
+        layout.addRow("Reason:", reason)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        while dialog.exec_() == QDialog.Accepted:
+            value = reason.toPlainText().strip()
+            if not value:
+                QMessageBox.warning(dialog, "Reason required", "Enter a reason.")
+                continue
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "run.void_requested",
+                run_id=context.run.run_id,
+                assignment_id=context.run.assignment_id,
+                operator=operator,
+                status="requested",
+            )
+            try:
+                refreshed = self.database_workflow.void_run(
+                    context.run.run_id,
+                    voided_by=operator,
+                    reason=value,
+                )
+                self._apply_database_run_context(refreshed, update_setup=False)
+                self._record_support(
+                    SupportEventCategory.PERSISTENCE,
+                    "run.void_completed",
+                    run_id=context.run.run_id,
+                    assignment_id=context.run.assignment_id,
+                    operator=operator,
+                    status="success",
+                )
+                QMessageBox.information(
+                    self,
+                    "Run voided",
+                    "The run remains in the database and is now excluded from analysis.",
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as error:
+                self._record_support(
+                    SupportEventCategory.PERSISTENCE,
+                    "run.void_failed",
+                    level=SupportLogLevel.ERROR,
+                    run_id=context.run.run_id,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    status="error",
+                )
+                QMessageBox.critical(
+                    self,
+                    "Could not void run",
+                    "The database was not changed:\n%s" % error,
+                )
+            return
 
     def _restore_hardware_identity(self, metadata):
         """Restore loaded identity values after declining an update."""
@@ -4339,6 +5246,7 @@ class MainWindow(QMainWindow):
             operating_band = "O band"
         self.hardware_operating_band.setCurrentText(operating_band)
         self.hardware_tested_by.setText(metadata.get("Tested by", ""))
+        self._set_station_number(metadata.get("Station number"), editable=False)
 
     def confirm_existing_run_identity(self):
         """Offer to update a loaded run's identity before continuing it."""
@@ -4459,35 +5367,103 @@ class MainWindow(QMainWindow):
     def start_hardware(self, channels=None, retest=False):
         if self.hardware_run_active:
             return
-        if not self._authorize_hardware_start(retest=retest):
+        selected_extra_only = self._is_extra_only_channel_mode()
+        run_mode = "new"
+        if not retest and self.run_data is not None:
+            run_mode = self.choose_hardware_run_mode()
+            if run_mode is None:
+                return
+        if (
+            selected_extra_only
+            and run_mode == "continue"
+            and not self._loaded_run_is_extra_only()
+        ):
+            QMessageBox.warning(
+                self,
+                "Start a separate extra-only run",
+                "Extra channels only is an independent run mode. Choose a new "
+                "run number instead of continuing a front-panel run.",
+            )
             return
+        if run_mode == "new" and not retest:
+            self._restore_station_session_default()
+        if not self._authorize_hardware_start(
+            retest=retest,
+            require_station_number=(
+                self.database_workflow is not None
+                and run_mode == "new"
+                and not retest
+            ),
+        ):
+            return
+        if run_mode == "continue" and not self.confirm_existing_run_identity():
+            return
+        if run_mode == "new":
+            self._set_run_purpose_editable(True)
+        purpose = str(self.hardware_run_purpose.currentData() or "production")
+        confirmation_routing_method = self._extra_channel_routing_method_for_run(
+            run_mode
+        )
+        confirmation_text = (
+            (
+                "This will create an extra-channel-only run using %s. Front-panel "
+                "channels will not be measured.\n\nRun purpose: %s\n\nStart "
+                "the hardware run?"
+                % (
+                    confirmation_routing_method.label,
+                    run_purpose_label(purpose),
+                )
+            )
+            if selected_extra_only
+            else (
+                "This will use the connected measurement hardware and optical "
+                "switch, and it will move the switch.\n\nRun purpose: %s\n\n"
+                "Start the hardware run?"
+                % run_purpose_label(purpose)
+            )
+        )
         confirmation = QMessageBox.question(
             self,
             "Start real hardware run",
-            "This will use the connected measurement hardware and optical "
-            "switch, and it will move the switch. "
-            "Start the hardware run?",
+            confirmation_text,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if confirmation != QMessageBox.Yes:
             return
 
-        run_mode = "new"
-        if not retest and self.run_data is not None:
-            run_mode = self.choose_hardware_run_mode()
-            if run_mode is None:
-                return
-        if run_mode == "continue" and not self.confirm_existing_run_identity():
-            return
-
         selected_identity = self._current_hardware_identity()
         selected_run_number = self.hardware_run_number.value()
-        selected_unit_directory = self.unit_repository.unit_directory_for_metadata(
-            DEFAULT_RUN_ROOT,
-            selected_identity,
-        )
-        if not retest and run_mode == "new":
+        selected_unit_directory = None
+        if self.database_workflow is None:
+            selected_unit_directory = self.unit_repository.unit_directory_for_metadata(
+                DEFAULT_RUN_ROOT,
+                selected_identity,
+            )
+        if self.database_workflow is not None and run_mode == "continue":
+            if self.database_run_context is None:
+                QMessageBox.warning(
+                    self,
+                    "Legacy run is read-only",
+                    "File-backed runs can be viewed and exported, but new accepted "
+                    "readings must be stored in SQL Server. Start a new database run.",
+                )
+                return
+            if self.database_run_context.run.completion_status == "complete":
+                QMessageBox.warning(
+                    self,
+                    "Run is closed",
+                    "A completed run cannot be continued as an unfinished pass. "
+                    "Use Retest selected for corrections, or start a new run for "
+                    "optimization readings.",
+                )
+                return
+        if self.database_workflow is not None and retest and self.database_run_context is None:
+            QMessageBox.warning(
+                self, "Database run required", "Load the database run before retesting."
+            )
+            return
+        if self.database_workflow is None and not retest and run_mode == "new":
             if selected_run_number in self.unit_repository.available_run_numbers(
                 selected_unit_directory
             ):
@@ -4590,17 +5566,134 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid channel selection", str(error))
             return
 
+        if run_mode == "continue" and (
+            preparation.extra_only != self._loaded_run_is_extra_only()
+        ):
+            QMessageBox.warning(
+                self,
+                "Channel mode mismatch",
+                "Select the same channel mode used by the loaded run before "
+                "continuing it. Start a new run to use Extra channels only "
+                "after a front-panel run.",
+            )
+            return
+
         channels = preparation.channels
 
+        part_details = None
+        try:
+            part_details = parse_osx_part_number(
+                selected_identity.get("Part number", "")
+            )
+        except ValueError:
+            # Admin mode can intentionally bypass normal metadata preflight.
+            # Without a valid part number the legacy configured-count pass is
+            # retained, but optional physical-port probing is not offered.
+            part_details = None
+
+        connected_model = normalize_switch_model(self._connected_switch_model())
+        if part_details is not None:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "run.front_panel_count_resolved",
+                part_number=part_details.value,
+                front_panel_channel_count=part_details.front_panel_channel_count,
+                status="resolved_from_part_number",
+            )
+        if preparation.extra_only and (
+            part_details is None
+            or normalize_switch_model(part_details.model) != "OSX-150"
+            or connected_model == "OSX-100"
+        ):
+            QMessageBox.warning(
+                self,
+                "Extra channels only is unavailable",
+                "Extra channels only is supported for OSX-150 units only. "
+                "OSX-100 does not have an extra-channel workflow.",
+            )
+            return
+
+        if (
+            (preparation.full_pass or preparation.extra_only)
+            and part_details is not None
+        ):
+            connected_switch_info = self.hardware_connection_manager.snapshot(
+                HardwareCapability.OPTICAL_SWITCH
+            ).device_info
+            configured_count = connected_switch_info.configured_channel_count
+            if (
+                configured_count is not None
+                and int(configured_count) < part_details.front_panel_channel_count
+            ):
+                self._record_support(
+                    SupportEventCategory.HARDWARE,
+                    "switch.scpi_channel_count_mismatch",
+                    level=SupportLogLevel.WARNING,
+                    front_panel_channel_count=part_details.front_panel_channel_count,
+                    configured_channel_count=int(configured_count),
+                    reason_code="scpi_count_below_front_panel_count",
+                    status="blocked",
+                )
+                QMessageBox.warning(
+                    self,
+                    "Switch configuration is too small",
+                    "The part number requires %d front-panel channels, but the "
+                    "connected switch reports only %d configured logical channels. "
+                    "No run was started."
+                    % (
+                        part_details.front_panel_channel_count,
+                        int(configured_count),
+                    ),
+                )
+                return
+            if (
+                configured_count is not None
+                and int(configured_count) > part_details.front_panel_channel_count
+            ):
+                self._record_support(
+                    SupportEventCategory.HARDWARE,
+                    "switch.scpi_channel_count_mismatch",
+                    level=SupportLogLevel.WARNING,
+                    front_panel_channel_count=part_details.front_panel_channel_count,
+                    configured_channel_count=int(configured_count),
+                    reason_code="scpi_count_above_front_panel_count",
+                    status="diagnostic_only",
+                )
+            if (
+                preparation.extra_only
+                and confirmation_routing_method
+                is ExtraChannelRoutingMethod.SCPI_MAPPED
+                and int(configured_count or 0)
+                <= part_details.front_panel_channel_count
+            ):
+                QMessageBox.warning(
+                    self,
+                    "No SCPI-mapped extra channels",
+                    "The connected switch has no configured SCPI channels above "
+                    "the %d front-panel channels. Configure the extra logical "
+                    "channels or select CLI direct routing in Admin Config."
+                    % part_details.front_panel_channel_count,
+                )
+                return
+
+        extra_routing_method = confirmation_routing_method
+
+        self._active_extra_only = preparation.extra_only
         if retest:
             self._active_planned_channels = self._status_planned_channels()
         elif run_mode == "continue" and self.run_data is not None:
             self._active_planned_channels = self._status_planned_channels()
+        elif preparation.extra_only:
+            self._active_planned_channels = None
         else:
             self._active_planned_channels = (
                 tuple(int(channel) for channel in channels)
                 if channels is not None
-                else None
+                else (
+                    tuple(range(1, part_details.front_panel_channel_count + 1))
+                    if part_details is not None
+                    else None
+                )
             )
         self._run_terminal_status = (
             self._run_terminal_status
@@ -4630,6 +5723,295 @@ class MainWindow(QMainWindow):
             self.current_run_workflow,
             connect_if_needed=False,
         )
+
+        if self.database_workflow is not None and not retest and run_mode == "new":
+            try:
+                if part_details is None:
+                    raise ValueError(
+                        "A valid OSX part number is required for a database run."
+                    )
+                switch_info = self.hardware_connection_manager.snapshot(
+                    HardwareCapability.OPTICAL_SWITCH
+                ).device_info
+                physical_count = (
+                    switch_info.configured_channel_count
+                    or self.hardware_configured_channel_count
+                )
+                if not physical_count:
+                    raise ValueError(
+                        "The connected switch did not report its physical channel count."
+                    )
+                database_run_args = {
+                    "unit_spec": UnitSpec(
+                        main_board_serial=selected_identity.get(
+                            "Main board serial", ""
+                        ),
+                        part_number=part_details.value,
+                        front_panel_channel_count=(
+                            part_details.front_panel_channel_count
+                        ),
+                        unit_model=part_details.model,
+                    ),
+                    "switch_spec": SwitchSpec(
+                        switch_serial=selected_identity.get("Switch serial", ""),
+                        switch_model=self._connected_switch_model(),
+                        last_reported_scpi_channel_count=int(physical_count),
+                        firmware_version=switch_info.firmware_version or None,
+                    ),
+                    "installed_by": self.hardware_tested_by.text().strip(),
+                    "initial_channel_map": {
+                        channel: channel
+                        for channel in range(
+                            1, part_details.front_panel_channel_count + 1
+                        )
+                    },
+                    "tested_by": self.hardware_tested_by.text().strip(),
+                    "station_number": self._station_number_value(),
+                    "wavelength_mode": (
+                        self.measurement_configuration.wavelength_profile.code
+                    ),
+                    "operating_band": (
+                        self.hardware_operating_band.currentText().strip()
+                        or "O band"
+                    ),
+                    "application_version": APP_VERSION,
+                    "measurement_hardware": (
+                        self._database_measurement_hardware_snapshot(
+                            preparation,
+                            part_details.front_panel_channel_count,
+                            extra_routing_method,
+                        )
+                    ),
+                    "limit_snapshot": profile.as_dict(),
+                    "part_number_snapshot": part_details.value,
+                    "front_panel_channel_count": (
+                        part_details.front_panel_channel_count
+                    ),
+                    "run_purpose": purpose,
+                }
+                try:
+                    context = self.database_workflow.start_new_run(
+                        **database_run_args
+                    )
+                except NewHardwarePairingConfirmationRequired as conflict:
+                    self._record_support(
+                        SupportEventCategory.WORKFLOW,
+                        "hardware_pairing.conflict_detected",
+                        destination_main_board_serial=(
+                            conflict.destination_main_board_serial
+                        ),
+                        requested_switch_serial=conflict.requested_switch_serial,
+                        source_main_board_serial=conflict.source_main_board_serial,
+                        destination_switch_serial=conflict.destination_switch_serial,
+                        source_assignment_id=conflict.source_assignment_id,
+                        destination_assignment_id=conflict.destination_assignment_id,
+                        status="confirmation_required",
+                    )
+                    if conflict.source_main_board_serial:
+                        pairing_summary = (
+                            "Switch %s is currently assigned to main board %s."
+                            % (
+                                conflict.requested_switch_serial,
+                                conflict.source_main_board_serial,
+                            )
+                        )
+                    else:
+                        pairing_summary = (
+                            "Switch %s is not currently assigned to another main "
+                            "board, but the destination main board has a different "
+                            "active switch."
+                            % conflict.requested_switch_serial
+                        )
+                    message = (
+                        "%s\n\nIt will now be associated with main board %s as a "
+                        "new hardware pairing. Any unfinished run on an assignment "
+                        "that must be closed will be marked stopped.\n\n"
+                        "Light Workbench assumes the required external module-map "
+                        "reset was completed before installing the switch."
+                        % (pairing_summary, conflict.destination_main_board_serial)
+                    )
+                    if conflict.destination_switch_serial:
+                        message += (
+                            "\n\nThe destination main board is currently paired "
+                            "with switch %s; that pairing will also be closed."
+                            % conflict.destination_switch_serial
+                        )
+                    self._record_support(
+                        SupportEventCategory.OPERATOR,
+                        "hardware_pairing.confirmation_shown",
+                        destination_main_board_serial=(
+                            conflict.destination_main_board_serial
+                        ),
+                        requested_switch_serial=conflict.requested_switch_serial,
+                        status="shown",
+                    )
+                    confirmation = QMessageBox.question(
+                        self,
+                        "Use switch with this main board?",
+                        message,
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if confirmation != QMessageBox.Yes:
+                        self._record_support(
+                            SupportEventCategory.OPERATOR,
+                            "hardware_pairing.confirmation_cancelled",
+                            destination_main_board_serial=(
+                                conflict.destination_main_board_serial
+                            ),
+                            requested_switch_serial=conflict.requested_switch_serial,
+                        source_assignment_id=conflict.source_assignment_id,
+                        destination_assignment_id=conflict.destination_assignment_id,
+                            status="cancelled",
+                        )
+                        return
+                    self._record_support(
+                        SupportEventCategory.OPERATOR,
+                        "hardware_pairing.confirmation_accepted",
+                        destination_main_board_serial=(
+                            conflict.destination_main_board_serial
+                        ),
+                        requested_switch_serial=conflict.requested_switch_serial,
+                        source_assignment_id=conflict.source_assignment_id,
+                        destination_assignment_id=conflict.destination_assignment_id,
+                        status="accepted",
+                    )
+                    try:
+                        context = self.database_workflow.start_new_run(
+                            **database_run_args,
+                            allow_new_hardware_pairing=True,
+                        )
+                    except Exception:
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            "hardware_pairing.transaction_failed",
+                            level=SupportLogLevel.ERROR,
+                            destination_main_board_serial=(
+                                conflict.destination_main_board_serial
+                            ),
+                            requested_switch_serial=conflict.requested_switch_serial,
+                            source_assignment_id=conflict.source_assignment_id,
+                            destination_assignment_id=conflict.destination_assignment_id,
+                            status="rolled_back",
+                        )
+                        raise
+                    self.statusBar().showMessage(
+                        "Fresh hardware pairing created; unfinished conflicting runs were stopped."
+                    )
+                    for assignment_id in context.pairing_closed_assignment_ids:
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            "hardware_pairing.assignment_closed",
+                            assignment_id=assignment_id,
+                            status="success",
+                        )
+                    for run_id in context.pairing_stopped_run_ids:
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            "hardware_pairing.run_stopped",
+                            run_id=run_id,
+                            status="success",
+                        )
+                    self._record_support(
+                        SupportEventCategory.WORKFLOW,
+                        "hardware_pairing.identity_map_created",
+                        assignment_id=context.assignment.assignment_id,
+                        channel_count=len(context.assignment.initial_channel_map),
+                        status="success",
+                    )
+                    self._record_support(
+                        SupportEventCategory.WORKFLOW,
+                        "hardware_pairing.assignment_created",
+                        assignment_id=context.assignment.assignment_id,
+                        status="success",
+                    )
+                    self._record_support(
+                        SupportEventCategory.WORKFLOW,
+                        "hardware_pairing.transaction_completed",
+                        assignment_id=context.assignment.assignment_id,
+                        run_id=context.run.run_id,
+                        source_assignment_id=conflict.source_assignment_id,
+                        destination_assignment_id=conflict.destination_assignment_id,
+                        identity_map_channel_count=len(
+                            context.assignment.initial_channel_map
+                        ),
+                        closed_assignment_count=len(
+                            context.pairing_closed_assignment_ids
+                        ),
+                        stopped_run_count=len(context.pairing_stopped_run_ids),
+                        status="success",
+                    )
+                except AssignmentChangeRequiredError:
+                    reason, accepted = QInputDialog.getText(
+                        self,
+                        "Record switch replacement",
+                        "This unit already has a different switch assigned. "
+                        "Enter the reason the previous switch was removed:",
+                    )
+                    if not accepted or not reason.strip():
+                        return
+                    context = self.database_workflow.start_new_run(
+                        **database_run_args,
+                        switch_replacement_reason=reason.strip(),
+                    )
+                selected_run_number = context.run.run_number
+                self._apply_database_run_context(context, update_setup=False)
+                self.hardware_run_number.setValue(selected_run_number)
+            except DatabaseRunUnavailableError as error:
+                self._record_support(
+                    SupportEventCategory.CONNECTION,
+                    "database.run_start_blocked",
+                    level=SupportLogLevel.ERROR,
+                    station_number=self._station_number_value(),
+                    error_message=str(error),
+                    status="blocked",
+                )
+                QMessageBox.critical(self, "Database unavailable", str(error))
+                return
+            except Exception as error:
+                self._record_support(
+                    SupportEventCategory.WORKFLOW,
+                    "database.run_start_failed",
+                    level=SupportLogLevel.ERROR,
+                    station_number=self._station_number_value(),
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    status="error",
+                )
+                QMessageBox.critical(
+                    self,
+                    "Could not create database run",
+                    "The hardware run was not started because its database record "
+                    "could not be created:\n%s" % error,
+                )
+                return
+        elif (
+            self.database_workflow is not None
+            and self.database_run_context is not None
+            and (continuing_existing or retest)
+            and self.database_run_context.run.completion_status != "in_progress"
+        ):
+            try:
+                context = self.database_workflow.resume_run(
+                    self.database_run_context.run.run_id
+                )
+                self._apply_database_run_context(context, update_setup=False)
+            except Exception as error:
+                self._record_support(
+                    SupportEventCategory.CONNECTION,
+                    "database.run_resume_failed",
+                    level=SupportLogLevel.ERROR,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    status="error",
+                )
+                QMessageBox.critical(
+                    self,
+                    "Could not resume database run",
+                    "The run remains closed and no hardware operation was started:\n%s"
+                    % error,
+                )
+                return
         self._record_support(
             SupportEventCategory.WORKFLOW,
             "run.started",
@@ -4639,6 +6021,8 @@ class MainWindow(QMainWindow):
             unit_serial=selected_identity.get("Main board serial"),
             switch_serial=selected_identity.get("Switch serial"),
             operator_initials=self.hardware_tested_by.text().strip(),
+            station_number=self._station_number_value(),
+            run_purpose=purpose,
             retest=retest,
             live_write_mode=self.live_write_mode_enabled,
             status="started",
@@ -4651,7 +6035,20 @@ class MainWindow(QMainWindow):
         self.active_run_reference_snapshot = dict(
             self.reference_session.snapshot.as_dict()
         )
-        if not retest and run_mode == "new":
+        if self.database_workflow is not None:
+            self.run_recorder = None
+            self.switch_test_timer = SwitchTestTimer(
+                self.run_data.metadata,
+                self.run_data.switch_test_sessions,
+            )
+            # _apply_database_run_context already restored the latest saved
+            # analysis. Preserve it when resuming/retesting an existing run;
+            # a newly created run has no analysis history and remains empty.
+            if self.database_run_context is None:
+                self.replacement_analysis = None
+                self.replacement_analysis_history = ()
+                self.replacement_analysis_stale = False
+        elif not retest and run_mode == "new":
             self._loaded_run_profile_unavailable = False
             self._loaded_run_profile_reason = ""
             self.run_data = RunData(
@@ -4668,6 +6065,8 @@ class MainWindow(QMainWindow):
                     "Switch serial": self.hardware_switch_serial.text().strip(),
                     "Operating band": self.hardware_operating_band.currentText().strip() or "O band",
                     "Tested by": self.hardware_tested_by.text().strip(),
+                    "Run purpose": purpose,
+                    "run_purpose": purpose,
                     "Run number": str(selected_run_number),
                     "Wavelength mode": self.measurement_configuration.wavelength_profile.code,
                     "OPM wavelengths nm": ",".join(
@@ -4689,8 +6088,22 @@ class MainWindow(QMainWindow):
                     "Measurement classification": (
                         self.measurement_configuration.classification.value
                     ),
+                    "Extra channel routing method": extra_routing_method.value,
+                    "Front-panel channel count": (
+                        str(part_details.front_panel_channel_count)
+                        if part_details is not None
+                        else ""
+                    ),
+                    "Configured channel count": str(
+                        self.hardware_connection_manager.snapshot(
+                            HardwareCapability.OPTICAL_SWITCH
+                        ).device_info.configured_channel_count
+                        or ""
+                    ),
                     "Channel mode": (
-                        preparation.plan.mode.value
+                        "extra_channels_only"
+                        if preparation.extra_only
+                        else preparation.plan.mode.value
                         if preparation.plan is not None
                         else "Retest"
                     ),
@@ -4765,9 +6178,11 @@ class MainWindow(QMainWindow):
         self.metadata_labels["Tested by"].setText(
             self.run_data.metadata.get("Tested by", "Not recorded")
         )
+        self.metadata_labels["Station number"].setText("Not recorded")
         self.metadata_labels["Run number"].setText(
             self.run_data.metadata.get("Run number", str(selected_run_number))
         )
+        self.metadata_labels["Run purpose"].setText(run_purpose_label(purpose))
         self.refresh_analysis()
 
         request = build_hardware_run_request(
@@ -4794,10 +6209,105 @@ class MainWindow(QMainWindow):
             workflow_id=workflow_id,
             reference_snapshot=self.active_run_reference_snapshot,
             measurement_configuration=self.measurement_configuration,
+            front_panel_channel_count=(
+                part_details.front_panel_channel_count
+                if part_details is not None
+                and (preparation.full_pass or preparation.extra_only)
+                else None
+            ),
+            offer_extra_ports=(
+                evaluate_extra_port_offer_eligibility(
+                    full_pass=preparation.full_pass,
+                    extra_only=preparation.extra_only,
+                    manual_channel_order=preparation.manual_channel_order,
+                    retest=retest,
+                    run_mode=run_mode,
+                    has_part_number=part_details is not None,
+                    supports_extra_channels=(
+                        part_details is not None
+                        and normalize_switch_model(part_details.model) == "OSX-150"
+                    ),
+                ).eligible
+            ),
+            run_mode=run_mode,
+            retest=retest,
+            existing_extra_physical_ports=(
+                tuple(
+                    sorted(
+                        {
+                            int(record.physical_port or record.channel)
+                            for record in (self.run_data.measurements or ())
+                            if part_details is not None
+                            and int(record.channel)
+                            > part_details.front_panel_channel_count
+                            and int(record.physical_port or record.channel)
+                            > part_details.front_panel_channel_count
+                        }
+                    )
+                )
+                if run_mode == "continue" and self.run_data is not None
+                else ()
+            ),
+            existing_extra_logical_channels=(
+                tuple(
+                    sorted(
+                        {
+                            int(record.channel)
+                            for record in (self.run_data.measurements or ())
+                            if part_details is not None
+                            and int(record.channel)
+                            > part_details.front_panel_channel_count
+                        }
+                    )
+                )
+                if run_mode == "continue" and self.run_data is not None
+                else ()
+            ),
+            extra_channel_routing_method=extra_routing_method,
+            persistence_run_id=(
+                self.database_run_context.run.run_id
+                if self.database_workflow is not None
+                and self.database_run_context is not None
+                else None
+            ),
+            effective_channel_map=(
+                {
+                    item.logical_channel: item.effective_physical_port
+                    for item in self.database_run_context.routing.channel_map
+                }
+                if self.database_run_context is not None
+                else {
+                    int(item["logical_channel"]): int(item["replacement_port"])
+                    for item in self.completed_replacements
+                    if item.get("logical_channel") is not None
+                    and item.get("replacement_port") is not None
+                }
+            ),
         )
         try:
             self.hardware_controller.start(request)
         except (RuntimeError, OSError) as error:
+            if (
+                self.database_workflow is not None
+                and self.database_run_context is not None
+                and self.database_run_context.run.completion_status == "in_progress"
+                and not continuing_existing
+                and not retest
+            ):
+                try:
+                    self.database_run_context = self.database_workflow.finish_run(
+                        self.database_run_context.run.run_id,
+                        "failed",
+                    )
+                except Exception as database_error:
+                    self._record_support(
+                        SupportEventCategory.CONNECTION,
+                        "database.run_finish_failed",
+                        level=SupportLogLevel.ERROR,
+                        error_type=type(database_error).__name__,
+                        error_message=str(database_error),
+                        status="error",
+                    )
             self._record_support(
                 SupportEventCategory.WORKFLOW,
                 "run.start_failed",
@@ -4824,9 +6334,11 @@ class MainWindow(QMainWindow):
         self.refresh_run_status(include_composite=False)
         self._update_hardware_readiness_controls()
 
-    def _run_start_preflight(self):
+    def _run_start_preflight(self, *, require_station_number=None):
         """Collect current UI state and validate it without side effects."""
         reference = self.reference_session.snapshot
+        if require_station_number is None:
+            require_station_number = self.database_workflow is not None
         return validate_run_preflight(
             admin_mode=self.admin_session.is_active,
             metadata=self._current_hardware_identity(),
@@ -4845,6 +6357,7 @@ class MainWindow(QMainWindow):
                 else False
             ),
             wavelengths=self.measurement_configuration.opm_wavelengths_nm,
+            require_station_number=require_station_number,
         )
 
     @staticmethod
@@ -4868,6 +6381,7 @@ class MainWindow(QMainWindow):
             "part_number": self.hardware_part_number,
             "operating_band": self.hardware_operating_band,
             "tested_by": self.hardware_tested_by,
+            "station_number": self.hardware_station_number,
             "run_number": self.hardware_run_number,
             "channel_mode": self.hardware_channel_mode,
             "single_channel": self.hardware_single_channel,
@@ -4908,15 +6422,20 @@ class MainWindow(QMainWindow):
         )
         self._focus_preflight_issue(issues)
 
-    def _authorize_hardware_start(self, *, retest=False):
+    def _authorize_hardware_start(
+        self, *, retest=False, require_station_number=None
+    ):
         """Apply role policy to one production start before any side effect."""
-        result = self._run_start_preflight()
+        result = self._run_start_preflight(
+            require_station_number=require_station_number
+        )
         issue_codes = ", ".join(issue.code for issue in result.issues)
         self._record_support(
             SupportEventCategory.WORKFLOW,
             "run.preflight_started",
             admin_mode=self.admin_session.is_active,
             run_number=self.hardware_run_number.value(),
+            station_number=self._station_number_value(),
             channel_mode=self.hardware_channel_mode.currentText(),
             retest=retest,
             details=issue_codes,
@@ -4929,6 +6448,7 @@ class MainWindow(QMainWindow):
                 "run.preflight_blocked",
                 admin_mode=self.admin_session.is_active,
                 run_number=self.hardware_run_number.value(),
+                station_number=self._station_number_value(),
                 channel_mode=self.hardware_channel_mode.currentText(),
                 retest=retest,
                 details=issue_codes,
@@ -4938,12 +6458,32 @@ class MainWindow(QMainWindow):
             return False
 
         if result.metadata_issues:
+            blocking_metadata_issues = tuple(
+                issue
+                for issue in result.metadata_issues
+                if not issue.admin_metadata_bypassable
+            )
+            if blocking_metadata_issues:
+                self._record_support(
+                    SupportEventCategory.WORKFLOW,
+                    "run.preflight_blocked",
+                    admin_mode=self.admin_session.is_active,
+                    run_number=self.hardware_run_number.value(),
+                    station_number=self._station_number_value(),
+                    channel_mode=self.hardware_channel_mode.currentText(),
+                    retest=retest,
+                    details=issue_codes,
+                    status="blocked",
+                )
+                self._show_preflight_blocked(result)
+                return False
             if not self.admin_session.is_active:
                 self._record_support(
                     SupportEventCategory.WORKFLOW,
                     "run.preflight_blocked",
                     admin_mode=False,
                     run_number=self.hardware_run_number.value(),
+                    station_number=self._station_number_value(),
                     channel_mode=self.hardware_channel_mode.currentText(),
                     retest=retest,
                     details=issue_codes,
@@ -4957,6 +6497,7 @@ class MainWindow(QMainWindow):
                     "run.preflight_blocked",
                     admin_mode=True,
                     run_number=self.hardware_run_number.value(),
+                    station_number=self._station_number_value(),
                     channel_mode=self.hardware_channel_mode.currentText(),
                     retest=retest,
                     details=issue_codes,
@@ -4969,6 +6510,7 @@ class MainWindow(QMainWindow):
             "run.preflight_passed",
             admin_mode=self.admin_session.is_active,
             run_number=self.hardware_run_number.value(),
+            station_number=self._station_number_value(),
             channel_mode=self.hardware_channel_mode.currentText(),
             retest=retest,
             details=issue_codes,
@@ -5059,13 +6601,21 @@ class MainWindow(QMainWindow):
     def hardware_channel_configuration_ready(self, channel_count):
         self.hardware_session.set_configured_channel_count(channel_count)
         if self.hardware_full_pass and not self.hardware_retest:
-            self._active_planned_channels = tuple(range(1, int(channel_count) + 1))
+            try:
+                front_panel_count = parse_osx_part_number(
+                    self.hardware_part_number.currentText().strip()
+                ).front_panel_channel_count
+            except ValueError:
+                front_panel_count = int(channel_count)
+            self._active_planned_channels = tuple(
+                range(1, int(front_panel_count) + 1)
+            )
             if self.run_data is not None:
                 self.run_data.metadata["Channel mode"] = "Full configured pass"
                 self.run_data.metadata["Planned channels"] = ",".join(
                     str(channel) for channel in self._active_planned_channels
                 )
-                self.run_data.metadata["Planned channel count"] = str(channel_count)
+                self.run_data.metadata["Planned channel count"] = str(front_panel_count)
                 self._store_run_status(self._calculate_run_status(include_composite=False))
         self.refresh_run_status(include_composite=False)
 
@@ -5209,17 +6759,28 @@ class MainWindow(QMainWindow):
         self.hardware_session.set_pending_channel(channel, physical_port)
         self.pending_reading_validation = None
         self.hardware_live_indicator.setVisible(self.live_write_mode_enabled)
-        self.clear_current_reading(
-            channel,
-            "Move cable to this channel; live reading is active"
-            if self.live_write_mode_enabled
-            else "Move cable, then read values",
-        )
+        if self.hardware_session.extra_port_active:
+            instruction = (
+                "SCPI-mapped extra channel %d routed to physical port %d — pending"
+                % (channel, physical_port)
+                if self.hardware_session.extra_channel_routing_method
+                == ExtraChannelRoutingMethod.SCPI_MAPPED.value
+                else "Extra physical port %d — pending" % physical_port
+            )
+        else:
+            instruction = (
+                "Move cable to this channel; live reading is active"
+                if self.live_write_mode_enabled
+                else "Move cable, then read values"
+            )
+        self.clear_current_reading(channel, instruction)
         self.continue_hardware_button.setEnabled(
             not self.live_write_mode_enabled
         )
         self.write_hardware_button.setEnabled(False)
-        self.change_hardware_channel_button.setEnabled(True)
+        self.change_hardware_channel_button.setEnabled(
+            not self.hardware_session.extra_port_active
+        )
         self.refresh_table()
         self.demo_channel_label.setText(
             "Channel %d routed to physical port %d - move cable, then %s"
@@ -5231,6 +6792,233 @@ class MainWindow(QMainWindow):
                 else "read",
             )
         )
+
+    def hardware_extra_port_offer_required(self, front_panel_count, details=None):
+        """Offer the optional engineering phase once the required pass is done."""
+        details = details or {}
+        routing_method = ExtraChannelRoutingMethod.parse(
+            details.get("routing_method")
+        )
+        configured_count = details.get("configured_channel_count")
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Question)
+        message.setWindowTitle("Front-panel testing complete")
+        message.setText(
+            "All %d front-panel channels have been measured." % front_panel_count
+        )
+        if routing_method is ExtraChannelRoutingMethod.SCPI_MAPPED:
+            first_extra = int(front_panel_count) + 1
+            final_extra = int(configured_count)
+            message.setInformativeText(
+                "The switch reports %d additional SCPI-mapped channels, %d-%d. "
+                "Would you like to test them?\n\nRouting method: %s\n\n"
+                "Extra-channel readings are used for spare-port and replacement "
+                "analysis. They do not count as front-panel channels and are not "
+                "written directly to the COC."
+                % (
+                    final_extra - int(front_panel_count),
+                    first_extra,
+                    final_extra,
+                    routing_method.label,
+                )
+            )
+        else:
+            message.setInformativeText(
+                "Would you like to test additional physical ports using the "
+                "switch's engineering interface?\n\nRouting method: %s\n\n"
+                "Extra-port readings are used for spare-port and replacement "
+                "analysis. They do not count as front-panel channels and are not "
+                "written directly to the COC."
+                % routing_method.label
+            )
+        test_button = message.addButton("Test Extra Ports", QMessageBox.ActionRole)
+        finish_button = message.addButton("Finish Run", QMessageBox.AcceptRole)
+        message.setDefaultButton(finish_button)
+        message.setEscapeButton(finish_button)
+        message.exec_()
+        enabled = message.clickedButton() == test_button
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "extra_ports.offer_decision",
+            front_panel_channel_count=front_panel_count,
+            configured_channel_count=configured_count,
+            routing_method=routing_method.value,
+            choice="test_extra_ports" if enabled else "finish_run",
+            status="accepted" if enabled else "declined",
+        )
+        self._hardware_command("choose_extra_port_testing", enabled)
+
+    def hardware_extra_port_phase_changed(self, status, candidate, details):
+        highest = (details or {}).get("highest_confirmed_extra_port")
+        routing_method = ExtraChannelRoutingMethod.parse(
+            (details or {}).get("routing_method")
+        )
+        self.hardware_session.set_extra_port_phase(
+            status,
+            candidate,
+            highest,
+            routing_method,
+        )
+        active = status == ExtraPortPhaseStatus.IN_PROGRESS.value
+        self.write_hardware_button.set_title(
+            "Write & Continue" if active else "Write IL"
+        )
+        self.retry_extra_port_button.setText(
+            "Retry Current Channel"
+            if routing_method is ExtraChannelRoutingMethod.SCPI_MAPPED
+            else "Retry Current Port"
+        )
+        for button in (self.retry_extra_port_button, self.stop_extra_testing_button):
+            button.setVisible(active)
+            button.setEnabled(active)
+        cli_active = active and routing_method is ExtraChannelRoutingMethod.CLI_DIRECT
+        self.no_more_extra_ports_button.setVisible(cli_active)
+        self.no_more_extra_ports_button.setEnabled(cli_active)
+        if active:
+            self.change_hardware_channel_button.setEnabled(False)
+            self.statusBar().showMessage(
+                "%s %d — pending"
+                % (
+                    "SCPI-mapped extra channel"
+                    if routing_method is ExtraChannelRoutingMethod.SCPI_MAPPED
+                    else "Extra physical port",
+                    candidate,
+                )
+            )
+        elif status == ExtraPortPhaseStatus.SAFETY_CEILING_REACHED.value:
+            self.statusBar().showMessage(
+                "Internal extra-port safety limit reached; front-panel readings remain saved."
+            )
+        elif (details or {}).get("reason") == "no_scpi_mapped_extra_channels":
+            self.statusBar().showMessage(
+                "Front-panel testing complete; no additional SCPI-mapped channels "
+                "are configured."
+            )
+        elif (
+            (details or {}).get("reason")
+            == "all_scpi_mapped_extra_channels_measured"
+        ):
+            self.statusBar().showMessage(
+                "All configured SCPI-mapped extra channels already have accepted "
+                "measurements."
+            )
+
+    def hardware_extra_port_confirmation_required(self, candidate, result):
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Warning)
+        message.setWindowTitle("Physical-port route unverified")
+        message.setText(
+            "The command for physical port %d was sent, but the route was not verified."
+            % candidate
+        )
+        message.setInformativeText(self._extra_port_confirmation_detail(result))
+        proceed = message.addButton("Proceed Unverified", QMessageBox.ActionRole)
+        retry = message.addButton("Retry Current Port", QMessageBox.ActionRole)
+        no_more = message.addButton("No More Physical Ports", QMessageBox.DestructiveRole)
+        stop = message.addButton("Stop Extra Testing", QMessageBox.RejectRole)
+        message.setDefaultButton(stop)
+        message.setEscapeButton(stop)
+        message.exec_()
+        clicked = message.clickedButton()
+        action = (
+            "proceed_unverified"
+            if clicked == proceed
+            else "retry"
+            if clicked == retry
+            else "no_more"
+            if clicked == no_more
+            else "stop"
+        )
+        self._hardware_command("extra_port_action", action)
+
+    @staticmethod
+    def _extra_port_confirmation_detail(result):
+        detail = result.detail or "No recognized acknowledgement was received."
+        if result.response_type == "binary" and result.response_hex:
+            detail += "\nResponse: %s" % result.response_hex
+        return "%s\n\nProceed only if you have independently confirmed the route." % detail
+
+    def hardware_extra_port_issue(self, candidate, issue_kind, detail):
+        if issue_kind == "safety_ceiling":
+            QMessageBox.warning(self, "Internal extra-port safety limit reached", detail)
+            self._hardware_command("extra_port_action", "stop")
+            return
+        routing_method = ExtraChannelRoutingMethod.parse(
+            self.hardware_session.extra_channel_routing_method
+        )
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Warning)
+        if routing_method is ExtraChannelRoutingMethod.SCPI_MAPPED:
+            message.setWindowTitle("SCPI-mapped extra channel was not saved")
+            message.setText("Mapped channel %d was not saved." % candidate)
+            message.setInformativeText(
+                "%s\n\nThe configured channel could not be routed, verified, or "
+                "measured. Correct the switch configuration or retry the channel."
+                % detail
+            )
+            retry = message.addButton(
+                "Retry Current Channel", QMessageBox.ActionRole
+            )
+            no_more = None
+        else:
+            message.setWindowTitle("Extra physical port could not be confirmed")
+            message.setText("Physical port %d was not saved." % candidate)
+            message.setInformativeText(
+                "%s\n\nThis can mean the port is not installed, the optical "
+                "connection is not ready, or routing was not confirmed." % detail
+            )
+            retry = message.addButton("Retry Current Port", QMessageBox.ActionRole)
+            no_more = message.addButton(
+                "No More Physical Ports", QMessageBox.DestructiveRole
+            )
+        stop = message.addButton("Stop Extra Testing", QMessageBox.RejectRole)
+        message.setDefaultButton(stop)
+        message.setEscapeButton(stop)
+        message.exec_()
+        clicked = message.clickedButton()
+        action = (
+            "retry"
+            if clicked == retry
+            else "no_more"
+            if no_more is not None and clicked == no_more
+            else "stop_failed"
+        )
+        self._hardware_command("extra_port_action", action)
+
+    def retry_extra_port(self):
+        self._discard_extra_port_provisional("retry")
+
+    def no_more_extra_ports(self):
+        self._discard_extra_port_provisional("no_more")
+
+    def stop_extra_testing(self):
+        self._discard_extra_port_provisional("stop")
+
+    def _discard_extra_port_provisional(self, action):
+        if not self.hardware_session.extra_port_active:
+            return
+        candidate = self.hardware_session.extra_port_candidate
+        self.database_pending_measurement = None
+        self.hardware_session.clear_pending()
+        self.pending_reading_validation = None
+        self.continue_hardware_button.setEnabled(False)
+        self.write_hardware_button.setEnabled(False)
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "extra_ports.provisional_discarded",
+            logical_channel=(
+                candidate
+                if self.hardware_session.extra_channel_routing_method
+                == ExtraChannelRoutingMethod.SCPI_MAPPED.value
+                else None
+            ),
+            physical_port=candidate,
+            routing_method=self.hardware_session.extra_channel_routing_method,
+            choice=action,
+            reading_state="discarded",
+            status="requested",
+        )
+        self._hardware_command("extra_port_action", action)
 
     def continue_hardware(self):
         if (
@@ -5286,12 +7074,139 @@ class MainWindow(QMainWindow):
                 )
                 self.write_hardware_button.setEnabled(False)
                 return False
+        if (
+            self.database_workflow is not None
+            and self.hardware_controller.is_active
+        ):
+            return self._request_database_write()
         return self._commit_and_advance_hardware()
+
+    def _request_database_write(self):
+        """Ask the worker to lock the displayed sample before saving it."""
+        if self._database_write_request_in_flight:
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "measurement.write_click_ignored",
+                logical_channel=self.hardware_pending_channel,
+                reason="persistence_request_in_flight",
+                status="ignored",
+            )
+            return False
+        provisional = self._database_persistence_payload
+        if (
+            provisional is not None
+            and self._database_persistence_waiting_for_ack
+        ):
+            # The worker is already blocked on this token after a prior
+            # database failure. Retry persistence directly; sending another
+            # write decision would be interpreted as an invalid command while
+            # the worker is waiting for the acknowledgement.
+            return self._persist_database_payload(provisional)
+        if provisional is None:
+            # The combined payload is required for a database-backed live
+            # write.  This also protects against a token arriving after the
+            # legacy four-value reading signal.
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.write_rejected_not_ready",
+                logical_channel=self.hardware_pending_channel,
+                reason="provisional_measurement_token_not_ready",
+                status="rejected",
+            )
+            self.write_hardware_button.setEnabled(False)
+            return False
+        self._database_write_request_in_flight = True
+        self.write_hardware_button.setEnabled(False)
+        self.continue_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(False)
+        self._hardware_command("write_current", provisional)
+        return True
+
+    def hardware_persistence_requested(self, provisional):
+        """Persist the exact sample after the worker accepts its token."""
+        if not isinstance(provisional, ProvisionalMeasurement):
+            return
+        self._database_persistence_payload = provisional
+        self._database_persistence_waiting_for_ack = True
+        self._persist_database_payload(provisional)
+
+    def _persist_database_payload(self, provisional):
+        """Commit a worker-locked payload and acknowledge it after success."""
+        self._database_write_request_in_flight = True
+        try:
+            committed = self.commit_hardware_reading(provisional)
+        except Exception as error:
+            self._database_write_request_in_flight = False
+            QMessageBox.critical(
+                self,
+                "Could not save reading",
+                "The reading was not committed to the run:\n%s\n\n"
+                "The completed reading is still pending. Correct the database "
+                "problem, then press Write IL again to retry it." % error,
+            )
+            self.write_hardware_button.setEnabled(True)
+            return False
+        if not committed:
+            self._database_write_request_in_flight = False
+            self.write_hardware_button.setEnabled(False)
+            return False
+        acknowledgement = self._last_measurement_acknowledgement
+        if acknowledgement is None:
+            self._database_write_request_in_flight = False
+            self.write_hardware_button.setEnabled(True)
+            return False
+        self._database_persistence_payload = None
+        self._database_write_request_in_flight = False
+        self._database_persistence_waiting_for_ack = False
+        self.continue_hardware_button.setEnabled(False)
+        self.write_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(False)
+        self._hardware_command(
+            "acknowledge_persisted_measurement",
+            acknowledgement,
+        )
+        return True
+
+    def hardware_persistence_request_rejected(self, provisional, reason):
+        """Discard a stale write request and wait for the current sample."""
+        if not isinstance(provisional, ProvisionalMeasurement):
+            return
+        current_token = self.hardware_pending_token
+        self._database_write_request_in_flight = False
+        self._database_persistence_waiting_for_ack = False
+        if current_token is None or current_token == provisional.token:
+            self._database_persistence_payload = None
+            self.hardware_pending_token = None
+            self.write_hardware_button.setEnabled(False)
+            self.demo_channel_label.setText(
+                "Reading refreshed before it could be saved; waiting for the "
+                "current reading"
+            )
+        self._record_support(
+            SupportEventCategory.MEASUREMENT,
+            "measurement.persistence_request_rejected",
+            operation_id=provisional.token.operation_id,
+            measurement_uuid=str(provisional.token.measurement_uuid),
+            logical_channel=provisional.token.logical_channel,
+            physical_port=provisional.token.physical_port,
+            reason=reason,
+            status="rejected",
+        )
 
     def _commit_and_advance_hardware(self):
         """Save a pending reading and let the worker continue to the next step."""
+        if (
+            self.database_workflow is not None
+            and self.hardware_controller.is_active
+        ):
+            return self._request_database_write()
         if self.hardware_worker is None or self.hardware_pending_reading is None:
             return False
+        if self.database_workflow is not None:
+            # Establish the worker's write-wait state before performing the
+            # synchronous UI/database commit.  The matching acknowledgement
+            # below then releases the worker only after the commit succeeds.
+            self._hardware_command("write_current")
         try:
             committed = self.commit_hardware_reading()
         except Exception as error:
@@ -5299,7 +7214,8 @@ class MainWindow(QMainWindow):
                 self,
                 "Could not save reading",
                 "The reading was not committed to the run:\n%s\n\n"
-                "Correct the storage problem and take the reading again." % error,
+                "The completed reading is still pending. Correct the database "
+                "problem, then press Write IL again to retry it." % error,
             )
             self.write_hardware_button.setEnabled(True)
             return False
@@ -5308,7 +7224,21 @@ class MainWindow(QMainWindow):
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
         self.change_hardware_channel_button.setEnabled(False)
-        self._hardware_command("write_current")
+        if self.database_workflow is not None:
+            acknowledgement = getattr(self, "_last_measurement_acknowledgement", None)
+            if acknowledgement is None:
+                # A database-backed worker always supplies a token.  Keep a
+                # safe fallback for lightweight tests and older injected
+                # workers; it still cannot advance a strict worker unless the
+                # identifiers match.
+                self.write_hardware_button.setEnabled(True)
+                return False
+            self._hardware_command(
+                "acknowledge_persisted_measurement",
+                acknowledgement,
+            )
+        else:
+            self._hardware_command("write_current")
         return True
 
     def _hardware_command(self, command, *args):
@@ -5323,7 +7253,16 @@ class MainWindow(QMainWindow):
             return getattr(self.hardware_worker, command)(*args)
         return None
 
-    def commit_hardware_reading(self):
+    def commit_hardware_reading(self, provisional_measurement=None):
+        if isinstance(provisional_measurement, ProvisionalMeasurement):
+            token = provisional_measurement.token
+            self.hardware_pending_reading = (
+                token.logical_channel,
+                token.physical_port,
+                provisional_measurement.first_loss_db,
+                provisional_measurement.second_loss_db,
+            )
+            self.hardware_pending_token = token
         channel, physical_port, first_loss, second_loss = self.hardware_pending_reading
         if self.run_data is None:
             return False
@@ -5334,6 +7273,36 @@ class MainWindow(QMainWindow):
         if not validation.valid:
             self._record_negative_loss_write_attempt(validation)
             return False
+        token = self.hardware_pending_token
+        if token is None:
+            # Direct UI/test callers may not have a worker token.  Generate a
+            # stable token once and reuse it across database retries.
+            fallback_uuid = uuid.uuid4()
+            token = PendingMeasurementToken(
+                operation_id="measurement-" + fallback_uuid.hex,
+                measurement_uuid=fallback_uuid,
+                run_id=(
+                    self.database_run_context.run.run_id
+                    if self.database_run_context is not None
+                    else None
+                ),
+                logical_channel=int(channel),
+                physical_port=int(physical_port),
+            )
+            self.hardware_pending_token = token
+        if (
+            token.logical_channel != int(channel)
+            or token.physical_port != int(physical_port)
+            or (
+                self.database_run_context is not None
+                and token.run_id is not None
+                and token.run_id != self.database_run_context.run.run_id
+            )
+        ):
+            raise RuntimeError(
+                "The displayed measurement no longer matches the active run. "
+                "Take a new reading before writing it."
+            )
         record = MeasurementRecord.from_wavelengths(
             channel,
             losses,
@@ -5348,7 +7317,136 @@ class MainWindow(QMainWindow):
             source_wavelengths_nm=configuration.source_wavelengths_nm,
             source_ids=configuration.source_ids,
         )
-        attempt = self._accept_measurement_record(record)
+        if self.database_workflow is not None:
+            if self.database_run_context is None:
+                raise RuntimeError(
+                    "No database run is active; the reading was not accepted."
+                )
+            front_panel_count = self.database_run_context.run.front_panel_channel_count
+            is_extra_candidate = (
+                front_panel_count is not None
+                and int(channel) > int(front_panel_count)
+            )
+            if not is_extra_candidate:
+                routing = self.database_workflow.replacements.load_assignment(
+                    self.database_run_context.run.assignment_id
+                )
+                current_map = {
+                    item.logical_channel: item.effective_physical_port
+                    for item in routing.channel_map
+                }
+                expected_physical_port = int(
+                    current_map.get(int(channel), int(channel))
+                )
+                if expected_physical_port != int(physical_port):
+                    self._record_support(
+                        SupportEventCategory.PERSISTENCE,
+                        "measurement.mapping_changed_before_commit",
+                        logical_channel=channel,
+                        routed_physical_port=physical_port,
+                        current_effective_physical_port=expected_physical_port,
+                        assignment_id=self.database_run_context.run.assignment_id,
+                        status="rejected",
+                    )
+                    raise RuntimeError(
+                        "The documented mapping for logical channel %d changed "
+                        "from physical port %d to %d before this reading was saved. "
+                        "Take a new reading using the current mapping."
+                        % (channel, physical_port, expected_physical_port)
+                    )
+            if self.database_pending_measurement is None:
+                self.database_pending_measurement = (
+                    self.database_workflow.measurements.prepare_measurement(
+                        run_id=self.database_run_context.run.run_id,
+                        logical_channel=(None if is_extra_candidate else channel),
+                        physical_port=physical_port,
+                        measurement_role=(
+                            MEASUREMENT_ROLE_EXTRA_CANDIDATE
+                            if is_extra_candidate
+                            else MEASUREMENT_ROLE_LOGICAL_CHANNEL
+                        ),
+                        wavelength_1_nm=wavelengths[0],
+                        wavelength_1_il_db=first_loss,
+                        wavelength_2_nm=wavelengths[1],
+                        wavelength_2_il_db=second_loss,
+                        reference_snapshot=(
+                            dict(self.active_run_reference_snapshot)
+                            if self.active_run_reference_snapshot
+                            else {}
+                        ),
+                        written_by=self.run_data.metadata.get("Tested by", ""),
+                        measurement_uuid=token.measurement_uuid,
+                    )
+                )
+            self._last_measurement_acknowledgement = None
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.commit_started",
+                operation_id=token.operation_id,
+                measurement_uuid=str(token.measurement_uuid),
+                logical_channel=channel,
+                physical_port=physical_port,
+                status="started",
+            )
+            try:
+                _, context = self.database_workflow.commit_measurement(
+                    self.database_pending_measurement
+                )
+            except Exception as error:
+                self._record_support(
+                    SupportEventCategory.MEASUREMENT,
+                    "measurement.commit_failed",
+                    operation_id=token.operation_id,
+                    measurement_uuid=str(token.measurement_uuid),
+                    logical_channel=channel,
+                    physical_port=physical_port,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    status="error",
+                )
+                raise
+            measurement_uuid = str(
+                self.database_pending_measurement.measurement_uuid
+            )
+            self._apply_database_run_context(context, update_setup=False)
+            attempt = next(
+                item
+                for item in self.run_data.measurement_attempts
+                if item.attempt_id == measurement_uuid
+            )
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.commit_succeeded",
+                operation_id=token.operation_id,
+                measurement_uuid=measurement_uuid,
+                logical_channel=channel,
+                physical_port=physical_port,
+                attempt_number=attempt.attempt_number,
+                status="success",
+            )
+            if is_extra_candidate:
+                self._record_support(
+                    SupportEventCategory.MEASUREMENT,
+                    "measurement.extra_candidate_confirmed",
+                    operation_id=token.operation_id,
+                    measurement_uuid=measurement_uuid,
+                    assignment_id=self.database_run_context.run.assignment_id,
+                    run_id=self.database_run_context.run.run_id,
+                    physical_port=physical_port,
+                    status="success",
+                )
+            self._last_measurement_acknowledgement = (
+                MeasurementPersistenceAcknowledgement(
+                    operation_id=token.operation_id,
+                    measurement_uuid=token.measurement_uuid,
+                    run_id=self.database_run_context.run.run_id,
+                    logical_channel=int(channel),
+                    physical_port=int(physical_port),
+                    attempt_number=int(attempt.attempt_number),
+                )
+            )
+        else:
+            attempt = self._accept_measurement_record(record)
         self._record_support(
             SupportEventCategory.MEASUREMENT,
             "measurement.written",
@@ -5370,6 +7468,13 @@ class MainWindow(QMainWindow):
             second_loss_db=second_loss,
             measurement_classification=configuration.classification.value,
             attempt_id=attempt.attempt_id,
+            operation_id=token.operation_id,
+            measurement_uuid=str(token.measurement_uuid),
+            database_run_id=(
+                self.database_run_context.run.run_id
+                if self.database_run_context is not None
+                else None
+            ),
             attempt_number=attempt.attempt_number,
             replaces_attempt_id=attempt.replaces_attempt_id,
             retest=attempt.attempt_number > 1,
@@ -5516,8 +7621,61 @@ class MainWindow(QMainWindow):
         self._apply_run_mode_controls()
 
     def hardware_reading_ready(self, channel, _physical_port, loss_1310, loss_1550):
+        """Present a legacy reading that has no atomic worker token."""
+        self._present_hardware_reading(
+            channel,
+            _physical_port,
+            loss_1310,
+            loss_1550,
+            token=None,
+        )
+
+    def hardware_provisional_measurement_ready(self, provisional):
+        """Present one reading and its worker identity as an atomic payload."""
+        if not isinstance(provisional, ProvisionalMeasurement):
+            return
+        token = provisional.token
+        if (
+            token.logical_channel <= 0
+            or token.physical_port <= 0
+        ):
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.token_mismatch",
+                level=SupportLogLevel.ERROR,
+                operation_id=token.operation_id,
+                logical_channel=token.logical_channel,
+                physical_port=token.physical_port,
+                reason="invalid_provisional_identity",
+                status="error",
+            )
+            return
+        self._database_persistence_payload = (
+            provisional if self.database_workflow is not None else None
+        )
+        self._database_write_request_in_flight = False
+        self._present_hardware_reading(
+            token.logical_channel,
+            token.physical_port,
+            provisional.first_loss_db,
+            provisional.second_loss_db,
+            token=token,
+        )
+
+    def _present_hardware_reading(
+        self,
+        channel,
+        _physical_port,
+        loss_1310,
+        loss_1550,
+        *,
+        token=None,
+    ):
         wavelengths = self.measurement_configuration.opm_wavelengths_nm
         try:
+            self.database_pending_measurement = None
+            self.hardware_pending_token = token
+            self._last_measurement_acknowledgement = None
             self.hardware_session.set_pending_reading(
                 channel,
                 _physical_port,
@@ -5605,7 +7763,9 @@ class MainWindow(QMainWindow):
         self.demo_1550_label.setText("%d nm: %.4f dB" % (wavelengths[1], loss_1550))
         self.continue_hardware_button.setEnabled(not self.live_write_mode_enabled)
         self.write_hardware_button.setEnabled(validation.valid)
-        self.change_hardware_channel_button.setEnabled(True)
+        self.change_hardware_channel_button.setEnabled(
+            not self.hardware_session.extra_port_active
+        )
         self.hardware_live_indicator.setVisible(self.live_write_mode_enabled)
         if validation.valid:
             self.demo_channel_label.setText(
@@ -5678,15 +7838,11 @@ class MainWindow(QMainWindow):
         ):
             return None
 
-        planned_count = self.hardware_configured_channel_count
-        if planned_count is None or int(planned_count) < 1:
-            return None
         try:
             part_context = self._front_panel_channel_context_for_active_run()
         except ValueError:
             return None
-        if part_context["front_panel_channel_count"] > int(planned_count):
-            return None
+        planned_count = part_context["front_panel_channel_count"]
         accepted_channels = {
             int(record.channel) for record in self.run_data.measurements
         }
@@ -5826,7 +7982,7 @@ class MainWindow(QMainWindow):
                 result.get("designed_channel_count"),
             ),
             configured_channel_count=part_context.get(
-                "configured_physical_channel_count"
+                "scpi_configured_channel_count"
             ),
             part_number=part_context.get("part_number", ""),
             status="completed",
@@ -5899,10 +8055,99 @@ class MainWindow(QMainWindow):
             "part_number": details.value,
             "model": details.model,
             "front_panel_channel_count": details.front_panel_channel_count,
-            "configured_physical_channel_count": configured_count,
+            "scpi_configured_channel_count": configured_count,
         }
 
+    def _reconcile_database_completion(self):
+        """Return persisted planned channels missing at worker completion.
+
+        The worker cannot see the database transaction.  Refreshing here is
+        the final defense against marking a run complete from a UI-side
+        progress counter or an incomplete in-memory projection.
+        """
+        if self.database_workflow is None or self.database_run_context is None:
+            return ()
+        if self._active_extra_only:
+            return ()
+        try:
+            context = self.database_workflow.refresh(
+                self.database_run_context.run.run_id
+            )
+            self._apply_database_run_context(context, update_setup=False)
+        except Exception as error:
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "run.completion_reconciliation",
+                level=SupportLogLevel.ERROR,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
+            return None
+        planned = self._status_planned_channels()
+        if not planned:
+            return None
+        persisted = {
+            int(record.channel)
+            for record in self.database_run_context.snapshot.measurements
+        }
+        missing = tuple(channel for channel in planned if channel not in persisted)
+        self._record_support(
+            SupportEventCategory.MEASUREMENT,
+            "run.completion_reconciliation",
+            run_id=self.database_run_context.run.run_id,
+            planned_channel_count=len(planned),
+            persisted_channel_count=len(persisted),
+            missing_channels=list(missing),
+            status="success" if not missing else "blocked",
+        )
+        return missing
+
     def hardware_completed(self):
+        missing = self._reconcile_database_completion()
+        if missing is None or missing:
+            missing_text = (
+                ", ".join(str(channel) for channel in (missing or ()))
+                or "unknown"
+            )
+            self._run_terminal_status = COMPLETION_INCOMPLETE
+            self._run_completion_reason = (
+                "Completion was blocked because persisted coverage could not be "
+                "verified. Missing planned channels: %s." % missing_text
+            )
+            self._run_completed_at_utc = utc_now()
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "run.completion_blocked",
+                missing_channels=list(missing or ()),
+                reason=self._run_completion_reason,
+                status="blocked",
+            )
+            self.finish_switch_test_session()
+            self.hardware_live_indicator.setVisible(False)
+            self.continue_hardware_button.setEnabled(False)
+            self.write_hardware_button.setEnabled(False)
+            self.change_hardware_channel_button.setEnabled(False)
+            self._finish_extra_port_ui()
+            self.stop_hardware_button.setEnabled(False)
+            self.retest_button.setEnabled(True)
+            self.active_run_reference_snapshot = None
+            self._set_run_purpose_editable(False)
+            self.refresh_run_status(include_composite=False)
+            self.statusBar().showMessage(
+                "Run remains open because persisted coverage is incomplete."
+            )
+            QMessageBox.warning(
+                self,
+                "Run completion blocked",
+                "Light Workbench did not mark this run complete because the "
+                "database does not contain every planned channel.\n\n"
+                "Missing channels: %s\n\n"
+                "The run remains available for retesting."
+                % missing_text,
+            )
+            return
+        self._finish_database_run("complete")
         self._run_terminal_status = COMPLETION_COMPLETE
         self._run_completion_reason = "Every planned channel has an accepted reading."
         self._run_completed_at_utc = utc_now()
@@ -5915,6 +8160,7 @@ class MainWindow(QMainWindow):
                 else ""
             ),
             measurement_count=(len(self.run_data.measurements) if self.run_data else 0),
+            station_number=self._station_number_value(),
             status="success",
         )
         self.finish_switch_test_session()
@@ -5922,14 +8168,22 @@ class MainWindow(QMainWindow):
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
         self.change_hardware_channel_button.setEnabled(False)
+        self._finish_extra_port_ui()
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(True)
         self.active_run_reference_snapshot = None
+        self._set_run_purpose_editable(False)
         self.refresh_run_status(include_composite=False)
-        self.statusBar().showMessage("Hardware run complete. CSV and JSON are saved.")
-        self._schedule_post_run_replacement_offer()
+        self.statusBar().showMessage(
+            "Hardware run complete. Readings are saved in SQL Server."
+            if self.database_workflow is not None
+            else "Hardware run complete. CSV and JSON are saved."
+        )
+        if not self._active_extra_only:
+            self._schedule_post_run_replacement_offer()
 
     def hardware_stopped(self):
+        self._finish_database_run("stopped")
         self._run_terminal_status = COMPLETION_INCOMPLETE
         self._run_completion_reason = "The run was manually stopped before completion."
         self._run_completed_at_utc = utc_now()
@@ -5942,6 +8196,7 @@ class MainWindow(QMainWindow):
                 else ""
             ),
             measurement_count=(len(self.run_data.measurements) if self.run_data else 0),
+            station_number=self._station_number_value(),
             status="stopped",
         )
         self.finish_switch_test_session()
@@ -5949,13 +8204,16 @@ class MainWindow(QMainWindow):
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
         self.change_hardware_channel_button.setEnabled(False)
+        self._finish_extra_port_ui()
         self.stop_hardware_button.setEnabled(False)
         self.retest_button.setEnabled(bool(self.run_data and self.run_data.measurements))
         self.active_run_reference_snapshot = None
+        self._set_run_purpose_editable(False)
         self.refresh_run_status(include_composite=False)
         self.statusBar().showMessage("Hardware run stopped. Completed readings remain visible.")
 
     def hardware_failed(self, message):
+        self._finish_database_run("failed")
         self._run_terminal_status = COMPLETION_INTERRUPTED
         self._run_completion_reason = str(message or "Hardware run failed.")
         self._run_completed_at_utc = utc_now()
@@ -5970,6 +8228,7 @@ class MainWindow(QMainWindow):
             ),
             error_message=message,
             measurement_count=(len(self.run_data.measurements) if self.run_data else 0),
+            station_number=self._station_number_value(),
             status="error",
         )
         self.finish_switch_test_session()
@@ -5977,10 +8236,54 @@ class MainWindow(QMainWindow):
         self.continue_hardware_button.setEnabled(False)
         self.write_hardware_button.setEnabled(False)
         self.change_hardware_channel_button.setEnabled(False)
+        self._finish_extra_port_ui()
         self.stop_hardware_button.setEnabled(False)
         self.active_run_reference_snapshot = None
+        self._set_run_purpose_editable(False)
         self.refresh_run_status(include_composite=False)
         QMessageBox.critical(self, "Hardware run stopped", message)
+
+    def _finish_extra_port_ui(self):
+        self.write_hardware_button.set_title("Write IL")
+        for button in (
+            self.retry_extra_port_button,
+            self.no_more_extra_ports_button,
+            self.stop_extra_testing_button,
+        ):
+            button.setEnabled(False)
+            button.setVisible(False)
+
+    def _finish_database_run(self, completion_status):
+        if self.database_workflow is None or self.database_run_context is None:
+            return True
+        if self.database_run_context.run.completion_status != "in_progress":
+            return True
+        try:
+            context = self.database_workflow.finish_run(
+                self.database_run_context.run.run_id,
+                completion_status,
+            )
+            self._apply_database_run_context(context, update_setup=False)
+            return True
+        except Exception as error:
+            self._record_support(
+                SupportEventCategory.CONNECTION,
+                "database.run_finish_failed",
+                level=SupportLogLevel.ERROR,
+                completion_status=completion_status,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="error",
+            )
+            QMessageBox.critical(
+                self,
+                "Database status update failed",
+                "The readings already accepted by SQL Server remain saved, but "
+                "the run could not be marked %s:\n%s\n\nContact engineering "
+                "support before starting another run."
+                % (completion_status, error),
+            )
+            return False
 
     def stop_hardware(self):
         if self.hardware_controller.is_active:
@@ -6008,6 +8311,34 @@ class MainWindow(QMainWindow):
         self.hardware_live_indicator.setVisible(False)
         self.change_hardware_channel_button.setEnabled(False)
         self.set_open_csv_available(True)
+
+    def hardware_measurement_token_ready(self, token):
+        """Retain the worker identity for the currently displayed sample."""
+        if not isinstance(token, PendingMeasurementToken):
+            return
+        if self.hardware_pending_reading is None:
+            return
+        channel, physical_port, _first_loss, _second_loss = (
+            self.hardware_pending_reading
+        )
+        if (
+            token.logical_channel != int(channel)
+            or token.physical_port != int(physical_port)
+        ):
+            self._record_support(
+                SupportEventCategory.MEASUREMENT,
+                "measurement.token_mismatch",
+                level=SupportLogLevel.ERROR,
+                operation_id=token.operation_id,
+                logical_channel=token.logical_channel,
+                physical_port=token.physical_port,
+                displayed_channel=channel,
+                displayed_physical_port=physical_port,
+                status="error",
+            )
+            self.hardware_pending_token = None
+            return
+        self.hardware_pending_token = token
 
     def set_open_csv_available(self, available):
         """Keep CSV loading disabled while a hardware run owns the UI."""
@@ -6118,6 +8449,8 @@ class MainWindow(QMainWindow):
         """Adapt the active run to the existing COC source boundary."""
         if self.run_data is None:
             return None
+        if self.database_run_context is not None:
+            return self._database_coc_source(self.database_run_context)
         try:
             run_number = int(self.run_data.metadata.get("Run number", 1))
         except (TypeError, ValueError):
@@ -6131,7 +8464,7 @@ class MainWindow(QMainWindow):
         )
 
     def _status_composite_candidate(self):
-        """Find a validated existing-run combination without changing data."""
+        """Build the latest-measurement projection across compatible run history."""
         if self.run_data is None or not self.run_data.measurements:
             return None, ()
         front_panel_count = self._status_front_panel_count()
@@ -6142,26 +8475,37 @@ class MainWindow(QMainWindow):
             return None, ()
         try:
             options = self._coc_run_options()
-        except (OSError, ValueError, TypeError, KeyError):
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError):
             return None, ()
+        others = []
         for option in options:
             other = option.source
-            if other.source_path.resolve() == current.source_path.resolve():
-                continue
-            for base, supplemental in ((current, other), (other, current)):
-                try:
-                    result = self.coc_workflow.prepare(
-                        base,
-                        front_panel_count,
-                        supplemental_run=supplemental,
-                        completed_replacements=self.completed_replacements,
-                        designated_spares=self.designated_spares,
-                    )
-                except (OSError, ValueError, TypeError, KeyError):
-                    continue
-                if result.eligible:
-                    return result, (int(other.run_number),)
-        return None, ()
+            same_source = (
+                bool(other.source_identifier and current.source_identifier)
+                and other.source_identifier == current.source_identifier
+            ) or (
+                other.source_path is not None
+                and current.source_path is not None
+                and other.source_path.resolve() == current.source_path.resolve()
+            )
+            if not same_source:
+                others.append(other)
+        try:
+            result = self.coc_workflow.prepare(
+                current,
+                front_panel_count,
+                source_runs=tuple(others),
+                completed_replacements=self.completed_replacements,
+                designated_spares=self.designated_spares,
+            )
+        except (OSError, ValueError, TypeError, KeyError):
+            return None, ()
+        other_numbers = tuple(
+            number
+            for number in result.considered_run_numbers
+            if number != current.run_number
+        )
+        return result, other_numbers
 
     def _calculate_run_status(self, *, include_composite=True):
         if self.run_data is None:
@@ -6188,11 +8532,18 @@ class MainWindow(QMainWindow):
             front_panel_channel_count=self._status_front_panel_count(),
             replacement_analysis=self.replacement_analysis,
             composite_result=composite_result,
+            effective_result=composite_result,
+            effective_run_numbers=(
+                tuple(composite_result.source_run_numbers)
+                if composite_result is not None
+                else ()
+            ),
             compatible_run_numbers=compatible_runs,
             completion_reason=self._run_completion_reason
             or str(persisted_status.get("completion_reason") or ""),
             completed_at_utc=self._run_completed_at_utc
             or str(persisted_status.get("completed_at_utc") or ""),
+            extra_only=self._active_extra_only or self._loaded_run_is_extra_only(),
             legacy=legacy,
         )
 
@@ -6230,6 +8581,23 @@ class MainWindow(QMainWindow):
         result_text = "Result: %s" % assessment.result_label
         self.completion_status_label.setText(completion_text)
         self.result_status_label.setText(result_text)
+        if self.database_run_context is not None:
+            purpose_value = self.database_run_context.run.run_purpose
+        else:
+            purpose_value = (
+                self.run_data.metadata.get("run_purpose")
+                if self.run_data is not None
+                else None
+            )
+        purpose_text = (
+            run_purpose_label(purpose_value)
+            if purpose_value
+            else "Not recorded"
+        )
+        self.run_purpose_status_label.setText("Purpose: %s" % purpose_text)
+        self.run_purpose_status_label.setToolTip(
+            "Purpose recorded with this run: %s" % purpose_text
+        )
         tooltip = assessment.tooltip()
         self.completion_status_label.setToolTip(tooltip)
         self.result_status_label.setToolTip(tooltip)
@@ -6244,9 +8612,9 @@ class MainWindow(QMainWindow):
             RESULT_PASS: ("#72d19a", "#28704a"),
             RESULT_PASS_OPTIMIZATION: ("#ffd166", "#946200"),
             RESULT_PASS_REVIEW: ("#ffd166", "#946200"),
-            RESULT_COMPOSITE: ("#ffd166", "#946200"),
+            RESULT_COMPOSITE: ("#72d19a", "#28704a"),
             RESULT_SUPPLEMENTAL: ("#8ecbff", "#14649a"),
-            RESULT_FAIL_RECOVERABLE: ("#ff8f86", "#a33b2f"),
+            RESULT_FAIL_RECOVERABLE: ("#ffd166", "#946200"),
             RESULT_FAIL_UNRECOVERABLE: ("#ff8f86", "#a33b2f"),
             RESULT_REVIEW: ("#ff8f86", "#a33b2f"),
         }
@@ -6269,6 +8637,7 @@ class MainWindow(QMainWindow):
             assessment.completed_channel_count,
             assessment.planned_channel_count,
             assessment.compatible_run_numbers,
+            purpose_text,
         )
         if key != self._last_run_status_key and self.run_data is not None:
             self._record_support(
@@ -6278,6 +8647,11 @@ class MainWindow(QMainWindow):
                 result_status=assessment.result_status,
                 planned_channel_count=assessment.planned_channel_count,
                 completed_channel_count=assessment.completed_channel_count,
+                run_purpose=(
+                    str(purpose_value or "")
+                    if purpose_value
+                    else "not_recorded"
+                ),
                 compatible_run_numbers=",".join(
                     str(value) for value in assessment.compatible_run_numbers
                 ),
@@ -6319,14 +8693,39 @@ class MainWindow(QMainWindow):
         """Refresh the replacement-analysis status shown beside the table."""
         has_measurements = bool(self.run_data and self.run_data.measurements)
         limits_available = self._uses_approved_limit_profile()
+        run_is_voided = bool(
+            self.database_run_context
+            and self.database_run_context.run.analysis_status == "excluded"
+        )
         self.replacement_analysis_button.setEnabled(
-            has_measurements and limits_available
+            has_measurements and limits_available and not run_is_voided
         )
         self.record_replacements_button.setEnabled(
-            has_measurements or self.unit_directory is not None
+            has_measurements
+            or self.unit_directory is not None
+            or self.database_run_context is not None
+        )
+        projection = (
+            self.database_run_context.effective_projection
+            if self.database_run_context is not None
+            else None
+        )
+        self.start_verification_run_button.setEnabled(
+            bool(
+                projection
+                and not self.hardware_run_active
+                and self.database_run_context.assignment.removed_at_utc is None
+                and any(
+                    item.state == "awaiting_retest"
+                    for item in projection.verifications
+                )
+            )
         )
         self.copy_replacement_notes_button.setEnabled(
             bool(self.completed_replacements)
+        )
+        self.replacement_analysis_history_button.setEnabled(
+            bool(self.database_run_context and self.replacement_analysis_history)
         )
         if self.completed_replacements:
             lines = [
@@ -6356,13 +8755,61 @@ class MainWindow(QMainWindow):
                 "Not available: no limit profile is configured for this model and mode."
             )
             return
+        if run_is_voided:
+            self.replacement_summary_label.setText(
+                "Voided - excluded from analysis. Saved analyses remain available in history."
+            )
+            return
+
+        if self.replacement_analysis_stale:
+            self.replacement_summary_label.setText(
+                "Saved analysis is stale because newer accepted measurements exist. "
+                "Run Analyze Replacements again to create a current snapshot."
+            )
+            return
 
         result = self.replacement_analysis
         if not result:
             self.replacement_summary_label.setText("Not run")
             return
+        iterative_status = result.get("analysis_result_status") or result.get(
+            "result_status"
+        )
+        if iterative_status:
+            verification = result.get("replacement_verification", ())
+            awaiting = sum(
+                1
+                for item in verification
+                if item.get("verification_state") == "awaiting_retest"
+            )
+            verified = sum(
+                1
+                for item in verification
+                if str(item.get("verification_state") or "").startswith("verified_")
+            )
+            source_runs = result.get("source_runs", ())
+            summary_lines = [
+                "Optimization: %s" % str(iterative_status).replace("_", " ").title(),
+                "Source runs: %s"
+                % (", ".join(str(value) for value in source_runs) or "current run"),
+                "Valid effective channels: %d"
+                % int(result.get("valid_effective_channel_count", 0)),
+                "Verified replacements: %d" % verified,
+                "Replacements awaiting retest: %d" % awaiting,
+                "Remaining measured extras: %d"
+                % len(result.get("remaining_extras", ())),
+            ]
+            if result.get("review_issues"):
+                summary_lines.append(
+                    "Review: " + "; ".join(result.get("review_issues", ()))
+                )
+            self.replacement_summary_label.setText("\n".join(summary_lines))
+            # Continue below so recommendation details remain visible.
         if not result.get("applicable"):
-            self.replacement_summary_label.setText(result.get("status", "Not applicable"))
+            if not iterative_status:
+                self.replacement_summary_label.setText(
+                    result.get("status", "Not applicable")
+                )
             return
 
         recommendations = result.get("recommendations", [])
@@ -6385,7 +8832,7 @@ class MainWindow(QMainWindow):
             for spare in result.get("bottom_spares", [])
             if spare.get("too_good")
         ]
-        lines = [
+        lines = ([self.replacement_summary_label.text()] if iterative_status else []) + [
             "Required replacements: %d" % len(required_recommendations),
             "Optional Replacements: %d" % len(optional_recommendations),
             "Recommended designated spares: %s"
@@ -6427,9 +8874,9 @@ class MainWindow(QMainWindow):
                 "Enter a main board serial or part number before recording replacements.",
             )
             return
-        if self.unit_directory is None:
+        if self.unit_directory is None and self.database_run_context is None:
             self.ensure_unit_state_for_current_fields()
-        if self.unit_directory is None:
+        if self.unit_directory is None and self.database_run_context is None:
             QMessageBox.information(
                 self,
                 "Unit information required",
@@ -6440,6 +8887,9 @@ class MainWindow(QMainWindow):
         recommendations = []
         if self.replacement_analysis:
             recommendations = self.replacement_analysis.get("recommendations", [])
+        if self.database_run_context is not None:
+            self._show_database_replacements(recommendations)
+            return
         dialog = CompletedReplacementDialog(
             self.completed_replacements,
             recommendations,
@@ -6461,10 +8911,14 @@ class MainWindow(QMainWindow):
             return
 
         self.replacement_history = list(dialog.history)
-        self.completed_replacements = effective_replacements(self.replacement_history)
+        self.completed_replacements = effective_replacements(
+            self.replacement_history
+        )
         self.designated_spares = list(dialog.designated_spares)
         if self.run_data is not None:
-            self.run_data.completed_replacements = list(self.completed_replacements)
+            self.run_data.completed_replacements = list(
+                self.completed_replacements
+            )
         self.persist_unit_record()
         self._record_support(
             SupportEventCategory.OPERATOR,
@@ -6489,6 +8943,245 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "Completed replacements and designated spares saved to the unit record."
         )
+
+    def start_replacement_verification_run(self):
+        """Review and start a normal selected-channel run for recorded swaps."""
+        context = self.database_run_context
+        projection = context.effective_projection if context is not None else None
+        if context is None or projection is None:
+            QMessageBox.information(
+                self,
+                "Verification run unavailable",
+                "Load a database-backed run with recorded replacements first.",
+            )
+            return
+        if context.assignment.removed_at_utc is not None:
+            QMessageBox.information(
+                self,
+                "Historical switch assignment",
+                "This run belongs to a removed switch assignment. Its replacement "
+                "history is available for review, but it cannot start a verification run.",
+            )
+            return
+        pending = tuple(
+            item
+            for item in projection.verifications
+            if item.state == "awaiting_retest"
+        )
+        if not pending:
+            QMessageBox.information(
+                self,
+                "No verification required",
+                "All current replacement mappings already have valid retest evidence.",
+            )
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Start Replacement Verification Run")
+        dialog.resize(720, 360)
+        layout = QVBoxLayout(dialog)
+        message = QLabel(
+            "Only the logical channels for replacements awaiting verification "
+            "will be tested. Light Workbench will not change or verify switch mappings."
+        )
+        message.setWordWrap(True)
+        layout.addWidget(message)
+        table = QTableWidget(len(pending), 4)
+        table.setHorizontalHeaderLabels(
+            ["Logical", "Previous Port", "Current Port", "Source Analysis"]
+        )
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.horizontalHeader().setStretchLastSection(True)
+        for row, item in enumerate(pending):
+            replacement = item.replacement
+            values = (
+                replacement.logical_channel,
+                replacement.previous_physical_port,
+                replacement.replacement_physical_port,
+                replacement.source_recommendation_id or "Manual",
+            )
+            for column, value in enumerate(values):
+                table.setItem(row, column, QTableWidgetItem(str(value)))
+        layout.addWidget(table)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Start Run")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        channels = sorted(
+            {item.replacement.logical_channel for item in pending}
+        )
+        self.hardware_channel_mode.setCurrentText(ChannelMode.SPECIFIC_CHANNELS.value)
+        self.hardware_channel_ranges.setText(", ".join(str(value) for value in channels))
+        try:
+            next_run_number = 1 + max(
+                item.run.run_number
+                for item in self.database_workflow.list_for_unit(
+                    context.unit.unit_id
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            next_run_number = context.run.run_number + 1
+        self.hardware_run_number.setValue(next_run_number)
+        self._set_run_purpose_editable(True)
+        self._set_station_editable(True)
+        self._record_support(
+            SupportEventCategory.WORKFLOW,
+            "replacement.verification_run_started",
+            assignment_id=context.run.assignment_id,
+            source_run_id=context.run.run_id,
+            logical_channels=",".join(str(value) for value in channels),
+            status="requested",
+        )
+        self.start_hardware()
+
+    def _show_database_replacements(self, recommendations):
+        """Open the SQL-aware editor without converting audit rows to legacy events."""
+        context = self.database_run_context
+        if context is None or self.database_workflow is None:
+            return
+        analysis = self.replacement_analysis or {}
+        recommended_spares = [
+            item["physical_port"] for item in analysis.get("bottom_spares", [])
+        ]
+        measured_ports = [
+            item.physical_port
+            for item in context.routing.confirmed_extra_ports
+        ]
+        model = self.database_workflow.replacements.build_editor_model(
+            snapshot=context.routing,
+            related_run_id=context.run.run_id,
+            recommendations=recommendations,
+            recommended_spares=recommended_spares,
+            measured_physical_ports=measured_ports,
+            default_operator=self.hardware_tested_by.text().strip(),
+            unit_label=context.unit.main_board_serial,
+            switch_label="%s %s"
+            % (context.switch.switch_model, context.switch.switch_serial),
+        )
+        dialog = DatabaseReplacementDialog(model, self)
+        while True:
+            if dialog.exec_() != QDialog.Accepted:
+                return
+            try:
+                self._persist_database_routing_changes(dialog)
+            except Exception as error:
+                validation = (
+                    error
+                    if isinstance(error, ReplacementBatchValidationError)
+                    else None
+                )
+                self._record_support(
+                    SupportEventCategory.PERSISTENCE,
+                    "replacement.database_save_failed",
+                    level=SupportLogLevel.ERROR,
+                    assignment_id=context.assignment.assignment_id,
+                    run_number=context.run.run_number,
+                    unit_serial=context.unit.main_board_serial,
+                    status="error",
+                    committed=False,
+                    reason_code=(validation.code if validation else "persistence_error"),
+                    logical_channel=(validation.logical_channel if validation else None),
+                    expected_previous_physical_port=(
+                        validation.expected_previous_physical_port
+                        if validation
+                        else None
+                    ),
+                    actual_previous_physical_port=(
+                        validation.actual_previous_physical_port
+                        if validation
+                        else None
+                    ),
+                    proposed_replacement_physical_port=(
+                        validation.proposed_replacement_physical_port
+                        if validation
+                        else None
+                    ),
+                    details="%s: %s" % (type(error).__name__, error),
+                )
+                message = (
+                    "No replacement or spare changes were committed.\n\n%s"
+                    % (validation.operator_message if validation else error)
+                )
+                message += "\n\nThe queued records were retained so you can correct and retry."
+                QMessageBox.critical(self, "Could not save replacement records", message)
+                # Re-enter the same dialog with its authoritative pending model
+                # intact.  The user may correct the queue or cancel.
+                dialog.setResult(QDialog.Rejected)
+                continue
+            break
+        try:
+            refreshed = self.database_workflow.refresh(context.run.run_id)
+            self._apply_database_run_context(refreshed, update_setup=False)
+        except Exception as error:
+            self._record_support(
+                SupportEventCategory.PERSISTENCE,
+                "replacement.database_reload_failed",
+                level=SupportLogLevel.ERROR,
+                run_number=context.run.run_number,
+                unit_serial=context.unit.main_board_serial,
+                status="error",
+                details="Routing changes committed, but reload failed: %s: %s"
+                % (type(error).__name__, error),
+            )
+            QMessageBox.critical(
+                self,
+                "Replacement records saved; refresh failed",
+                "The atomic database save completed, but Light Workbench could not "
+                "reload the authoritative routing state:\n%s\n\nClose this run and "
+                "reconnect before making another routing change." % error,
+            )
+            return
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "replacement.records_saved",
+            run_number=context.run.run_number,
+            unit_serial=context.unit.main_board_serial,
+            measurement_count=len(dialog.replacement_requests),
+            details=(
+                "%d replacement(s), %d spare designation(s), and %d spare "
+                "undesignation(s) appended."
+                % (
+                    len(dialog.replacement_requests),
+                    len(dialog.spares_to_designate),
+                    len(dialog.spares_to_undesignate),
+                )
+            ),
+            status="success",
+        )
+        self.statusBar().showMessage(
+            "Replacement history and designated spares reloaded from SQL Server."
+        )
+
+    def _persist_database_routing_changes(self, dialog):
+        """Atomically append explicitly approved SQL routing documentation."""
+        context = self.database_run_context
+        if context is None or self.database_workflow is None:
+            raise ValueError("No database-backed unit is loaded")
+        plan = self.database_workflow.replacements.plan_changes(
+            assignment_id=context.assignment.assignment_id,
+            related_run_id=context.run.run_id,
+            replacements=dialog.replacement_requests,
+            spares_to_designate=dialog.spares_to_designate,
+            spares_to_undesignate=dialog.spares_to_undesignate,
+            spare_operator=dialog.spare_operator,
+        )
+        mapping_summary = "; ".join(
+            "%d:%d>%d" % item for item in plan.request_summary
+        )[:500]
+        self._record_support(
+            SupportEventCategory.PERSISTENCE,
+            "replacement.database_save_plan",
+            assignment_id=context.assignment.assignment_id,
+            run_id=context.run.run_id,
+            replacement_request_count=len(plan.replacement_specs),
+            spare_designation_count=len(dialog.spares_to_designate),
+            spare_undesignation_count=len(dialog.spares_to_undesignate),
+            replacement_save_plan=mapping_summary,
+            status="validated",
+        )
+        self.database_workflow.replacements.apply_plan(plan)
 
     def copy_replacement_notes(self):
         """Copy completed physical-port swaps for pasting into Unit Editor."""
@@ -6544,8 +9237,162 @@ class MainWindow(QMainWindow):
             % len(self.run_data.measurements)
         )
 
+    def show_replacement_analysis_history(self):
+        """Show immutable database analysis snapshots and recommendation usage."""
+        if self.database_run_context is None or not self.replacement_analysis_history:
+            QMessageBox.information(
+                self,
+                "Replacement analysis history",
+                "No database replacement analyses have been saved for this run.",
+            )
+            return
+
+        used_recommendation_ids = {
+            item.source_recommendation_id
+            for item in self.database_run_context.routing.replacement_history
+            if item.source_recommendation_id is not None
+        }
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Replacement Analysis History")
+        dialog.setMinimumSize(900, 500)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(
+            QLabel(
+                "Saved analyses are append-only. A recommendation is marked used "
+                "only when a replacement record explicitly references it."
+            )
+        )
+        history_table = QTableWidget(0, 12, dialog)
+        history_table.setHorizontalHeaderLabels(
+            [
+                "Analysis ID",
+                "Analyzed UTC",
+                "Operator",
+                "Result",
+                "Assignment",
+                "Context run",
+                "Source runs",
+                "State",
+                "Source measurement",
+                "Recommendations",
+                "Used",
+                "Verification",
+            ]
+        )
+        history_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        history_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        history_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        recommendation_table = QTableWidget(0, 6, dialog)
+        recommendation_table.setHorizontalHeaderLabels(
+            [
+                "Logical",
+                "Current port",
+                "Proposed port",
+                "Category",
+                "Improvement dB",
+                "Used",
+            ]
+        )
+        recommendation_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        recommendation_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+
+        def set_recommendations(row):
+            recommendation_table.setRowCount(0)
+            if row < 0 or row >= len(self.replacement_analysis_history):
+                return
+            analysis = self.replacement_analysis_history[row]
+            for item in analysis.recommendations:
+                recommendation_row = recommendation_table.rowCount()
+                recommendation_table.insertRow(recommendation_row)
+                values = (
+                    item.logical_channel,
+                    item.current_physical_port,
+                    item.candidate_physical_port,
+                    item.category,
+                    "%.4f" % float(item.improvement_db),
+                    "Yes" if item.recommendation_id in used_recommendation_ids else "No",
+                )
+                for column, value in enumerate(values):
+                    recommendation_table.setItem(
+                        recommendation_row, column, QTableWidgetItem(str(value))
+                    )
+
+        newest_analysis_id = max(
+            item.record.analysis_id for item in self.replacement_analysis_history
+        )
+        current_fingerprint = (
+            self.database_run_context.effective_projection.fingerprint
+            if self.database_run_context.effective_projection is not None
+            else self.database_run_context.snapshot.measurement_high_watermark_id
+        )
+        for analysis in self.replacement_analysis_history:
+            row = history_table.rowCount()
+            history_table.insertRow(row)
+            used = sum(
+                item.recommendation_id in used_recommendation_ids
+                for item in analysis.recommendations
+            )
+            snapshot = analysis.record.result_details.get("source_snapshot", {})
+            source_runs = snapshot.get("included_run_numbers", ())
+            verification_rows = analysis.record.result_details.get(
+                "replacement_verification", ()
+            )
+            awaiting = sum(
+                item.get("verification_state") == "awaiting_retest"
+                for item in verification_rows
+            )
+            verified = sum(
+                str(item.get("verification_state", "")).startswith("verified_")
+                for item in verification_rows
+            )
+            verification_text = (
+                "%d verified; %d awaiting" % (verified, awaiting)
+                if verification_rows
+                else "None"
+            )
+            is_current = analysis.is_current(current_fingerprint)
+            state = (
+                "Current"
+                if is_current and analysis.record.analysis_id == newest_analysis_id
+                else "Stale"
+                if analysis.record.analysis_id == newest_analysis_id
+                else "Historical"
+            )
+            values = (
+                analysis.record.analysis_id,
+                analysis.record.analyzed_at_utc.isoformat(),
+                analysis.record.analyzed_by,
+                analysis.record.result_status,
+                snapshot.get("assignment_id", "Legacy"),
+                snapshot.get("context_run_number", self.database_run_context.run.run_number),
+                ", ".join(str(value) for value in source_runs) or "Legacy",
+                state,
+                analysis.record.source_measurement_high_watermark_id,
+                len(analysis.recommendations),
+                "%d/%d" % (used, len(analysis.recommendations)),
+                verification_text,
+            )
+            for column, value in enumerate(values):
+                history_table.setItem(row, column, QTableWidgetItem(str(value)))
+
+        history_table.itemSelectionChanged.connect(
+            lambda: set_recommendations(history_table.currentRow())
+        )
+        layout.addWidget(history_table, 1)
+        layout.addWidget(QLabel("Recommendations in selected analysis:"))
+        layout.addWidget(recommendation_table, 1)
+        if history_table.rowCount():
+            history_table.selectRow(0)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec_()
+
     def show_replacement_analysis(self, launch_source="manual_button"):
         """Calculate advisory replacements using the existing operator workflow."""
+        if not isinstance(launch_source, str) or not launch_source.strip():
+            launch_source = "manual_button"
         if self.run_data is None or not self.run_data.measurements:
             self._record_support(
                 SupportEventCategory.WORKFLOW,
@@ -6594,7 +9441,7 @@ class MainWindow(QMainWindow):
             measurement_count=len(self.run_data.measurements),
             front_panel_channel_count=part_context["front_panel_channel_count"],
             configured_channel_count=part_context[
-                "configured_physical_channel_count"
+                "scpi_configured_channel_count"
             ],
             part_number=part_context["part_number"],
             status="started",
@@ -6614,16 +9461,18 @@ class MainWindow(QMainWindow):
         )
         layout.addRow("Front-panel channels:", front_panel_count_label)
 
-        minimum_improvement = QDoubleSpinBox()
-        minimum_improvement.setRange(0.0, 100.0)
-        minimum_improvement.setDecimals(4)
-        minimum_improvement.setSingleStep(0.01)
-        minimum_improvement.setValue(0.05)
-        minimum_improvement.setSuffix(" dB")
-        minimum_improvement.setToolTip(
-            "A spare must improve the target channel's worse wavelength by at least this amount."
+        minimum_improvement_text_label = QLabel("Minimum worthwhile improvement:")
+        minimum_improvement_label = QLabel(
+            "%.4f dB (Admin Config)"
+            % self.active_limit_profile.minimum_replacement_improvement_db
         )
-        layout.addRow("Minimum worthwhile improvement:", minimum_improvement)
+        minimum_improvement_label.setToolTip(
+            "This threshold is controlled by the administrator for the active model and wavelength mode."
+        )
+        layout.addRow(minimum_improvement_text_label, minimum_improvement_label)
+        is_150_profile = self.active_limit_profile.model == "OSX-150"
+        minimum_improvement_text_label.setVisible(is_150_profile)
+        minimum_improvement_label.setVisible(is_150_profile)
 
         bottom_spare_count = QSpinBox()
         bottom_spare_count.setRange(0, 20)
@@ -6635,13 +9484,24 @@ class MainWindow(QMainWindow):
         layout.addRow("Measured extra ports:", detected_extras_label)
 
         def update_detected_extras():
-            ports = [
-                record.physical_port
-                if record.physical_port is not None
-                else record.channel
-                for record in self.run_data.measurements
-                if record.channel > part_context["front_panel_channel_count"]
-            ]
+            projection = (
+                self.database_run_context.effective_projection
+                if self.database_run_context is not None
+                else None
+            )
+            if projection is not None:
+                ports = [
+                    item.record.physical_port or item.record.logical_channel
+                    for item in projection.extra_measurements
+                ]
+            else:
+                ports = [
+                    record.physical_port
+                    if record.physical_port is not None
+                    else record.channel
+                    for record in self.run_data.measurements
+                    if record.channel > part_context["front_panel_channel_count"]
+                ]
             detected_extras_label.setText(
                 ", ".join(str(port) for port in sorted(ports))
                 if ports
@@ -6674,40 +9534,183 @@ class MainWindow(QMainWindow):
                 )
                 return
             try:
-                production_records = [
-                    record
-                    for record in self.run_data.measurements
-                    if record.channel
-                    <= part_context["front_panel_channel_count"]
-                ]
-                readings = [
-                    ReplacementReading(
-                        record.physical_port
-                        if record.physical_port is not None
-                        else record.channel,
-                        record.ordered_losses[0],
-                        record.ordered_losses[1],
+                if self.database_run_context is not None:
+                    projection = self.database_workflow.build_replacement_projection(
+                        self.database_run_context.run.run_id,
+                        self.active_limit_profile,
+                        bottom_spare_count=bottom_spare_count.value(),
                     )
-                    for record in self.run_data.measurements
-                    if record.channel
-                    > part_context["front_panel_channel_count"]
-                ]
-                result = analyze_replacements(
-                    production_records,
-                    readings,
-                    part_context["front_panel_channel_count"],
-                    self.active_limit_profile.warning_above_db
-                    if self.active_limit_profile.warning_enabled
-                    else self.active_limit_profile.fail_above_db,
-                    minimum_improvement.value(),
-                    bottom_spare_count.value(),
-                    fail_limit=self.active_limit_profile.fail_above_db,
-                    model=self.active_limit_profile.model,
-                    too_good_limit=self.active_limit_profile.too_good_below_db,
-                    wavelengths=self.run_data.opm_wavelengths_nm,
-                )
+                    result = projection.to_result_dict()
+                    self._record_support(
+                        SupportEventCategory.WORKFLOW,
+                        "replacement.effective_projection_built",
+                        assignment_id=projection.context_run.assignment_id,
+                        context_run_id=projection.context_run.run_id,
+                        included_run_count=len(projection.included_runs),
+                        excluded_run_count=len(projection.excluded_runs),
+                        effective_measurement_count=len(projection.front_measurements),
+                        extra_measurement_count=len(projection.extra_measurements),
+                        state_fingerprint=projection.fingerprint,
+                        status="success",
+                    )
+                    for source_run in projection.included_runs:
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            "replacement.source_run_included",
+                            context_run_id=projection.context_run.run_id,
+                            source_run_id=source_run.run_id,
+                            source_run_number=source_run.run_number,
+                            status="included",
+                        )
+                    for source_run, reason in projection.excluded_runs:
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            "replacement.source_run_excluded",
+                            context_run_id=projection.context_run.run_id,
+                            source_run_id=source_run.run_id,
+                            source_run_number=source_run.run_number,
+                            reason=reason,
+                            status="excluded",
+                        )
+                    for verification in projection.verifications:
+                        event_name = (
+                            "replacement.awaiting_verification"
+                            if verification.state == "awaiting_retest"
+                            else "replacement.verified"
+                        )
+                        self._record_support(
+                            SupportEventCategory.WORKFLOW,
+                            event_name,
+                            replacement_id=verification.replacement.replacement_id,
+                            logical_channel=verification.replacement.logical_channel,
+                            physical_port=verification.replacement.replacement_physical_port,
+                            verification_state=verification.state,
+                            status="evaluated",
+                        )
+                else:
+                    production_records = [
+                        record
+                        for record in self.run_data.measurements
+                        if record.channel
+                        <= part_context["front_panel_channel_count"]
+                    ]
+                    readings = [
+                        ReplacementReading(
+                            record.physical_port
+                            if record.physical_port is not None
+                            else record.channel,
+                            record.ordered_losses[0],
+                            record.ordered_losses[1],
+                        )
+                        for record in self.run_data.measurements
+                        if record.channel
+                        > part_context["front_panel_channel_count"]
+                    ]
+                    result = analyze_replacements(
+                        production_records,
+                        readings,
+                        part_context["front_panel_channel_count"],
+                        self.active_limit_profile.warning_above_db
+                        if self.active_limit_profile.warning_enabled
+                        else self.active_limit_profile.fail_above_db,
+                        self.active_limit_profile.minimum_replacement_improvement_db,
+                        bottom_spare_count.value(),
+                        fail_limit=self.active_limit_profile.fail_above_db,
+                        model=self.active_limit_profile.model,
+                        too_good_limit=self.active_limit_profile.too_good_below_db,
+                        wavelengths=self.run_data.opm_wavelengths_nm,
+                    )
                 self._record_replacement_analysis_result(result, launch_source)
-                self.apply_replacement_analysis(result)
+                self._record_support(
+                    SupportEventCategory.WORKFLOW,
+                    "replacement.iterative_analysis_completed",
+                    result_status=(
+                        result.get("analysis_result_status")
+                        or result.get("result_status")
+                        or result.get("status")
+                    ),
+                    recommendation_count=len(result.get("recommendations", ())),
+                    source_run_count=len(result.get("source_runs", ())),
+                    status="success",
+                )
+                if self.database_run_context is not None:
+                    try:
+                        run = self.database_run_context.run
+                        criteria = dict(self.run_data.criteria_snapshot or {})
+                        criteria["replacement_analysis"] = {
+                            "warning_limit_db": result.get("warning_limit_db"),
+                            "optimization_limit_db": result.get("optimization_limit_db"),
+                            "fail_limit_db": result.get("fail_limit_db"),
+                            "too_good_below_db": result.get("too_good_below_db"),
+                            "minimum_improvement_db": result.get(
+                                "minimum_improvement_db"
+                            ),
+                            "bottom_spare_count": result.get("bottom_spare_count"),
+                        }
+                        persisted = self.database_workflow.replacement_analyses.save_result(
+                            run_id=run.run_id,
+                            result=result,
+                            analyzed_by=(
+                                str(run.tested_by or self.hardware_tested_by.text()).strip()
+                                or "Unknown"
+                            ),
+                            application_version=APP_VERSION,
+                            front_panel_channel_count=part_context[
+                                "front_panel_channel_count"
+                            ],
+                            wavelengths=tuple(self.run_data.opm_wavelengths_nm),
+                            criteria=criteria,
+                            measurement_count=int(
+                                result.get(
+                                    "valid_effective_channel_count",
+                                    len(self.run_data.measurements),
+                                )
+                            ),
+                        )
+                        refreshed = self.database_workflow.refresh(run.run_id)
+                        self._apply_database_run_context(
+                            refreshed, update_setup=False
+                        )
+                        self.statusBar().showMessage(
+                            "Replacement analysis saved to SQL Server."
+                        )
+                        self._record_support(
+                            SupportEventCategory.PERSISTENCE,
+                            "replacement.analysis_saved",
+                            analysis_id=persisted.record.analysis_id,
+                            run_id=run.run_id,
+                            result_status=persisted.record.result_status,
+                            recommendation_count=len(persisted.recommendations),
+                            status="success",
+                        )
+                    except (OSError, RuntimeError, TypeError, ValueError) as error:
+                        self._record_support(
+                            SupportEventCategory.PERSISTENCE,
+                            "replacement.analysis_persistence_failed",
+                            level=SupportLogLevel.ERROR,
+                            launch_source=launch_source,
+                            run_number=self.database_run_context.run.run_number,
+                            error_type=type(error).__name__,
+                            error_message=str(error),
+                            status="error",
+                        )
+                        QMessageBox.critical(
+                            self,
+                            "Could not save replacement analysis",
+                            "The analysis was calculated but was not published because "
+                            "its database snapshot could not be saved:\n%s\n\n"
+                            "The run remains available. Reopen Analyze Replacements "
+                            "and retry after correcting the database issue." % error,
+                        )
+                        self.statusBar().showMessage(
+                            "Replacement analysis was not saved; the run remains available."
+                        )
+                        return
+                else:
+                    self.apply_replacement_analysis(result)
+                self.show_iterative_analysis_result(
+                    self.replacement_analysis or result
+                )
                 return
             except (OSError, ValueError, TypeError) as error:
                 self._record_support(
@@ -6724,9 +9727,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(dialog, "Invalid replacement analysis", str(error))
 
     def apply_replacement_analysis(self, result):
-        """Display calculated recommendations without storing derived results."""
+        """Publish a calculated analysis for the active file-backed run."""
         if self.run_data is None:
             return
+        self.replacement_analysis_stale = False
         self.replacement_analysis = result
         self.run_data.replacement_analysis = result
         self.refresh_replacement_summary()
@@ -6734,6 +9738,171 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "Replacement analysis calculated for the current run."
         )
+
+    def show_iterative_analysis_result(self, result):
+        """Present effective-state summary, advice, verification, and provenance."""
+        if not result:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Replacement Analysis Result")
+        dialog.resize(980, 760)
+        root = QVBoxLayout(dialog)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+
+        source_snapshot = result.get("source_snapshot", {})
+        status = result.get("analysis_result_status") or result.get(
+            "result_status", result.get("status", "Unknown")
+        )
+        verification_rows = tuple(result.get("replacement_verification", ()))
+        verified_count = sum(
+            str(item.get("verification_state", "")).startswith("verified_")
+            for item in verification_rows
+        )
+        awaiting_count = sum(
+            item.get("verification_state") == "awaiting_retest"
+            for item in verification_rows
+        )
+        recommendation_rows = tuple(result.get("recommendations", ()))
+        required_count = sum(
+            str(item.get("category", "")).lower() == "required"
+            for item in recommendation_rows
+        )
+        optional_count = len(recommendation_rows) - required_count
+        composite, _compatible = self._status_composite_candidate()
+        coc_text = "Unavailable"
+        if composite is not None:
+            if composite.eligible:
+                coc_text = "Available"
+            else:
+                reasons = []
+                if composite.missing_channels:
+                    reasons.append("missing channels")
+                if composite.failures:
+                    reasons.append("failing measurements")
+                if composite.invalid_readings or composite.validation_issues:
+                    reasons.append("validation review")
+                coc_text = "Blocked - " + ", ".join(reasons or ["requirements not met"])
+        summary = QGroupBox("Summary")
+        summary_layout = QFormLayout(summary)
+        summary_values = (
+            ("Context run", source_snapshot.get("context_run_number", "Current")),
+            ("Source runs", ", ".join(str(value) for value in result.get("source_runs", ())) or "Current"),
+            ("Assignment", source_snapshot.get("assignment_id", "Not recorded")),
+            ("Switch serial", source_snapshot.get("switch_serial") or "Not recorded"),
+            ("Front-panel channels", result.get("designed_channel_count", "Not recorded")),
+            ("Valid effective channels", result.get("valid_effective_channel_count", 0)),
+            ("Missing channels", ", ".join(str(value) for value in result.get("missing_channels", ())) or "None"),
+            ("Verified replacements", verified_count),
+            ("Replacements awaiting retest", awaiting_count),
+            ("Remaining measured extras", len(result.get("remaining_extras", ()))),
+            ("Required recommendations", required_count),
+            ("Optional recommendations", optional_count),
+            ("Optimization", str(status).replace("_", " ").title()),
+            ("COC", coc_text),
+            ("Snapshot state", "Stale" if self.replacement_analysis_stale else "Current"),
+        )
+        for label, value in summary_values:
+            summary_layout.addRow(label + ":", QLabel(str(value)))
+        layout.addWidget(summary)
+
+        recommendations = QGroupBox("Recommendations")
+        recommendation_layout = QVBoxLayout(recommendations)
+        recommendation_table = QTableWidget(len(recommendation_rows), 7)
+        recommendation_table.setHorizontalHeaderLabels(
+            ["Logical", "Current", "Proposed", "Category", "Improvement", "Current IL", "Candidate IL"]
+        )
+        recommendation_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        for row, item in enumerate(recommendation_rows):
+            current_il = "%.4f / %.4f" % (
+                item["current_loss_1310_db"], item["current_loss_1550_db"]
+            )
+            candidate_il = "%.4f / %.4f" % (
+                item["candidate_loss_1310_db"], item["candidate_loss_1550_db"]
+            )
+            values = (
+                item["logical_channel"], item["current_physical_port"],
+                item["candidate_physical_port"], item.get("category", "optional"),
+                "%.4f" % item["improvement_db"], current_il, candidate_il,
+            )
+            provenance = (
+                "Current: Run %s, Measurement %s; Candidate: Run %s, Measurement %s"
+                % (
+                    item.get("current_source_run_number", "?"),
+                    item.get("current_measurement_id", "?"),
+                    item.get("candidate_source_run_number", "?"),
+                    item.get("candidate_measurement_id", "?"),
+                )
+            )
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+                cell.setToolTip(provenance)
+                recommendation_table.setItem(row, column, cell)
+        recommendation_table.horizontalHeader().setStretchLastSection(True)
+        recommendation_layout.addWidget(recommendation_table)
+        layout.addWidget(recommendations)
+
+        verification = QGroupBox("Replacement verification")
+        verification_layout = QVBoxLayout(verification)
+        verification_table = QTableWidget(len(verification_rows), 8)
+        verification_table.setHorizontalHeaderLabels(
+            [
+                "Logical", "Previous", "Current", "Replaced UTC", "Operator",
+                "Retest run", "State", "Current IL",
+            ]
+        )
+        verification_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        for row, item in enumerate(verification_rows):
+            retest = item.get("retest") or {}
+            current_il = (
+                "%.4f / %.4f"
+                % (
+                    float(retest["wavelength_1_il_db"]),
+                    float(retest["wavelength_2_il_db"]),
+                )
+                if retest
+                else "-"
+            )
+            values = (
+                item.get("logical_channel"), item.get("previous_physical_port"),
+                item.get("current_physical_port"), item.get("replaced_at_utc"),
+                item.get("replaced_by"), item.get("retest_run_number", "-"),
+                str(item.get("verification_state", "")).replace("_", " ").title(),
+                current_il,
+            )
+            for column, value in enumerate(values):
+                verification_table.setItem(row, column, QTableWidgetItem(str(value)))
+        verification_table.horizontalHeader().setStretchLastSection(True)
+        verification_layout.addWidget(verification_table)
+        layout.addWidget(verification)
+
+        provenance_box = QGroupBox("Source provenance")
+        provenance_layout = QVBoxLayout(provenance_box)
+        provenance_lines = [
+            "Included runs: %s" % (", ".join(str(value) for value in result.get("source_runs", ())) or "Current run"),
+            "Selected measurements: %s" % (", ".join(str(value) for value in source_snapshot.get("selected_measurement_ids", ())) or "Not recorded"),
+            "Effective measurements used: %s" % result.get("valid_effective_channel_count", 0),
+            "Attempts superseded by newer measurements: %s" % source_snapshot.get("superseded_attempt_count", 0),
+            "State fingerprint: %s" % source_snapshot.get("state_fingerprint_sha256", "Legacy analysis"),
+        ]
+        for item in result.get("excluded_runs", ()):
+            provenance_lines.append(
+                "Excluded Run %s: %s" % (item.get("run_number"), item.get("reason"))
+            )
+        provenance_label = QLabel("\n".join(provenance_lines))
+        provenance_label.setWordWrap(True)
+        provenance_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        provenance_layout.addWidget(provenance_label)
+        layout.addWidget(provenance_box)
+
+        scroll.setWidget(content)
+        root.addWidget(scroll)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        root.addWidget(buttons)
+        dialog.exec_()
 
     def refresh_coc_controls(self):
         """Enable current-run and persisted-unit outputs independently."""
@@ -6745,7 +9914,10 @@ class MainWindow(QMainWindow):
         persisted_readings = bool(
             current_readings
             and self.run_data is not None
-            and Path(self.run_data.source_path).is_file()
+            and (
+                self.database_run_context is not None
+                or Path(self.run_data.source_path).is_file()
+            )
         )
         if self.unit_directory is not None:
             try:
@@ -6780,6 +9952,10 @@ class MainWindow(QMainWindow):
             persisted_readings
             and coc_profile_supported
             and self._uses_approved_limit_profile()
+            and not (
+                self.database_run_context is not None
+                and self.database_run_context.run.analysis_status == "excluded"
+            )
         )
         self.write_coc_button.setEnabled(coc_eligible)
         self.copy_raw_data_button.setEnabled(current_readings)
@@ -6802,6 +9978,8 @@ class MainWindow(QMainWindow):
         if self.run_data is None:
             return
         self.refresh_run_status(include_composite=False)
+        if self.database_run_context is not None:
+            return
         if self.run_recorder is None:
             self.run_recorder = self.run_repository.recorder_from_existing(
                 self.run_data.source_path,
@@ -6831,6 +10009,23 @@ class MainWindow(QMainWindow):
 
     def _coc_run_options(self):
         """Return persisted runs for the active unit, including legacy context."""
+        if self.database_run_context is not None and self.database_workflow is not None:
+            current = self.database_run_context.run
+            contexts = tuple(
+                context
+                for context in self.database_workflow.list_for_assignment(
+                    current.assignment_id
+                )
+                if context.run.analysis_status not in {"excluded", "superseded"}
+                and context.run.superseded_by_run_id is None
+                and (context.run.run_started_at_utc, context.run.run_id)
+                <= (current.run_started_at_utc, current.run_id)
+            )
+            return [
+                CocRunOption(self._database_coc_source(context))
+                for context in contexts
+                if context.snapshot.measurements
+            ]
         options = []
         if self.unit_directory is not None:
             options = self.coc_workflow.available_runs(self.unit_directory)
@@ -6854,7 +10049,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _resolve_coc_front_panel_count(part_number):
-        """Resolve a COC count from the selected base run's part number."""
+        """Resolve a COC count from the selected context run's part number."""
         return parse_osx_part_number(part_number).front_panel_channel_count
 
     def _confirm_coc_optimization(self, result):
@@ -7017,9 +10212,35 @@ class MainWindow(QMainWindow):
             for failure in result.failures[:50]
         ]
         issues = list(result.invalid_readings) + list(result.validation_issues)
+        channel_sources = "; ".join(
+            "channel=%d,run=%d,measurement=%s,attempt=%d,physical_port=%d,"
+            "written_at=%s"
+            % (
+                channel.record.channel,
+                channel.source_run_number,
+                channel.measurement_id
+                if channel.measurement_id is not None
+                else "legacy",
+                channel.attempt_number,
+                channel.physical_port,
+                channel.written_at_utc.isoformat()
+                if channel.written_at_utc is not None
+                else "legacy",
+            )
+            for channel in result.channels[:48]
+        )
         return {
             "run_number": result.base_run_number,
-            "supplemental_run_number": result.supplemental_run_number,
+            "source_run_numbers": ",".join(
+                str(value) for value in result.source_run_numbers
+            ),
+            "considered_run_numbers": ",".join(
+                str(value) for value in result.considered_run_numbers
+            ),
+            "excluded_run_numbers": ",".join(
+                str(item.get("run_number")) for item in result.excluded_runs
+            ),
+            "channel_sources": self._bounded_coc_text(channel_sources),
             "front_panel_channel_count": result.front_panel_channel_count,
             "template_capacity": result.template_capacity,
             "measurement_count": len(result.measurements),
@@ -7119,7 +10340,7 @@ class MainWindow(QMainWindow):
             return self.coc_workflow.prepare(
                 base,
                 count,
-                supplemental_run=supplemental,
+                source_runs=supplemental,
                 completed_replacements=self.completed_replacements,
                 designated_spares=self.designated_spares,
             )
@@ -7137,7 +10358,11 @@ class MainWindow(QMainWindow):
                 options,
                 prepare,
                 front_panel_count_resolver=self._resolve_coc_front_panel_count,
-                current_run_path=self.run_data.source_path,
+                current_run_path=(
+                    None
+                    if self.database_run_context is not None
+                    else self.run_data.source_path
+                ),
                 validation_blocked_callback=record_blocked_validation,
                 parent=self,
             )
@@ -7289,6 +10514,11 @@ class MainWindow(QMainWindow):
 
         template = None
         output_path = None
+        destination = (
+            base_run.source_path.parent
+            if base_run.source_path is not None
+            else None
+        )
         try:
             template = self._select_coc_template(
                 result.front_panel_channel_count,
@@ -7311,23 +10541,48 @@ class MainWindow(QMainWindow):
                     **self._coc_result_log_fields(result),
                 )
                 return
+            if destination is None:
+                selected_destination = QFileDialog.getExistingDirectory(
+                    self,
+                    "Select COC output folder",
+                    str(DEFAULT_RUN_ROOT),
+                )
+                if not selected_destination:
+                    self._record_coc_terminal(
+                        attempt_id,
+                        "canceled",
+                        "destination_selection",
+                        reason_code="operator_canceled_destination_selection",
+                        operator_choice="cancel",
+                        **self._coc_result_log_fields(result),
+                    )
+                    return
+                destination = Path(selected_destination)
             self._record_coc_event(
                 "export.coc_started",
                 attempt_id,
                 run_number=result.base_run_number,
                 measurement_count=len(result.measurements),
-                destination=base_run.source_path.parent,
+                destination=destination,
                 template_path=template,
                 front_panel_channel_count=result.front_panel_channel_count,
                 template_capacity=result.template_capacity,
-                supplemental_run_number=result.supplemental_run_number,
+                source_run_numbers=",".join(
+                    str(value) for value in result.source_run_numbers
+                ),
+                considered_run_numbers=",".join(
+                    str(value) for value in result.considered_run_numbers
+                ),
+                excluded_run_numbers=",".join(
+                    str(item.get("run_number")) for item in result.excluded_runs
+                ),
                 switch_model=coc_model,
                 wavelength_mode=coc_mode,
                 status="started",
             )
             output_path = self.coc_exporter.export(
                 template,
-                base_run.source_path.parent,
+                destination,
                 list(result.measurements),
                 part_number,
                 serial,
@@ -7346,15 +10601,19 @@ class MainWindow(QMainWindow):
                 )
                 for channel in result.overridden_channels
             ) or "None"
-            source_runs = ["Run %d" % result.base_run_number]
-            if result.supplemental_run_number is not None:
-                source_runs.append("Run %d" % result.supplemental_run_number)
+            source_runs = [
+                "Run %d" % run_number
+                for run_number in result.source_run_numbers
+            ] or ["Run %d" % result.base_run_number]
             metadata = dict(base_run.metadata)
             metadata.update(
                 {
                     "Part number": part_number,
                     "Main board serial": self.coc_exporter.normalise_serial(serial),
                     "Tested by": tested_by,
+                    "Station number": str(
+                        base_run.metadata.get("Station number") or "Not recorded"
+                    ),
                     "COC output file": output_path.name,
                     "COC output path": str(output_path),
                     "COC exported at": datetime.now().isoformat(timespec="seconds"),
@@ -7367,17 +10626,22 @@ class MainWindow(QMainWindow):
                     else "",
                     "COC front panel channels": str(result.front_panel_channel_count),
                     "COC base run": "Run %d" % result.base_run_number,
-                    "COC supplemental run": (
-                        "Run %d" % result.supplemental_run_number
-                        if result.supplemental_run_number is not None
-                        else "None"
+                    "COC base run purpose": str(
+                        base_run.run_purpose
+                        or base_run.metadata.get("run_purpose")
+                        or "not recorded"
                     ),
                     "COC source runs": ", ".join(source_runs),
-                    "COC supplemental overrides": override_text,
+                    "COC retest/replacement overrides": override_text,
                 }
             )
-            self._persist_coc_export_metadata(base_run, metadata)
-            if Path(self.run_data.source_path).resolve() == base_run.source_path.resolve():
+            if base_run.source_path is not None:
+                self._persist_coc_export_metadata(base_run, metadata)
+            if (
+                base_run.source_path is not None
+                and Path(self.run_data.source_path).resolve()
+                == base_run.source_path.resolve()
+            ):
                 self.run_data.metadata.update(metadata)
                 if self.run_recorder is not None:
                     self.run_recorder.metadata = dict(metadata)
@@ -7385,7 +10649,7 @@ class MainWindow(QMainWindow):
             error_fields = {
                 "error_type": type(error).__name__,
                 "error_message": str(error),
-                "destination": output_path or base_run.source_path.parent,
+                "destination": output_path or destination or "",
                 "template_path": template or "",
                 "status": "error",
                 **self._coc_result_log_fields(result),
@@ -7511,13 +10775,13 @@ class MainWindow(QMainWindow):
                 "%d nm" % wavelength for wavelength in assessment.fail_wavelengths
             )
         elif assessment.is_too_good and assessment.is_optimization:
-            status = "Too good to verify; optimization warning"
+            status = "Too good, please verify; optimization warning"
         elif assessment.is_too_good:
-            status = "Too good to verify"
+            status = "Too good, please verify"
         elif assessment.is_optimization:
             status = "Optimization warning"
         else:
-            status = "Within configured limit"
+            status = "Pass"
         self.reading_status_label.setText(status)
         self._refresh_reading_status_color()
 
@@ -7657,10 +10921,10 @@ class MainWindow(QMainWindow):
                         "FAIL at " + ", ".join("%d nm" % wavelength for wavelength in assessment.fail_wavelengths)
                     )
                 if assessment.is_too_good:
-                    status_parts.append("Too good to verify")
+                    status_parts.append("Too good, please verify")
                 if assessment.is_optimization and not assessment.is_fail:
                     status_parts.append("Optimization warning")
-                status = "; ".join(status_parts) if status_parts else "Within configured limit"
+                status = "; ".join(status_parts) if status_parts else "Pass"
             values = [
                 str(record.channel),
                 "%.4f" % record.loss_for(wavelengths[0]),
@@ -7881,9 +11145,24 @@ def main():
         finally:
             support_logger.shutdown()
             set_support_logging_service(None)
+    from infrastructure.database.runtime import build_database_primary_workflow
+
+    try:
+        database_workflow = build_database_primary_workflow(support_logger)
+    except DatabaseConnectionError as error:
+        QMessageBox.critical(
+            None,
+            "Database configuration unavailable",
+            "%s\n\nCorrect the database configuration and restart Light Workbench."
+            % error.operator_message,
+        )
+        support_logger.shutdown()
+        set_support_logging_service(None)
+        return 1
     window = MainWindow(
         sys.argv[1] if len(sys.argv) > 1 else None,
         support_logger=support_logger,
+        database_workflow=database_workflow,
     )
     window.showMaximized()
     try:

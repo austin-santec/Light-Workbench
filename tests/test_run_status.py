@@ -55,6 +55,31 @@ class RunStatusTests(unittest.TestCase):
         )
         self.assertEqual(status.completion_status, COMPLETION_COMPLETE)
         self.assertEqual(status.result_status, RESULT_PASS)
+        self.assertNotIn("COC creation is available.", status.tooltip())
+
+    def test_extra_candidate_is_not_required_for_front_panel_completion(self):
+        status = assess_run_status(
+            records([(1, 1.0, 1.1), (49, 0.4, 0.5)]),
+            planned_channels=(1,),
+            terminal_status=COMPLETION_COMPLETE,
+            profile=PROFILE,
+            front_panel_channel_count=1,
+        )
+        self.assertEqual(status.completion_status, COMPLETION_COMPLETE)
+        self.assertEqual(status.completed_channel_count, 1)
+        self.assertEqual(status.result_status, RESULT_PASS)
+
+    def test_extra_only_run_is_supplemental_and_does_not_require_front_panel_data(self):
+        status = assess_run_status(
+            records([(49, 1.0, 1.1), (50, 1.2, 1.3)]),
+            terminal_status=COMPLETION_COMPLETE,
+            profile=PROFILE,
+            front_panel_channel_count=48,
+            extra_only=True,
+        )
+        self.assertEqual(status.completion_status, COMPLETION_COMPLETE)
+        self.assertEqual(status.result_status, RESULT_SUPPLEMENTAL)
+        self.assertIn("not a standalone COC", status.detail)
 
     def test_optimization_and_failure_recovery_are_distinct(self):
         optimized = assess_run_status(
@@ -95,7 +120,7 @@ class RunStatusTests(unittest.TestCase):
         )
         self.assertEqual(unrecoverable.result_status, RESULT_FAIL_UNRECOVERABLE)
 
-    def test_partial_complete_run_is_supplemental_when_composite_is_valid(self):
+    def test_partial_complete_run_reports_composite_pass_when_composite_is_valid(self):
         class Composite:
             eligible = True
 
@@ -109,8 +134,55 @@ class RunStatusTests(unittest.TestCase):
             compatible_run_numbers=(2,),
         )
         self.assertEqual(status.completion_status, COMPLETION_COMPLETE)
-        self.assertEqual(status.result_status, RESULT_SUPPLEMENTAL)
+        self.assertEqual(status.result_status, RESULT_COMPOSITE)
         self.assertEqual(status.compatible_run_numbers, (2,))
+        self.assertIn("partial run", status.detail)
+        self.assertIn("Run 2", status.detail)
+        self.assertIn("COC creation is available.", status.tooltip())
+
+    def test_partial_run_reports_composite_pass_for_effective_multi_run_projection(self):
+        class EffectiveProjection:
+            invalid_readings = ()
+            validation_issues = ()
+            missing_channels = ()
+            failures = ()
+            optimization_channels = ()
+            optimization_recommendations = ()
+
+        status = assess_run_status(
+            records([(1, 1.0, 1.1)]),
+            planned_channels=(1,),
+            terminal_status=COMPLETION_COMPLETE,
+            profile=PROFILE,
+            front_panel_channel_count=2,
+            effective_result=EffectiveProjection(),
+            effective_run_numbers=(1, 2, 3),
+            compatible_run_numbers=(2, 3),
+        )
+        self.assertEqual(status.result_status, RESULT_COMPOSITE)
+        self.assertIn("Runs 1, 2, 3", status.detail)
+
+    def test_effective_projection_reports_measured_recovery_for_failures(self):
+        class EffectiveProjection:
+            invalid_readings = ()
+            validation_issues = ()
+            missing_channels = ()
+            failures = (object(),)
+            optimization_channels = ()
+            optimization_recommendations = ({"logical_channel": 1},)
+
+        status = assess_run_status(
+            records([(1, 2.6, 1.0)]),
+            planned_channels=(1,),
+            terminal_status=COMPLETION_COMPLETE,
+            profile=PROFILE,
+            front_panel_channel_count=1,
+            effective_result=EffectiveProjection(),
+            effective_run_numbers=(1,),
+        )
+
+        self.assertEqual(status.result_status, RESULT_FAIL_RECOVERABLE)
+        self.assertIn("possible recovery path", status.detail)
 
     def test_full_run_can_have_a_composite_pass(self):
         class Composite:

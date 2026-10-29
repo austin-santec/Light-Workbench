@@ -3,9 +3,10 @@
 import ipaddress
 import logging
 import re
+import threading
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from datetime import datetime, timezone
 
@@ -16,6 +17,8 @@ from hardware.visa_errors import (
     SwitchCommunicationError,
     classify_switch_visa_error,
 )
+from hardware.santec_cli import SantecCliProfile, SantecCliRouter
+from hardware.interfaces import LogicalChannelRouteResult
 
 
 SWITCH_SETTLING_TIME_SECONDS = 0.25
@@ -97,6 +100,7 @@ class SantecSwitchProfile:
     configured_channel_query: str = "CFG:SWT:END?"
     channel_command: str = "CLOSe %d"
     ip_address_query: str = ":SYSTem:COMMunicate:LAN:ADDRess?"
+    cli_profile: SantecCliProfile = field(default_factory=SantecCliProfile)
 
 
 class SwitchIpAddressError(RuntimeError):
@@ -245,6 +249,7 @@ class SantecOpticalSwitch:
         last_known_address: str = "",
         address_observer: Callable[[str], None] | None = None,
         trace_callback=None,
+        cli_router=None,
     ):
         self.resource_manager = None
         self.instrument = None
@@ -263,6 +268,8 @@ class SantecOpticalSwitch:
         self._last_failure = None
         self._trace_callbacks = []
         self._trace_metadata = {}
+        self._routing_lock = threading.RLock()
+        self._cli_router = cli_router
         if trace_callback is not None:
             self._trace_callbacks.append(trace_callback)
 
@@ -926,8 +933,8 @@ class SantecOpticalSwitch:
         except Exception as error:
             LOG.warning("Could not remember detected switch address: %s", error)
 
-    def current_channel(self, logical_channel: int | None = None) -> int:
-        """Return the physical port after a channel-routing command."""
+    def current_logical_channel(self, requested_logical_channel: int | None = None) -> int:
+        """Return the logical channel reported by ``CLOSe?``."""
         self._require_connection()
         command = self.profile.current_channel_query
         try:
@@ -935,15 +942,15 @@ class SantecOpticalSwitch:
         except pyvisa.errors.VisaIOError as error:
             raise self._communication_error(
                 error,
-                operation="querying the active physical port",
+                operation="querying the active logical channel",
                 command=command,
-                logical_channel=logical_channel,
+                logical_channel=requested_logical_channel,
             ) from error
         self._trace(
-            "switch_physical_port_query",
+            "switch_logical_channel_query",
             operation="query",
             command=command,
-            logical_channel=logical_channel,
+            requested_logical_channel=requested_logical_channel,
             raw_response=response,
             response_length=len(response),
             status="success",
@@ -952,7 +959,7 @@ class SantecOpticalSwitch:
             return int(response)
         except ValueError as error:
             raise RuntimeError(
-                "%s did not confirm the routed physical port. Command: %s. "
+                "%s did not report a valid active logical channel. Command: %s. "
                 "Response: %r"
                 % (self.model, command, response)
             ) from error
@@ -1026,53 +1033,88 @@ class SantecOpticalSwitch:
             )
         return self._configured_channel_count
 
-    def set_channel(self, channel: int) -> int:
-        """Select a logical channel and return its verified physical port."""
-        self._require_connection()
-        if channel < MIN_SWITCH_CHANNEL:
-            raise ValueError(
-                "Switch channel must be %d or greater." % MIN_SWITCH_CHANNEL
-            )
+    def set_channel(self, channel: int):
+        """Select a logical channel and confirm the logical route."""
+        with self._routing_lock:
+            self._require_connection()
+            if channel < MIN_SWITCH_CHANNEL:
+                raise ValueError(
+                    "Switch channel must be %d or greater." % MIN_SWITCH_CHANNEL
+                )
 
-        command = self.profile.channel_command % channel
-        started = time.perf_counter()
-        try:
-            self.instrument.write(command)
-        except pyvisa.errors.VisaIOError as error:
-            communication_error = self._communication_error(
-                error,
-                operation="routing logical channel %d" % channel,
-                command=command,
-                logical_channel=channel,
+            command = self.profile.channel_command % channel
+            started = time.perf_counter()
+            try:
+                self.instrument.write(command)
+            except pyvisa.errors.VisaIOError as error:
+                communication_error = self._communication_error(
+                    error,
+                    operation="routing logical channel %d" % channel,
+                    command=command,
+                    logical_channel=channel,
+                )
+                self._trace(
+                    "switch_route_failed",
+                    operation="write",
+                    command=command,
+                    logical_channel=channel,
+                    status="error",
+                    status_code=communication_error.classification.status_code,
+                    visa_status=communication_error.classification.status_name,
+                    error_category=communication_error.classification.category.value,
+                    disconnection_certainty=(
+                        communication_error.classification.disconnection_certainty
+                    ),
+                    error=str(error),
+                    elapsed_ms=(time.perf_counter() - started) * 1000.0,
+                )
+                raise communication_error from error
+            time.sleep(SWITCH_SETTLING_TIME_SECONDS)
+            reported_channel = self.current_logical_channel(
+                requested_logical_channel=channel
             )
+            result = LogicalChannelRouteResult(channel, reported_channel)
+            if not result.confirmed:
+                self._trace(
+                    "switch_route_confirmation_mismatch",
+                    operation="set_channel",
+                    command=command,
+                    requested_logical_channel=channel,
+                    reported_logical_channel=reported_channel,
+                    status="error",
+                    elapsed_ms=(time.perf_counter() - started) * 1000.0,
+                )
+                raise RuntimeError(
+                    "%s reported logical channel %d after logical channel %d was "
+                    "requested. The route was not confirmed."
+                    % (self.model, reported_channel, channel)
+                )
             self._trace(
-                "switch_route_failed",
-                operation="write",
+                "switch_route_completed",
+                operation="set_channel",
                 command=command,
-                logical_channel=channel,
-                status="error",
-                status_code=communication_error.classification.status_code,
-                visa_status=communication_error.classification.status_name,
-                error_category=communication_error.classification.category.value,
-                disconnection_certainty=(
-                    communication_error.classification.disconnection_certainty
-                ),
-                error=str(error),
+                requested_logical_channel=channel,
+                reported_logical_channel=reported_channel,
+                status="success",
                 elapsed_ms=(time.perf_counter() - started) * 1000.0,
             )
-            raise communication_error from error
-        time.sleep(SWITCH_SETTLING_TIME_SECONDS)
-        physical_port = self.current_channel(logical_channel=channel)
-        self._trace(
-            "switch_route_completed",
-            operation="set_channel",
-            command=command,
-            logical_channel=channel,
-            physical_port=physical_port,
-            status="success",
-            elapsed_ms=(time.perf_counter() - started) * 1000.0,
-        )
-        return physical_port
+            return result
+
+    def set_physical_port(self, physical_port: int, maximum_port: int = 64):
+        """Route one physical port through the isolated engineering CLI."""
+        with self._routing_lock:
+            self._require_connection()
+            network_address = self.get_ip_address()
+            router = self._cli_router
+            if router is None:
+                router = SantecCliRouter(
+                    self.profile.cli_profile,
+                    trace_callback=self._trace,
+                )
+            result = router.route(network_address, physical_port, maximum_port)
+            if result.permits_provisional_measurement or result.status.value == "unverified":
+                time.sleep(SWITCH_SETTLING_TIME_SECONDS)
+            return result
 
     def close(self) -> None:
         """Release both the instrument session and VISA resource manager."""
@@ -1096,6 +1138,7 @@ __all__ = [
     "SantecOpticalSwitch",
     "SantecSwitchProfile",
     "SantecSwitchProfileResolution",
+    "SantecCliProfile",
     "SANTEC_SWITCH_PROFILES",
     "SANTEC_OSX100_USB_PRODUCT_ID",
     "SANTEC_OSX150_USB_PRODUCT_ID",

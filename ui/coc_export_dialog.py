@@ -23,7 +23,7 @@ from domain.part_numbers import infer_front_panel_channel_count
 
 
 class CocExportDialog(QDialog):
-    """Collect explicit report scope and show its validation summary."""
+    """Choose report context and show the automatic history projection."""
 
     def __init__(
         self,
@@ -55,9 +55,9 @@ class CocExportDialog(QDialog):
 
         layout = QVBoxLayout(self)
         explanation = QLabel(
-            "The front-panel channel count is read from the selected base run's "
-            "part number. Choose the persisted runs that will supply the final "
-            "COC readings."
+            "The front-panel channel count is read from the selected run's part "
+            "number. All compatible persisted run history is considered "
+            "automatically; the newest valid measurement for each channel wins."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -72,13 +72,15 @@ class CocExportDialog(QDialog):
         self.base_run_combo = QComboBox()
         for option in self.run_options:
             self.base_run_combo.addItem(option.label, option.source)
-        form.addRow("Base run:", self.base_run_combo)
+        form.addRow("Context run:", self.base_run_combo)
 
         self.use_supplemental_checkbox = QCheckBox("Use replacement/retest run")
-        form.addRow("", self.use_supplemental_checkbox)
         self.supplemental_run_combo = QComboBox()
         self.supplemental_run_combo.setEnabled(False)
-        form.addRow("Replacement/retest run:", self.supplemental_run_combo)
+        # Retain these objects as a compatibility surface for older callers,
+        # but do not expose a manual supplemental-run picker to operators.
+        self.use_supplemental_checkbox.setVisible(False)
+        self.supplemental_run_combo.setVisible(False)
         layout.addLayout(form)
 
         summary_label = QLabel("Preparation summary")
@@ -122,6 +124,19 @@ class CocExportDialog(QDialog):
             return None
         return self.supplemental_run_combo.currentData()
 
+    @property
+    def source_runs(self) -> tuple[CocSourceRun, ...]:
+        """Return every persisted source available to the automatic projection."""
+        return tuple(option.source for option in self.run_options)
+
+    def _other_source_runs(self, base: CocSourceRun) -> tuple[CocSourceRun, ...]:
+        return tuple(
+            source
+            for source in self.source_runs
+            if source.source_identifier != base.source_identifier
+            or source.run_number != base.run_number
+        )
+
     def _choose_defaults(self):
         def coverage(option):
             try:
@@ -134,7 +149,11 @@ class CocExportDialog(QDialog):
                 if 1 <= record.channel <= count
             }
             try:
-                result = self.prepare_callback(option.source, count, None)
+                result = self.prepare_callback(
+                    option.source,
+                    count,
+                    self._other_source_runs(option.source),
+                )
                 compatible = not result.validation_issues
             except (TypeError, ValueError):
                 compatible = False
@@ -150,7 +169,7 @@ class CocExportDialog(QDialog):
         count = self.front_panel_count_resolver(part_number)
         if count is None:
             raise ValueError(
-                "The selected base run does not contain a valid OSX part number "
+                "The selected context run does not contain a valid OSX part number "
                 "with a three-digit front-panel channel field."
             )
         return int(count)
@@ -170,6 +189,7 @@ class CocExportDialog(QDialog):
                 preferred_index = index
             elif (
                 self.current_run_path is not None
+                and option.source.source_path is not None
                 and option.source.source_path.resolve() == self.current_run_path
             ):
                 preferred_index = index
@@ -214,7 +234,7 @@ class CocExportDialog(QDialog):
             result = self.prepare_callback(
                 base,
                 count,
-                self.supplemental_run,
+                self._other_source_runs(base),
             )
         except Exception as error:
             # Preparation is a deliberate UI boundary: show the error in the
@@ -257,17 +277,15 @@ def format_coc_summary(result: CocPreparationResult) -> str:
     lines = [
         "Required front-panel channels: %d" % result.front_panel_channel_count,
         "Completed channels available: %d" % len(result.channels),
-        "Base run: Run %d" % result.base_run_number,
-        "Replacement/retest run: %s"
-        % (
-            "Run %d" % result.supplemental_run_number
-            if result.supplemental_run_number is not None
-            else "Not used"
-        ),
+        "Context run: Run %d" % result.base_run_number,
+        "Compatible runs considered: %s"
+        % (", ".join("Run %d" % value for value in result.considered_run_numbers) or "None"),
+        "Runs supplying current channels: %s"
+        % (", ".join("Run %d" % value for value in result.source_run_numbers) or "None"),
         "Template: %d-channel maximum" % result.template_capacity,
     ]
     if result.overridden_channels:
-        lines.append("Supplemental overrides:")
+        lines.append("Retest/replacement overrides:")
         lines.extend(
             "  Channel %d = Run %d / Physical Port %d"
             % (
@@ -278,7 +296,14 @@ def format_coc_summary(result: CocPreparationResult) -> str:
             for channel in result.overridden_channels
         )
     else:
-        lines.append("Supplemental overrides: None")
+        lines.append("Retest/replacement overrides: None")
+    if result.excluded_runs:
+        lines.append("Excluded incompatible runs:")
+        lines.extend(
+            "  Run %s: %s"
+            % (item.get("run_number"), "; ".join(item.get("reasons", ())))
+            for item in result.excluded_runs
+        )
 
     lines.append(
         "Missing channels: %s"
