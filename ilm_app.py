@@ -2282,7 +2282,11 @@ class MainWindow(QMainWindow):
         self.replacement_summary_label = QLabel("Not run")
         self.replacement_summary_label.setWordWrap(True)
         self.replacement_analysis_button = QPushButton("Analyze Replacements")
-        self.replacement_analysis_button.clicked.connect(self.show_replacement_analysis)
+        self.replacement_analysis_button.clicked.connect(
+            lambda _checked=False: self.show_replacement_analysis(
+                launch_source="manual_button"
+            )
+        )
         self.replacement_analysis_button.setEnabled(False)
         self.replacement_analysis_history_button = QPushButton(
             "Analysis History..."
@@ -6266,6 +6270,19 @@ class MainWindow(QMainWindow):
                 and self.database_run_context is not None
                 else None
             ),
+            effective_channel_map=(
+                {
+                    item.logical_channel: item.effective_physical_port
+                    for item in self.database_run_context.routing.channel_map
+                }
+                if self.database_run_context is not None
+                else {
+                    int(item["logical_channel"]): int(item["replacement_port"])
+                    for item in self.completed_replacements
+                    if item.get("logical_channel") is not None
+                    and item.get("replacement_port") is not None
+                }
+            ),
         )
         try:
             self.hardware_controller.start(request)
@@ -7310,6 +7327,33 @@ class MainWindow(QMainWindow):
                 front_panel_count is not None
                 and int(channel) > int(front_panel_count)
             )
+            if not is_extra_candidate:
+                routing = self.database_workflow.replacements.load_assignment(
+                    self.database_run_context.run.assignment_id
+                )
+                current_map = {
+                    item.logical_channel: item.effective_physical_port
+                    for item in routing.channel_map
+                }
+                expected_physical_port = int(
+                    current_map.get(int(channel), int(channel))
+                )
+                if expected_physical_port != int(physical_port):
+                    self._record_support(
+                        SupportEventCategory.PERSISTENCE,
+                        "measurement.mapping_changed_before_commit",
+                        logical_channel=channel,
+                        routed_physical_port=physical_port,
+                        current_effective_physical_port=expected_physical_port,
+                        assignment_id=self.database_run_context.run.assignment_id,
+                        status="rejected",
+                    )
+                    raise RuntimeError(
+                        "The documented mapping for logical channel %d changed "
+                        "from physical port %d to %d before this reading was saved. "
+                        "Take a new reading using the current mapping."
+                        % (channel, physical_port, expected_physical_port)
+                    )
             if self.database_pending_measurement is None:
                 self.database_pending_measurement = (
                     self.database_workflow.measurements.prepare_measurement(
@@ -9347,6 +9391,8 @@ class MainWindow(QMainWindow):
 
     def show_replacement_analysis(self, launch_source="manual_button"):
         """Calculate advisory replacements using the existing operator workflow."""
+        if not isinstance(launch_source, str) or not launch_source.strip():
+            launch_source = "manual_button"
         if self.run_data is None or not self.run_data.measurements:
             self._record_support(
                 SupportEventCategory.WORKFLOW,
@@ -9649,10 +9695,15 @@ class MainWindow(QMainWindow):
                             status="error",
                         )
                         QMessageBox.critical(
-                            dialog,
+                            self,
                             "Could not save replacement analysis",
                             "The analysis was calculated but was not published because "
-                            "its database snapshot could not be saved:\n%s" % error,
+                            "its database snapshot could not be saved:\n%s\n\n"
+                            "The run remains available. Reopen Analyze Replacements "
+                            "and retry after correcting the database issue." % error,
+                        )
+                        self.statusBar().showMessage(
+                            "Replacement analysis was not saved; the run remains available."
                         )
                         return
                 else:

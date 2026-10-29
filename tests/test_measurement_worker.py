@@ -17,6 +17,7 @@ from domain.extra_ports import (
     PhysicalPortRouteStatus,
 )
 from hardware.session import OpticalTestSession
+from hardware.interfaces import LogicalChannelRouteResult
 from measurement_worker import MeasurementWorker
 
 
@@ -75,7 +76,7 @@ class FakeSwitch:
         self.connected = True
 
     def set_channel(self, channel):
-        return channel + 48
+        return LogicalChannelRouteResult(channel, channel)
 
     def close(self):
         self.closed = True
@@ -93,7 +94,7 @@ class ExtraPortSwitch(FakeSwitch):
 
     def set_channel(self, channel):
         self.logical_routes.append(channel)
-        return channel
+        return LogicalChannelRouteResult(channel, channel)
 
     def set_physical_port(self, physical_port, maximum_port):
         self.physical_routes.append((physical_port, maximum_port))
@@ -122,7 +123,7 @@ class ScpiExtraPortSwitch(ExtraPortSwitch):
         if channel in self.fail_once:
             self.fail_once.remove(channel)
             raise RuntimeError("SCPI route failed")
-        return self.physical_ports.get(channel, channel)
+        return LogicalChannelRouteResult(channel, channel)
 
 
 class CapturingSupportLogger:
@@ -321,6 +322,7 @@ class MeasurementWorkerTests(unittest.TestCase):
             switch,
             [1, 2],
             {1310: 0.72, 1550: 0.28},
+            effective_channel_map={1: 49, 2: 50},
         )
         readings = []
         progress = []
@@ -341,6 +343,26 @@ class MeasurementWorkerTests(unittest.TestCase):
         self.assertTrue(meter.closed)
         self.assertTrue(switch.connected)
         self.assertTrue(switch.closed)
+
+    def test_replaced_logical_channel_uses_documented_physical_map(self):
+        meter = FakePowerMeter()
+        switch = FakeSwitch()
+        worker = MeasurementWorker(
+            meter,
+            switch,
+            [10],
+            {1310: 0.72, 1550: 0.28},
+            effective_channel_map={10: 49},
+        )
+        readings = []
+        worker.operator_required.connect(lambda *_values: worker.continue_current())
+        worker.reading_ready.connect(
+            lambda *values: (readings.append(values), worker.write_current())
+        )
+
+        worker.run()
+
+        self.assertEqual(readings[0][:2], (10, 49))
 
     def test_extra_only_scpi_mode_starts_at_front_panel_boundary(self):
         meter = FakePowerMeter()
@@ -772,8 +794,8 @@ class MeasurementWorkerTests(unittest.TestCase):
         self.assertEqual(switch.physical_routes, [])
         self.assertEqual(offers[0][1]["routing_method"], "scpi_mapped")
         self.assertEqual(offers[0][1]["configured_channel_count"], 4)
-        self.assertEqual(readings[-2][:2], (3, 53))
-        self.assertEqual(readings[-1][:2], (4, 54))
+        self.assertEqual(readings[-2][:2], (3, 3))
+        self.assertEqual(readings[-1][:2], (4, 4))
         route_events = [
             fields
             for _category, event, fields in logger.events

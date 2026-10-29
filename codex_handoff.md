@@ -487,12 +487,14 @@ information but block routing and close the session safely. It uses:
 
 - CFG:SWT:END? for the configured logical-channel count;
 - CLOSe <logical channel> to route a test channel;
-- CLOSe? to read the physical port actually selected.
+- CLOSe? to confirm the active logical channel after routing.
 
 OSX-150 extra-channel routing is administrator-selected and fixed for the run.
 The default `scpi_mapped` path offers the finite configured range above the
 part-number-derived front-panel count and routes it with the same verified
-`CLOSe`/`CLOSe?` behavior. Operators must temporarily add those mappings to the
+`CLOSe`/logical-`CLOSe?` behavior. The requested configured extra channel is
+the physical candidate identity; the query is not physical readback. Operators
+must temporarily add those mappings to the
 module configuration outside Light Workbench; the application never edits the
 map. A configured count below the front-panel count blocks a full pass.
 
@@ -535,9 +537,10 @@ possible rather than asserting it. The connection manager still marks the
 switch as Error and requires an explicit reconnect; it never resumes a failed
 route automatically.
 
-The switch applies its own replacement mapping. Python should request the
-logical test channel and record the reported physical port; it should not
-hardcode replacement mappings.
+The switch applies its own replacement mapping. Python requests and confirms
+the logical test channel, while the assignment's effective map supplies the
+documented physical port persisted with the reading. `CLOSe?` must never be
+used to infer replacement mapping.
 
 ## Output formats and locations
 

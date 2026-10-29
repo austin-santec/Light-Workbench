@@ -18,6 +18,7 @@ from hardware.visa_errors import (
     classify_switch_visa_error,
 )
 from hardware.santec_cli import SantecCliProfile, SantecCliRouter
+from hardware.interfaces import LogicalChannelRouteResult
 
 
 SWITCH_SETTLING_TIME_SECONDS = 0.25
@@ -932,8 +933,8 @@ class SantecOpticalSwitch:
         except Exception as error:
             LOG.warning("Could not remember detected switch address: %s", error)
 
-    def current_channel(self, logical_channel: int | None = None) -> int:
-        """Return the physical port after a channel-routing command."""
+    def current_logical_channel(self, requested_logical_channel: int | None = None) -> int:
+        """Return the logical channel reported by ``CLOSe?``."""
         self._require_connection()
         command = self.profile.current_channel_query
         try:
@@ -941,15 +942,15 @@ class SantecOpticalSwitch:
         except pyvisa.errors.VisaIOError as error:
             raise self._communication_error(
                 error,
-                operation="querying the active physical port",
+                operation="querying the active logical channel",
                 command=command,
-                logical_channel=logical_channel,
+                logical_channel=requested_logical_channel,
             ) from error
         self._trace(
-            "switch_physical_port_query",
+            "switch_logical_channel_query",
             operation="query",
             command=command,
-            logical_channel=logical_channel,
+            requested_logical_channel=requested_logical_channel,
             raw_response=response,
             response_length=len(response),
             status="success",
@@ -958,7 +959,7 @@ class SantecOpticalSwitch:
             return int(response)
         except ValueError as error:
             raise RuntimeError(
-                "%s did not confirm the routed physical port. Command: %s. "
+                "%s did not report a valid active logical channel. Command: %s. "
                 "Response: %r"
                 % (self.model, command, response)
             ) from error
@@ -1032,8 +1033,8 @@ class SantecOpticalSwitch:
             )
         return self._configured_channel_count
 
-    def set_channel(self, channel: int) -> int:
-        """Select a logical channel and return its verified physical port."""
+    def set_channel(self, channel: int):
+        """Select a logical channel and confirm the logical route."""
         with self._routing_lock:
             self._require_connection()
             if channel < MIN_SWITCH_CHANNEL:
@@ -1069,17 +1070,35 @@ class SantecOpticalSwitch:
                 )
                 raise communication_error from error
             time.sleep(SWITCH_SETTLING_TIME_SECONDS)
-            physical_port = self.current_channel(logical_channel=channel)
+            reported_channel = self.current_logical_channel(
+                requested_logical_channel=channel
+            )
+            result = LogicalChannelRouteResult(channel, reported_channel)
+            if not result.confirmed:
+                self._trace(
+                    "switch_route_confirmation_mismatch",
+                    operation="set_channel",
+                    command=command,
+                    requested_logical_channel=channel,
+                    reported_logical_channel=reported_channel,
+                    status="error",
+                    elapsed_ms=(time.perf_counter() - started) * 1000.0,
+                )
+                raise RuntimeError(
+                    "%s reported logical channel %d after logical channel %d was "
+                    "requested. The route was not confirmed."
+                    % (self.model, reported_channel, channel)
+                )
             self._trace(
                 "switch_route_completed",
                 operation="set_channel",
                 command=command,
-                logical_channel=channel,
-                physical_port=physical_port,
+                requested_logical_channel=channel,
+                reported_logical_channel=reported_channel,
                 status="success",
                 elapsed_ms=(time.perf_counter() - started) * 1000.0,
             )
-            return physical_port
+            return result
 
     def set_physical_port(self, physical_port: int, maximum_port: int = 64):
         """Route one physical port through the isolated engineering CLI."""

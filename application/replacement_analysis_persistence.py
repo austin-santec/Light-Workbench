@@ -73,13 +73,30 @@ class PersistedReplacementAnalysis:
     def is_current(self, current_source_state) -> bool:
         saved_snapshot = self.record.result_details.get("source_snapshot", {})
         saved_fingerprint = saved_snapshot.get("state_fingerprint_sha256")
-        if isinstance(current_source_state, str) and saved_fingerprint:
-            return saved_fingerprint == current_source_state
-        current_measurement_high_watermark = current_source_state
-        return (
-            current_measurement_high_watermark is not None
-            and self.record.source_measurement_high_watermark_id
-            == int(current_measurement_high_watermark)
+        if isinstance(current_source_state, Mapping):
+            current_fingerprint = current_source_state.get(
+                "state_fingerprint_sha256"
+            )
+            if current_fingerprint is not None:
+                return bool(saved_fingerprint) and str(saved_fingerprint) == str(
+                    current_fingerprint
+                )
+            current_source_state = current_source_state.get(
+                "measurement_high_watermark_id"
+            )
+        if isinstance(current_source_state, str):
+            if saved_fingerprint:
+                return str(saved_fingerprint) == current_source_state
+            if not current_source_state.strip().isdigit():
+                return False
+        if current_source_state is None:
+            return False
+        try:
+            current_measurement_high_watermark = int(current_source_state)
+        except (TypeError, ValueError):
+            return False
+        return self.record.source_measurement_high_watermark_id == (
+            current_measurement_high_watermark
         )
 
     def to_result_dict(self) -> dict:

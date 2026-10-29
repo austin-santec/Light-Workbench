@@ -358,6 +358,23 @@ class EffectiveReplacementProjectionTests(unittest.TestCase):
         self.assertEqual(first.fingerprint, second.fingerprint)
         self.assertEqual(len(first.fingerprint), 64)
 
+    def test_source_snapshot_includes_superseded_attempts(self):
+        context = run(1, 1)
+        rows = (
+            measurement(1, context, 1, 1, 1.2, minute=1),
+            measurement(2, context, 1, 1, 1.0, minute=2),
+            measurement(3, context, 2, 2, 1.1, minute=3),
+        )
+
+        result = self.project(context, (context,), rows)
+
+        self.assertEqual(
+            result.source_snapshot["considered_measurement_ids"], [1, 2, 3]
+        )
+        self.assertEqual(result.source_snapshot["selected_measurement_ids"], [2, 3])
+        self.assertEqual(result.source_snapshot["accepted_measurement_count"], 3)
+        self.assertEqual(result.source_snapshot["measurement_high_watermark_id"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

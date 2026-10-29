@@ -1,8 +1,6 @@
 """Hardware-free adapters for workflow and integration testing."""
 
-from collections.abc import Iterable
-
-from hardware.interfaces import WAVELENGTHS_NM
+from hardware.interfaces import LogicalChannelRouteResult, WAVELENGTHS_NM
 
 
 class SimulatedLaserSource:
@@ -42,15 +40,13 @@ class SimulatedOpticalSwitch:
     description = "Simulated optical switch"
     serial_number = "SIMULATED-SWITCH"
 
-    def __init__(self, channel_count=48, physical_ports: Iterable[int] | None = None):
+    def __init__(self, channel_count=48):
         if int(channel_count) < 1:
             raise ValueError("Simulated switch channel count must be positive.")
         self.channel_count = int(channel_count)
-        self.physical_ports = list(physical_ports or range(1, self.channel_count + 1))
-        if len(self.physical_ports) < self.channel_count:
-            raise ValueError("Simulated switch does not have enough physical ports.")
         self.connected = False
         self.selected_channels = []
+        self._current_logical_channel = None
 
     def connect(self):
         self.connected = True
@@ -67,9 +63,18 @@ class SimulatedOpticalSwitch:
         if not 1 <= channel <= self.channel_count:
             raise ValueError("Simulated switch channel is outside the configured range.")
         self.selected_channels.append(channel)
-        return int(self.physical_ports[channel - 1])
+        self._current_logical_channel = channel
+        return LogicalChannelRouteResult(channel, channel)
+
+    def current_logical_channel(self):
+        if not self.connected:
+            raise RuntimeError("Simulated optical switch is not connected.")
+        if self._current_logical_channel is None:
+            raise RuntimeError("No simulated logical channel has been selected.")
+        return self._current_logical_channel
 
     def close(self):
+        self._current_logical_channel = None
         self.connected = False
 
 

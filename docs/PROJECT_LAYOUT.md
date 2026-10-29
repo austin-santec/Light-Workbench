@@ -34,13 +34,17 @@ docs/ILM_DLL_FUNCTION_REFERENCE.md  OP815M.dll command inventory and usage rules
 dist/LightWorkbench/             Generated one-folder executable distribution
 build/                           Generated PyInstaller intermediates
 releases/                        Generated versioned deployment ZIPs
-IL-Reads/                        Local production run data
+IL-Reads/ or ILM-Reads/          Legacy/sample run files and explicit exports
+sample_data/scenarios/           Declarative synthetic database seed scenarios
 ```
 
-`build`, `dist`, `releases`, `__pycache__`, and `IL-Reads` are generated or
-machine-specific content. They are not architecture boundaries and should not
-be used as source locations. The release scripts keep deployment output in
-`dist` and `releases` without mixing it into `docs` or application packages.
+`build`, `dist`, `releases`, `__pycache__`, and legacy/sample run directories
+are generated or machine-specific content. They are not architecture
+boundaries and should not be used as source locations. New recorded hardware
+runs are stored in SQL Server; local run files are compatibility inputs or explicit
+outputs, not the authoritative write path. The release scripts keep deployment
+output in `dist` and `releases` without mixing it into `docs` or application
+packages.
 
 ## Change placement guide
 

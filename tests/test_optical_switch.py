@@ -5,6 +5,7 @@ from pyvisa.errors import VisaIOError
 
 from domain.models import ConnectionState, DeviceCategory
 from domain.extra_ports import PhysicalPortRouteResult, PhysicalPortRouteStatus
+from hardware.interfaces import LogicalChannelRouteResult
 from hardware.optical_switch import (
     OSX150 as HardwareOSX150,
     SANTEC_OSX100_USB_PRODUCT_ID,
@@ -154,7 +155,9 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         self.assertEqual(switch.write_termination, "\n")
         self.assertEqual(switch.get_ip_address(), "192.0.2.15")
         with patch("hardware.optical_switch.time.sleep"):
-            self.assertEqual(switch.set_channel(2), 2)
+            self.assertEqual(
+                switch.set_channel(2), LogicalChannelRouteResult(2, 2)
+            )
         names = [item["event"] for item in trace_events]
         self.assertIn("switch_identity_probe", names)
         self.assertIn("switch_configuration_validated", names)
@@ -214,6 +217,29 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
 
         self.assertEqual(router.calls, [("192.0.2.15", 49, 64)])
         self.assertEqual(result.status, PhysicalPortRouteStatus.ACKNOWLEDGED)
+
+    def test_logical_route_mismatch_blocks_measurement_contract(self):
+        class Instrument:
+            def write(self, command):
+                self.command = command
+
+            def query(self, command):
+                self.query_command = command
+                return "7"
+
+        switch = HardwareOSX150()
+        switch.model = "OSX-150"
+        switch.profile = SantecSwitchProfile(model="OSX-150")
+        switch.instrument = Instrument()
+
+        with patch("hardware.optical_switch.time.sleep"):
+            with self.assertRaisesRegex(
+                RuntimeError, "reported logical channel 7"
+            ):
+                switch.set_channel(3)
+
+        self.assertEqual(switch.instrument.command, "CLOSe 3")
+        self.assertEqual(switch.instrument.query_command, "CLOSe?")
 
     def test_ip_query_reports_scpi_rejection_without_treating_it_as_visa_loss(self):
         class Instrument:
@@ -278,7 +304,9 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         self.assertEqual(switch.write_termination, "\r\n")
         self.assertIn("SCPI write ending: CRLF", switch.get_device_info().transport_details)
         with patch("hardware.optical_switch.time.sleep"):
-            self.assertEqual(switch.set_channel(3), 3)
+            self.assertEqual(
+                switch.set_channel(3), LogicalChannelRouteResult(3, 3)
+            )
         self.assertIn(("CLOSe 3", "\r\n"), manager.sessions[1].commands)
         switch.close()
         self.assertTrue(manager.sessions[1].closed)
@@ -504,7 +532,9 @@ class OpticalSwitchAdapterTests(unittest.TestCase):
         self.assertEqual(info.configured_channel_count, 100)
         self.assertEqual(info.model_detection_method, "explicit_model")
         with patch("hardware.optical_switch.time.sleep"):
-            self.assertEqual(switch.set_channel(3), 3)
+            self.assertEqual(
+                switch.set_channel(3), LogicalChannelRouteResult(3, 3)
+            )
         self.assertEqual(switch.instrument.last_write, "CLOSe 3")
         switch.close()
 

@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtTest import QTest
 
 from hardware.session import OpticalTestSession
+from hardware.interfaces import LogicalChannelRouteResult
 from ui.red_light_test import RedLightTestDialog
 
 
@@ -27,7 +28,7 @@ class FakeSwitch:
 
     def set_channel(self, channel):
         self.selected.append(channel)
-        return channel + 100
+        return LogicalChannelRouteResult(channel, channel)
 
     def close(self):
         self.closed = True
@@ -63,7 +64,7 @@ class RedLightTestDialogTests(unittest.TestCase):
         self.assertTrue(switch.connected)
         self.assertEqual(switch.selected, [1])
         self.assertEqual(dialog.channel_spin.maximum(), 4)
-        self.assertIn("Physical port 101", dialog.status_label.text())
+        self.assertIn("Logical channel 1", dialog.status_label.text())
 
         QTest.mouseClick(dialog.next_button, 1)
         QTest.qWait(100)

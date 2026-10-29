@@ -44,6 +44,9 @@ items still need representative equipment testing before formal acceptance.
 - [x] **FUN-023 — Save the active criteria profile and revision with the run.** `[MVP]`
 - [x] **FUN-025 — Use the OSX-150 optimization band below the failure limit.** `[MVP]`
 - [x] **FUN-027 — Keep logical channels separate from physical ports.** `[MVP]`
+  - `CLOSe?` confirms the active logical channel only. Normal and replacement
+    readings obtain their physical port from the assignment's effective map;
+    SCPI extra candidates use the explicitly requested configured channel.
 - [x] **FUN-040 — Fit COC rows to the requested front-panel channel count.** `[MVP]`
 - [x] **FUN-047 — Autosave after every accepted reading or retest.** `[MVP]`
 - [x] **FUN-055 — Block Start Run until hardware, setup, channels, and reference are valid.** `[MVP]`
@@ -161,12 +164,15 @@ Each item already has useful behavior, but the noted work remains.
 - [x] Keep unused measured extras available for later iterative analyses.
 - [x] Store unassigned extras as `extra_candidate` measurements and derive the
   latest assignment-scoped candidate set through `vw_ConfirmedExtraPorts`.
-- [x] Derive replacement verification from post-replacement readings without querying or changing switch mappings.
+- [x] Derive replacement verification from a post-replacement logical-channel
+  reading whose recorded physical port matches the assignment map, without
+  querying or changing the switch mapping.
 - [x] Invalidate prior-port readings for status and COC purposes after a
   documented mapping change; require a new logical-channel reading on the
   effective replacement port.
 - [x] Provide a selected-channel replacement verification run action.
-- [x] Persist immutable analysis snapshots, recommendation usage, source provenance, and freshness fingerprints.
+- [x] Persist immutable analysis snapshots, recommendation usage, complete
+  assignment-scoped source provenance, and freshness fingerprints.
 - [x] Allow administrators to permanently void an invalid entire run while retaining its audit history.
 - [x] Show void details in loaded-run information and database reports.
 - [x] Validate replacement save batches against the authoritative assignment

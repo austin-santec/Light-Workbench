@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-Light Workbench 1.35.2 includes always-on, local engineering support logs. Their
+Light Workbench includes always-on, local engineering support logs. Their
 purpose is to help engineering reconstruct operator workflows, hardware
 communication, two-wavelength measurements, insertion-loss calculations,
 connection ownership, persistence, exports, and failures.
@@ -10,8 +10,9 @@ connection ownership, persistence, exports, and failures.
 Support logging is best-effort instrumentation. It does not control hardware,
 change measurement timing or calculations, commit readings, or replace the
 authoritative SQL Server run record. The files are local and editable; they are
-not a tamper-proof audit trail and do not satisfy the future immutable audit
-history described by FUN-048.
+not a tamper-proof audit trail and do not replace authoritative database
+history for accepted attempts, run voids, replacements, spares, or saved
+replacement analyses.
 
 ## Location, naming, and lifecycle
 
@@ -107,8 +108,10 @@ Depending on the event, logs may contain:
 - Classified switch VISA failures, including the VISA status name and code,
   failed operation/command, error category, and whether physical
   disconnection is confirmed, suspected, or unknown.
-- Logical channel, reported physical port, raw optical power, reference power,
-  calculated insertion loss, and whether both wavelengths completed.
+- Requested and reported logical channel, documented effective physical port,
+  raw optical power, reference power, calculated insertion loss, and whether
+  both wavelengths completed. A `CLOSe?` response is never logged as a physical
+  mapping result.
 - Whether a reading was temporary, repeated, accepted, written, overwritten,
   diagnostic-only, or failed.
 - Measurement commit lifecycle events, including commit start/success/failure,
@@ -117,8 +120,8 @@ Depending on the event, logs may contain:
   mismatch/blocking, duplicate
   click suppression, and final completion-coverage reconciliation with missing
   channels when applicable.
-- Run/unit save requests and results, atomic file replacement, measurement
-  counts, export results, and sanitized destinations.
+- Run/unit/database save requests and results, transaction or legacy atomic-file
+  outcomes, measurement counts, export results, and sanitized destinations.
 - Database configuration lifecycle events, including whether the per-user
   `database.ini` was created or loaded, its sanitized path, endpoint metadata,
   and validation failures. Credentials and complete connection strings are
@@ -211,8 +214,10 @@ change the validation or persistence decision.
 
 ## Relationship to other records
 
-- **Run CSV/JSON**: authoritative accepted production results; changed only by
-  existing run persistence.
+- **SQL Server run records**: authoritative accepted results for new
+  database-backed runs of every purpose.
+- **Legacy run CSV/JSON**: view-only compatibility records or explicit outputs;
+  opening one does not upload it or make it a writable database run.
 - **Diagnostic export**: explicit Power Diagnostics history and optional
   session trace selected by the operator.
 - **Support logs**: always-on, local engineering evidence that includes
@@ -230,5 +235,5 @@ and freshness changes. Events contain IDs, counts, states, and concise reasons,
 not complete database records or raw measurement history.
 
 A future release may add controlled central collection, authentication,
-authorization, and database ingestion. Version 1.16.1 performs no upload and
-has no graphical log viewer.
+authorization, and database ingestion. The current application performs no
+support-log upload and has no graphical log viewer.

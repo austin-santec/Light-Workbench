@@ -5,6 +5,7 @@ from application.hardware_connection import HardwareConnectionManager
 from application.measurement_worker import MeasurementWorker
 from domain.hardware_connection import HardwareBusyError, HardwareCapability
 from domain.models import ConnectionState
+from hardware.interfaces import LogicalChannelRouteResult
 from hardware.factory import HardwareFactory
 
 
@@ -65,7 +66,10 @@ class FakeSwitch:
         self.call_threads.append(threading.get_ident())
         if self.fail_routing:
             raise RuntimeError("switch communication lost")
-        return channel
+        return LogicalChannelRouteResult(channel, channel)
+
+    def current_logical_channel(self):
+        return 1
 
     def set_physical_port(self, physical_port, maximum_port):
         self.call_threads.append(threading.get_ident())
@@ -172,7 +176,7 @@ class HardwareConnectionManagerTests(unittest.TestCase):
             object(), "Red Light Test", connect_if_needed=False
         )
         proxy.connect()
-        self.assertEqual(proxy.set_channel(3), 3)
+        self.assertEqual(proxy.set_channel(3), LogicalChannelRouteResult(3, 3))
         proxy.close()
         self.assertTrue(self.manager.run_ready)
 
@@ -184,7 +188,7 @@ class HardwareConnectionManagerTests(unittest.TestCase):
         )
         proxy.connect()
 
-        self.assertEqual(proxy.set_channel(3), 3)
+        self.assertEqual(proxy.set_channel(3), LogicalChannelRouteResult(3, 3))
         self.assertEqual(proxy.set_physical_port(49, 64), (49, 64))
         proxy.close()
 

@@ -48,6 +48,7 @@ class HardwareRunRequest:
         ExtraChannelRoutingMethod.SCPI_MAPPED
     )
     persistence_run_id: int | None = None
+    effective_channel_map: Mapping[int, int] | None = None
 
 
 class HardwareRunController(QObject):
@@ -147,6 +148,7 @@ class HardwareRunController(QObject):
                 ),
                 extra_channel_routing_method=request.extra_channel_routing_method,
                 persistence_run_id=request.persistence_run_id,
+                effective_channel_map=request.effective_channel_map,
             )
             thread = QThread(self)
             worker.moveToThread(thread)

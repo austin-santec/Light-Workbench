@@ -2,17 +2,18 @@
 
 ## Purpose
 
-This roadmap implements the approved SQL Server schema in
-`docs/DATABASE_ARCHITECTURE.md`. It applies to the database-focused development
-branch and intentionally starts with future data. Existing local runs are not
-scheduled for bulk import.
-
-The current file-backed application remains usable while development proceeds.
-The database branch does not become SQL Server-primary until its write, query,
-failure, and recovery behavior has been verified against the existing domain
-rules.
+This roadmap records implementation of the approved SQL Server schema in
+`docs/DATABASE_ARCHITECTURE.md`. Milestones 0 through 10A are complete on the
+database-focused branch. New runs are SQL Server-primary; existing local runs
+remain view-only compatibility data and are not scheduled for bulk import.
+Milestone 11 is intentionally deferred until local database behavior has been
+manually validated and a managed network SQL Server rollout is approved.
 
 ## Milestone 0 - Freeze the database contract
+
+Status: complete. The implemented baseline is ten tables, four read-only
+views, forward-only migration history, and separate lifecycle, purpose, and
+analysis-status vocabularies.
 
 ### Implement
 
@@ -55,8 +56,8 @@ using 32-bit Python, `pyodbc`, Windows Authentication, and ODBC Driver 18.
   `IL_MEASUREMENTS`, `CHANNEL_REPLACEMENTS`, `DESIGNATED_SPARES`,
   `REPLACEMENT_ANALYSES`, `REPLACEMENT_ANALYSIS_RECOMMENDATIONS`, and
   `SCHEMA_MIGRATIONS`.
-- Create `vw_CurrentILMeasurements`, `vw_CurrentChannelMap`, and
-  `vw_ReplacementRecommendationUsage`.
+- Create `vw_CurrentILMeasurements`, `vw_CurrentChannelMap`,
+  `vw_ConfirmedExtraPorts`, and `vw_ReplacementRecommendationUsage`.
 - Add foreign keys, checks, unique constraints, filtered active-assignment
   indexes, and reporting indexes.
 - Configure Windows Authentication roles.
@@ -89,8 +90,7 @@ invalid-file validation, a credential-free example configuration, a bounded
 Windows-authenticated connection factory, short transaction contexts,
 read-only migration compatibility preflight, classified operator diagnostics,
 and credential-free support events are implemented. Database use is enabled by
-default on the database branch and production persistence is connected by
-Milestone 9.
+  default on the database branch and production persistence is connected.
 
 ### Implement
 
@@ -227,7 +227,8 @@ the external module-map reset and does not command or verify hardware mapping.
 
 ### Exit criteria
 
-- Every future run can reference one unambiguous installed unit/switch pair.
+- Every new database run can reference one unambiguous installed unit/switch
+  pair.
 
 ## Milestone 5 - Run lifecycle persistence
 
@@ -238,13 +239,13 @@ unit-scoped transaction lock. Runs preserve their setup, hardware, and limit
 snapshots and support explicit complete, stopped, and failed endings.
 Purpose and analysis eligibility are separate, no purpose is implicitly voided,
 and stale runs remain in progress until an explicit resume,
-close-stopped, or close-failed decision. Production Start Run is wired to this
+close-stopped, or close-failed decision. Start Run is wired to this
 workflow; the UI defaults new runs to Production and records the selected
 purpose.
 
 ### Implement
 
-- Require a successful database/schema preflight before a production run.
+- Require a successful database/schema preflight before a recorded hardware run.
 - Generate `client_run_uuid` before the first insertion attempt.
 - Allocate the unit's operator-facing run number transactionally.
 - Insert an `in_progress` run with part-number, channel-count, hardware, and
@@ -284,8 +285,9 @@ allocates the next run/channel attempt number, and inserts the complete sample
 in one transaction. Finite non-negative losses are normalized to four decimal
 places, and a reference snapshot is mandatory. Commit notification occurs only
 after repository success, so a failed write remains retryable with the same
-UUID and cannot alter the accepted projection. Production Write IL remains on
-the file workflow until the database-primary cutover milestone.
+UUID and cannot alter the accepted projection. During this historical
+milestone, Production Write IL remained on the file workflow until the later
+database-primary cutover.
 
 The database-backed hardware worker now participates in the same acceptance
 boundary. It receives a token for each displayed provisional sample and does
@@ -337,8 +339,8 @@ run status, comparison, Copy Raw Data, analysis, COC preparation, and
 replacement analysis so those consumers cannot select different attempts.
 Current rows retain logical-channel order, history retains database commit
 order, table filtering remains presentation-only, and temporary readings are
-absent. The production UI continues using local runs until the database-primary
-cutover in Milestone 9.
+absent. During this historical milestone, the production UI continued using
+local runs until the Milestone 9 database-primary cutover.
 
 ### Implement
 
@@ -439,11 +441,11 @@ Legacy CSV files remain viewable without upload, automatic local run files are
 not created, and support/diagnostic/COC outputs retain their intended local
 file behavior.
 
-### Development transition
+### Historical development transition
 
-During development, compare database repository results with the existing file
-repository using controlled test runs and synthetic data. This is verification,
-not a permanent dual-write architecture.
+During cutover, database repository results were compared with the existing
+file repository using controlled test runs and synthetic data. This was
+verification, not a permanent dual-write architecture.
 
 ### Final behavior
 
@@ -454,7 +456,7 @@ not a permanent dual-write architecture.
 - COC and diagnostic exports remain generated files.
 - Support logs remain local.
 - Red Light Test and Power Measurement Diagnostics may operate without the
-  run database because they do not write production runs.
+  run database because they do not write run records.
 
 ### Database outage behavior
 
@@ -533,12 +535,15 @@ into the append-only replacement record, allowing adoption reporting through
 
 ## Milestone 11 - Network pilot and production hardening
 
+Status: not started. Local SQL Server operation and manual workstation testing
+remain the current scope. This milestone does not authorize a network rollout.
+
 ### Implement
 
 - Deploy the migrations to the approved network SQL Server.
 - Configure Windows/domain groups and least-privilege roles.
 - Enable encrypted database connections.
-- Pilot with one or two workstations and non-critical future data.
+- Pilot with one or two workstations and non-critical new data.
 - Test concurrent run creation and measurement writes.
 - Measure database growth and query performance.
 - Configure backup, retention, restore drills, and database health monitoring.
@@ -547,7 +552,7 @@ into the append-only replacement record, allowing adoption reporting through
 
 ### Exit criteria
 
-- Multiple workstations create future data without duplicate identities or
+- Multiple workstations create new data without duplicate identities or
   conflicting assignments.
 - Backup restoration is demonstrated.
 - Expected capacity is confirmed with measured pilot data.
@@ -584,18 +589,13 @@ Every milestone includes:
 Run the project checks from `docs/TESTING_AND_RELEASE.md`, including the full
 unittest suite, compilation of changed Python modules, and `git diff --check`.
 
-## Release strategy
+## Release sequence
 
-1. Freeze and document the schema.
-2. Validate migrations and Windows Authentication locally.
-3. Implement repository contracts and fakes.
-4. Persist unit/switch assignments and run lifecycle.
-5. Persist accepted measurements and retests atomically.
-6. Move replacement/spare history and current-value queries to SQL Server.
-7. Complete controlled database/file parity testing.
-8. Cut the database branch over to SQL Server-primary behavior.
-9. Enable read-only database reporting with production-safe defaults.
-10. Pilot future data on the network server and prove operational recovery.
+Steps 1 through 9 are complete: schema freeze, local migration validation,
+repository contracts, assignment/run persistence, atomic measurements,
+replacement/spare persistence, controlled parity testing, SQL-primary cutover,
+and read-only reporting. The remaining release step is an explicitly approved
+network pilot that proves multi-workstation behavior and operational recovery.
 
 The executable must not be rebuilt merely because documentation or database
 scripts changed. Follow the normal version and build policy once runtime code
@@ -605,7 +605,7 @@ is introduced.
 
 The implementation is successful when:
 
-- Every future production run has stable unit, switch, assignment, and UUID
+- Every new production run has stable unit, switch, assignment, and UUID
   identity.
 - Every accepted reading is a complete, atomic two-wavelength record.
 - Retests remain append-only and the current projection is deterministic.

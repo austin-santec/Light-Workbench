@@ -11,6 +11,7 @@ from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QWidget
 
 from hardware.session import OpticalTestSession
+from hardware.interfaces import LogicalChannelRouteResult
 from ui.power_measurement_diagnostics import PowerMeasurementDiagnosticsDialog
 
 
@@ -65,7 +66,7 @@ class FakeSwitch:
         if not self.connected:
             raise RuntimeError("Fake switch is not connected.")
         self.selected.append(channel)
-        return channel + 100
+        return LogicalChannelRouteResult(channel, channel)
 
     def close(self):
         self.connected = False
@@ -340,9 +341,11 @@ class PowerMeasurementDiagnosticsDialogTests(unittest.TestCase):
 
         dialog.channel_spin.setValue(3)
         QTest.mouseClick(dialog.set_channel_button, Qt.LeftButton)
-        self.assertTrue(self.wait_for(lambda: dialog.last_physical_port == 103))
+        self.assertTrue(
+            self.wait_for(lambda: dialog.last_reported_logical_channel == 3)
+        )
         self.assertEqual(FakeSwitch.instances[0].selected, [3])
-        self.assertEqual(dialog.physical_port_label.text(), "103")
+        self.assertEqual(dialog.reported_channel_label.text(), "3")
 
         dialog.close()
         self.assertTrue(FakeSwitch.instances[0].closed)
@@ -354,11 +357,17 @@ class PowerMeasurementDiagnosticsDialogTests(unittest.TestCase):
 
         dialog.channel_spin.setValue(2)
         QTest.mouseClick(dialog.set_channel_button, Qt.LeftButton)
-        self.assertTrue(self.wait_for(lambda: dialog.last_physical_port == 102))
+        self.assertTrue(
+            self.wait_for(lambda: dialog.last_reported_logical_channel == 2)
+        )
         QTest.mouseClick(dialog.next_channel_button, Qt.LeftButton)
-        self.assertTrue(self.wait_for(lambda: dialog.last_physical_port == 103))
+        self.assertTrue(
+            self.wait_for(lambda: dialog.last_reported_logical_channel == 3)
+        )
         QTest.mouseClick(dialog.previous_channel_button, Qt.LeftButton)
-        self.assertTrue(self.wait_for(lambda: dialog.last_physical_port == 102))
+        self.assertTrue(
+            self.wait_for(lambda: dialog.last_reported_logical_channel == 2)
+        )
         self.assertEqual(FakeSwitch.instances[0].selected, [2, 3, 2])
         dialog.close()
 

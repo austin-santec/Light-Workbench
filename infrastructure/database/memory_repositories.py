@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
@@ -829,11 +830,16 @@ class InMemoryRepositories:
                     raise ValueError(
                         "Source replacement recommendation belongs to another assignment"
                     )
-                if (
-                    analysis.source_measurement_high_watermark_id
-                    != self.current_measurement_high_watermark(analysis.run_id)
-                ):
-                    raise ValueError("Source replacement recommendation is stale")
+                try:
+                    self._validate_analysis_source_snapshot(
+                        source_run,
+                        analysis.result_details.get("source_snapshot", {}),
+                        analysis.source_measurement_high_watermark_id,
+                    )
+                except ValueError as error:
+                    raise ValueError(
+                        "Source replacement recommendation is stale"
+                    ) from error
                 if (
                     recommendation.logical_channel != spec.logical_channel
                     or recommendation.candidate_physical_port
@@ -893,18 +899,11 @@ class InMemoryRepositories:
             run = self.runs.get(spec.run_id)
             if run is None:
                 raise ValueError("Replacement analysis run does not exist")
-            measurement = self.measurements.get(
-                spec.source_measurement_high_watermark_id
+            self._validate_analysis_source_snapshot(
+                run,
+                spec.result_details.get("source_snapshot", {}),
+                spec.source_measurement_high_watermark_id,
             )
-            if measurement is None or measurement.run_id != spec.run_id:
-                raise ValueError(
-                    "Analysis source measurement does not belong to the run"
-                )
-            if (
-                spec.source_measurement_high_watermark_id
-                != self.current_measurement_high_watermark(spec.run_id)
-            ):
-                raise ValueError("Analysis source measurements are no longer current")
             analysis_id = self._next("replacement_analysis")
             record = ReplacementAnalysisRecord(
                 analysis_id,
@@ -997,6 +996,94 @@ class InMemoryRepositories:
                 self.replacement_analysis_recommendations[item]
                 for item in inserted
             )
+
+    def _validate_analysis_source_snapshot(self, context_run, snapshot, high_watermark):
+        """Validate legacy or assignment-scoped analysis source evidence."""
+        if not isinstance(snapshot, Mapping) or not snapshot.get(
+            "considered_measurement_ids"
+        ):
+            measurement = self.measurements.get(int(high_watermark))
+            if measurement is None or measurement.run_id != context_run.run_id:
+                raise ValueError("Analysis source measurement does not belong to the run")
+            if int(high_watermark) != self.current_measurement_high_watermark(
+                context_run.run_id
+            ):
+                raise ValueError("Analysis source measurements are no longer current")
+            return
+
+        assignment_id = int(snapshot.get("assignment_id", 0))
+        context_run_id = int(snapshot.get("context_run_id", 0))
+        included_run_ids = tuple(
+            sorted({int(value) for value in snapshot.get("included_run_ids", ())})
+        )
+        considered_ids = tuple(
+            sorted(
+                {int(value) for value in snapshot.get("considered_measurement_ids", ())}
+            )
+        )
+        if (
+            assignment_id != context_run.assignment_id
+            or context_run_id != context_run.run_id
+            or context_run.run_id not in included_run_ids
+            or not considered_ids
+            or int(high_watermark) != max(considered_ids)
+        ):
+            raise ValueError("Analysis source snapshot is inconsistent")
+        included_runs = [self.runs.get(run_id) for run_id in included_run_ids]
+        if any(
+            run is None or run.assignment_id != assignment_id
+            for run in included_runs
+        ):
+            raise ValueError("Analysis source runs do not belong to the assignment")
+        current_measurement_ids = tuple(
+            sorted(
+                item.measurement_id
+                for item in self.measurements.values()
+                if item.run_id in included_run_ids
+            )
+        )
+        if current_measurement_ids != considered_ids:
+            raise ValueError("Analysis source measurements are no longer current")
+        states = {
+            int(item["run_id"]): (
+                str(item.get("analysis_status") or ""),
+                item.get("superseded_by_run_id"),
+            )
+            for item in snapshot.get("included_run_states", ())
+            if isinstance(item, Mapping) and item.get("run_id") is not None
+        }
+        for run in included_runs:
+            if states and states.get(run.run_id) != (
+                run.analysis_status,
+                run.superseded_by_run_id,
+            ):
+                raise ValueError("Analysis source run state is no longer current")
+        replacement_ids = tuple(
+            sorted(
+                item.replacement_id
+                for item in self.replacements.values()
+                if item.assignment_id == assignment_id
+                and (
+                    item.related_run_id is None
+                    or item.related_run_id in included_run_ids
+                )
+            )
+        )
+        if replacement_ids != tuple(
+            sorted(int(value) for value in snapshot.get("replacement_ids", ()))
+        ):
+            raise ValueError("Analysis source replacements are no longer current")
+        spare_event_ids = tuple(
+            sorted(
+                item.spare_event_id
+                for item in self.spare_events.values()
+                if item.assignment_id == assignment_id
+            )
+        )
+        if spare_event_ids != tuple(
+            sorted(int(value) for value in snapshot.get("spare_event_ids", ()))
+        ):
+            raise ValueError("Analysis source spare history is no longer current")
 
     def latest_analysis_for_run(self, run_id):
         analyses = [

@@ -1201,23 +1201,13 @@ class SqlRepositories:
             ).fetchone()
             if run is None:
                 raise ValueError("Replacement analysis run does not exist")
-            source = cursor.execute(
-                "SELECT run_id FROM dbo.IL_MEASUREMENTS WHERE measurement_id = ?",
-                spec.source_measurement_high_watermark_id,
-            ).fetchone()
-            if source is None or int(source[0]) != int(spec.run_id):
-                raise ValueError(
-                    "Analysis source measurement does not belong to the run"
-                )
-            current_max = cursor.execute(
-                "SELECT MAX(measurement_id) FROM dbo.IL_MEASUREMENTS "
-                "WHERE run_id = ?",
-                spec.run_id,
-            ).fetchone()[0]
-            if current_max is None or int(current_max) != int(
-                spec.source_measurement_high_watermark_id
-            ):
-                raise ValueError("Analysis source measurements are no longer current")
+            self._validate_analysis_source_snapshot(
+                cursor,
+                context_run_id=spec.run_id,
+                assignment_id=int(run[0]),
+                snapshot=spec.result_details.get("source_snapshot", {}),
+                high_watermark=spec.source_measurement_high_watermark_id,
+            )
             analysis_id = cursor.execute(
                 """
                 INSERT INTO dbo.REPLACEMENT_ANALYSES (
@@ -1303,6 +1293,106 @@ class SqlRepositories:
                     item.candidate_measurement_id,
                 )
             return self._analysis_bundle(cursor, analysis_id)
+
+    def _validate_analysis_source_snapshot(
+        self,
+        cursor,
+        *,
+        context_run_id,
+        assignment_id,
+        snapshot,
+        high_watermark,
+    ):
+        """Validate legacy or assignment-scoped analysis source evidence."""
+        if not isinstance(snapshot, Mapping) or not snapshot.get(
+            "considered_measurement_ids"
+        ):
+            source = cursor.execute(
+                "SELECT run_id FROM dbo.IL_MEASUREMENTS WHERE measurement_id = ?",
+                high_watermark,
+            ).fetchone()
+            if source is None or int(source[0]) != int(context_run_id):
+                raise ValueError("Analysis source measurement does not belong to the run")
+            current_max = cursor.execute(
+                "SELECT MAX(measurement_id) FROM dbo.IL_MEASUREMENTS WHERE run_id = ?",
+                context_run_id,
+            ).fetchone()[0]
+            if current_max is None or int(current_max) != int(high_watermark):
+                raise ValueError("Analysis source measurements are no longer current")
+            return
+
+        snapshot_assignment_id = int(snapshot.get("assignment_id", 0))
+        snapshot_context_run_id = int(snapshot.get("context_run_id", 0))
+        included_run_ids = tuple(
+            sorted({int(value) for value in snapshot.get("included_run_ids", ())})
+        )
+        considered_ids = tuple(
+            sorted(
+                {int(value) for value in snapshot.get("considered_measurement_ids", ())}
+            )
+        )
+        if (
+            snapshot_assignment_id != int(assignment_id)
+            or snapshot_context_run_id != int(context_run_id)
+            or int(context_run_id) not in included_run_ids
+            or not considered_ids
+            or int(high_watermark) != max(considered_ids)
+        ):
+            raise ValueError("Analysis source snapshot is inconsistent")
+
+        placeholders = ",".join("?" for _ in included_run_ids)
+        run_rows = cursor.execute(
+            "SELECT run_id, assignment_id, analysis_status, superseded_by_run_id "
+            "FROM dbo.IL_RUNS WHERE run_id IN (%s)" % placeholders,
+            *included_run_ids,
+        ).fetchall()
+        if len(run_rows) != len(included_run_ids) or any(
+            int(row[1]) != int(assignment_id) for row in run_rows
+        ):
+            raise ValueError("Analysis source runs do not belong to the assignment")
+        states = {
+            int(item["run_id"]): (
+                str(item.get("analysis_status") or ""),
+                item.get("superseded_by_run_id"),
+            )
+            for item in snapshot.get("included_run_states", ())
+            if isinstance(item, Mapping) and item.get("run_id") is not None
+        }
+        for row in run_rows:
+            if states and states.get(int(row[0])) != (str(row[2] or ""), row[3]):
+                raise ValueError("Analysis source run state is no longer current")
+
+        current_measurement_ids = tuple(
+            int(row[0])
+            for row in cursor.execute(
+                "SELECT measurement_id FROM dbo.IL_MEASUREMENTS "
+                "WHERE run_id IN (%s) ORDER BY measurement_id" % placeholders,
+                *included_run_ids,
+            ).fetchall()
+        )
+        if current_measurement_ids != considered_ids:
+            raise ValueError("Analysis source measurements are no longer current")
+
+        replacement_rows = cursor.execute(
+            "SELECT replacement_id FROM dbo.CHANNEL_REPLACEMENTS "
+            "WHERE assignment_id = ? AND (related_run_id IS NULL OR related_run_id IN (%s)) "
+            "ORDER BY replacement_id" % placeholders,
+            assignment_id,
+            *included_run_ids,
+        ).fetchall()
+        if tuple(int(row[0]) for row in replacement_rows) != tuple(
+            sorted(int(value) for value in snapshot.get("replacement_ids", ()))
+        ):
+            raise ValueError("Analysis source replacements are no longer current")
+        spare_rows = cursor.execute(
+            "SELECT spare_event_id FROM dbo.DESIGNATED_SPARES "
+            "WHERE assignment_id = ? ORDER BY spare_event_id",
+            assignment_id,
+        ).fetchall()
+        if tuple(int(row[0]) for row in spare_rows) != tuple(
+            sorted(int(value) for value in snapshot.get("spare_event_ids", ()))
+        ):
+            raise ValueError("Analysis source spare history is no longer current")
 
     def latest_analysis_for_run(self, run_id):
         with self._factory.transaction() as cursor:
@@ -1456,7 +1546,8 @@ class SqlRepositories:
                 SELECT recommendation.analysis_id, recommendation.logical_channel,
                     recommendation.candidate_physical_port, analysis.run_id,
                     analysis.source_measurement_high_watermark_id,
-                    recommendation.candidate_measurement_id
+                    recommendation.candidate_measurement_id,
+                    analysis.result_details_json
                 FROM dbo.REPLACEMENT_ANALYSIS_RECOMMENDATIONS AS recommendation
                 INNER JOIN dbo.REPLACEMENT_ANALYSES AS analysis
                     ON analysis.analysis_id = recommendation.analysis_id
@@ -1476,13 +1567,20 @@ class SqlRepositories:
                 raise ValueError(
                     "Source replacement recommendation belongs to another assignment"
                 )
-            current_max = cursor.execute(
-                "SELECT MAX(measurement_id) FROM dbo.IL_MEASUREMENTS "
-                "WHERE run_id = ?",
-                recommendation[3],
-            ).fetchone()[0]
-            if current_max is None or int(current_max) != int(recommendation[4]):
-                raise ValueError("Source replacement recommendation is stale")
+            try:
+                self._validate_analysis_source_snapshot(
+                    cursor,
+                    context_run_id=int(recommendation[3]),
+                    assignment_id=int(source_assignment[0]),
+                    snapshot=_mapping(recommendation[6]).get(
+                        "source_snapshot", {}
+                    ),
+                    high_watermark=int(recommendation[4]),
+                )
+            except ValueError as error:
+                raise ValueError(
+                    "Source replacement recommendation is stale"
+                ) from error
             if (
                 int(recommendation[1]) != int(spec.logical_channel)
                 or int(recommendation[2]) != int(spec.replacement_physical_port)

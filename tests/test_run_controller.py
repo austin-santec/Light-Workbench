@@ -7,6 +7,7 @@ from PyQt5.QtCore import QEventLoop, QTimer
 from PyQt5.QtWidgets import QApplication
 
 from application.run_controller import HardwareRunController, HardwareRunRequest
+from hardware.interfaces import LogicalChannelRouteResult
 from domain.models import RunState
 
 
@@ -35,7 +36,7 @@ class FakeSwitch:
         return 1
 
     def set_channel(self, channel):
-        return channel
+        return LogicalChannelRouteResult(channel, channel)
 
     def close(self):
         pass

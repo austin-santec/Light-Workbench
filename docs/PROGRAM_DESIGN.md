@@ -3,10 +3,12 @@
 ## Purpose
 
 Light Workbench is a Windows optical-test application. Its current primary
-workflow controls a Santec OSX-150 optical switch and an ILM-100 exposed as an
-OP815 power meter. It measures insertion loss at 1310 nm and 1550 nm, guides
-the operator through channel testing, stores accepted readings, and provides
-analysis and COC export tools.
+workflow controls supported Santec OSX-100/OSX-150 optical switches and an
+ILM-100 exposed as an OP815 power meter. It supports operator-selected SM
+(1310/1550 nm) and MM (850/1300 nm) insertion-loss modes, guides the operator
+through channel testing, stores accepted readings in SQL Server, and provides
+analysis and COC export tools. OSX-150 MM data can be measured and analyzed but
+does not have an approved COC workflow.
 
 The long-term design must also support an OPM and separate laser source. The
 application should therefore describe the test capabilities rather than being
@@ -14,24 +16,23 @@ hardcoded around the current ILM hardware.
 
 ## Current runtime boundaries
 
-The current application is centered in `ilm_app.py`, with supporting modules
-for hardware, measurement workers, persistence, analysis, live readings, red
-light testing, and COC export. This is a working legacy architecture that is
-being refactored incrementally.
+The desktop composition and main window remain centered in `ilm_app.py`, with
+supporting application, domain, hardware, infrastructure, and UI packages.
+Root-level modules retained for older imports are compatibility surfaces, not
+the preferred location for new responsibilities.
 
 The current entry point is `ilm_app.py`. `ILMReadLoss.py` is an older console
 workflow and should be treated as legacy unless a change explicitly requires
 maintaining it.
 
-Typed, vendor-neutral domain models are being introduced in `domain/models.py`.
+Typed, vendor-neutral domain models are defined in `domain/models.py`.
 Shared default paths and injectable path bundles are defined in
 `config/app_config.py`. Existing persistence modules retain compatibility facades
 while the application migrates to those models.
 
-The hardware-run lifecycle is being extracted into
-`application/run_controller.py`. The controller owns the worker thread and
-exposes queued commands and UI-facing signals; `MainWindow` remains the owner
-of presentation and operator prompts during this migration.
+The hardware-run lifecycle is owned by `application/run_controller.py`. The
+controller owns the worker thread and exposes queued commands and UI-facing
+signals; `MainWindow` owns presentation and operator prompts.
 
 `application/live_controller.py` and `application/red_light_controller.py`
 provide the same separation for the meter-only Live IL and switch-only Red
@@ -94,17 +95,21 @@ response timeout from a short post-byte idle timeout so short binary frames do
 not become false transport failures. The application worker
 owns method dispatch, finite SCPI sequencing, CLI sequential probing, and
 operator decisions; Qt owns only presentation.
-The normal `set_channel()` path remains logical VISA/SCPI routing; the distinct
-`set_physical_port()` capability cannot change or reinterpret it. Both paths
-are serialized by the persistent hardware manager.
+The normal `set_channel()` path remains logical VISA/SCPI routing and returns a
+typed logical-route confirmation. `CLOSe?` confirms the active logical channel;
+it is never physical-mapping evidence. The worker resolves the documented
+physical port independently from the assignment's effective channel map. The
+distinct `set_physical_port()` capability cannot change or reinterpret this
+contract. Both paths are serialized by the persistent hardware manager.
 
 An extra candidate remains provisional after routing and measurement. Retry,
 Stop Extra Testing, rejected readings, and route failures discard it; CLI mode
 also supports No More Physical Ports. Only the existing Write IL commit path
-creates one atomic two-wavelength database attempt. The commanded extra logical
-channel and verified/reported physical port are stored separately. This allows
-existing replacement analysis to use accepted extras without making them
-required channels or direct COC rows.
+creates one atomic two-wavelength database attempt. In SCPI mode, the requested
+configured extra channel is also the physical candidate identity; `CLOSe?`
+confirms only that logical target. CLI mode uses the explicit physical-port
+request and does not call `CLOSe?`. This allows replacement analysis to use
+accepted extras without making them required channels or direct COC rows.
 
 `domain/measurement.py` owns the instrument-independent insertion-loss formula.
 `domain/wavelengths.py` independently models the operator-selected OPM/source
@@ -127,13 +132,13 @@ The operator may optionally include the in-memory OP815 hardware trace. CSV
 exports write a companion `<history-stem>-hardware-trace.csv`; JSON exports
 add a `hardware_trace` object containing session metadata and chronological
 events. The trace is linked to each complete history reading by measurement ID
-and is never collected or written by normal production runs. Automatically
+and is never collected or written by normal recorded hardware runs. Automatically
 suggested filenames use local time and deterministic numeric collision suffixes.
 The diagnostic hardware sequence performs a final `GetWavelength` verification
 after source settling and immediately before `ReadPower`; an unsupported or
 reported-OPM-wavelength mismatch blocks that sample. Index/count convention
 differences are retained as diagnostic warnings and do not stop a normal
-production run when the reported OPM wavelength is correct. This readback does
+recorded run when the reported OPM wavelength is correct. This readback does
 not verify the physical laser wavelength.
 
 `domain/reference.py` owns the zero-reference-to-offset conversion and the
@@ -142,14 +147,15 @@ the session-only authorization bank, keyed by connected measurement context
 and selected SM/MM configuration. Live IL and Power Measurement Diagnostics
 may display temporary values, but only the main calculated-reference workflow,
 Admin Mode's explicit manual-apply action, or an explicit diagnostic Apply
-action can authorize a production run. Accepted readings persist the snapshot
-used for their calculation. Loading historical runs never changes this bank;
+action can authorize recorded hardware acquisition. Accepted readings persist
+the snapshot used for their calculation. Loading historical runs never changes this bank;
 a confirmed ILM/power-meter disconnect clears it.
 
-`domain/reference_catalog.py` owns run-local `Ref N` labels for immutable
-reference snapshots. The infrastructure persistence layer writes each unique
+`domain/reference_catalog.py` owns legacy-file `Ref N` labels for immutable
+reference snapshots. SQL-backed accepted attempts store a bounded reference
+snapshot with the measurement. The file compatibility layer writes each unique
 reference once in the CSV catalog and keeps a compact reference key on each
-measurement row, while legacy per-row reference CSVs remain loadable.
+measurement row, while older per-row reference CSVs remain loadable.
 
 `application/run_preflight.py` is the side-effect-free gate for production
 Start Run entry points. It normalizes channel selection through the existing
@@ -218,11 +224,11 @@ automatically calculated all-history projection; it does not expose a manual
 supplemental-run picker. Neither layer edits source measurements or creates a
 synthetic combined run.
 
-`infrastructure/run_repository.py` is the application-facing boundary for
-file-backed CSV/JSON run storage and numbered-run lookup. The established
-`run_data.py` and `run_persistence.py` import paths remain compatibility
-facades, so the UI no longer needs to know which file-backed repository
-implementation is selected.
+`infrastructure/run_repository.py` is the legacy-file boundary for CSV/JSON
+run loading, explicit file persistence, and numbered-run lookup. New hardware
+runs use the database-primary workflows and repository contracts under
+`application/` and `infrastructure/database/`. The established `run_data.py`
+and `run_persistence.py` import paths remain compatibility facades.
 
 `domain/run_status.py` owns the derived two-part run assessment. Completion is
 based on accepted readings compared with the saved hardware plan, while result
@@ -240,9 +246,11 @@ and COC behavior. `ui/reading_history.py` presents the append-only history in
 the Run information box, while support JSONL remains diagnostic evidence and
 is not needed to reconstruct retests.
 
-`infrastructure/unit_repository.py` provides the corresponding boundary for
-unit JSON records, unit-level replacement/spare data, and numbered run-folder
-resolution. Unit identity remains separate from run-specific switch identity.
+`infrastructure/unit_repository.py` provides the corresponding legacy-file
+boundary for unit JSON records, unit-level replacement/spare data, and numbered
+run-folder resolution. Database runs instead use assignment-scoped unit/switch
+identity and routing repositories. Unit identity remains separate from switch
+identity.
 When `Load Run` follows an already loaded numbered run, the repository first
 reuses that run's validated unit directory. This preserves nested or renamed
 sample-unit folders while requiring the persisted main-board serial to match;
@@ -281,13 +289,15 @@ silently inheriting the connected device or an OSX-150 default. Older runs
 remain loadable through a legacy single-warning-limit profile where that is
 safe.
 
-`infrastructure/run_persistence.py` owns run folder naming, atomic CSV/JSON
-recording, continuation renaming, and legacy JSON loading. The root
+`infrastructure/run_persistence.py` owns legacy run-folder naming, atomic
+CSV/JSON recording, continuation renaming, and JSON loading. It is not the
+automatic write path for new database-backed runs. The root
 `run_persistence.py` module remains a compatibility facade for older callers.
 
-`infrastructure/unit_persistence.py` owns unit JSON records, numbered-run
-paths, and persistence/migration of shared replacement history and designated
-spares. The root `unit_persistence.py` module remains a compatibility facade.
+`infrastructure/unit_persistence.py` owns legacy unit JSON records, numbered-run
+paths, and compatibility persistence/migration of shared replacement history
+and designated spares. The root `unit_persistence.py` module remains a
+compatibility facade.
 
 `infrastructure/coc_export.py` owns model/mode/capacity-aware template
 validation, COC workbook creation, merged-cell/row cleanup, print-area
@@ -402,9 +412,10 @@ run identity, and unit identity.
 
 ### Infrastructure layer
 
-Responsible for concrete hardware drivers, VISA/DLL communication, CSV/JSON
-storage, XLSX export, configuration paths, and packaging. A future indexed
-storage option may be evaluated here without changing domain reporting.
+Responsible for concrete hardware drivers, VISA/DLL communication, SQL Server
+repositories and migrations, legacy CSV/JSON compatibility, XLSX export,
+configuration paths, and packaging. Storage details remain behind repository
+interfaces so domain reporting does not execute SQL or parse file layouts.
 
 ## Important workflow rules
 
@@ -413,7 +424,8 @@ storage option may be evaluated here without changing domain reporting.
   run results.
 - Live IL reading and red light testing are independent tools and must not add
   switch-test timing or run measurements.
-- A run belongs to a unit, but switch identity is run-specific.
+- A database run belongs to one immutable unit/switch assignment. Legacy file
+  runs retain their historical unit and run-specific switch metadata.
 - Database replacements and designated spares are assignment-scoped. A new
   main-board/switch pairing starts with a fresh identity map and no replacement
   history, spare events, extra-port readings, analyses, or COC eligibility from
@@ -458,7 +470,7 @@ many important operator workflows.
 
 ## Measurement validation boundary
 
-The domain measurement module owns two hardware-independent production rules:
+The domain measurement module owns two hardware-independent recording rules:
 calculated reference power below -40.0 dBm is a dark-reference failure, and
 insertion loss is invalid when either wavelength is negative after rounding to
 four decimal places. The application presents these results and gates controls;
@@ -471,7 +483,7 @@ run persistence. Live Write Mode keeps sampling without repeated modal dialogs.
 New runs explicitly record one of four purposes: `production`, `engineering`,
 `training`, or `calibration`. Production is the default. Purpose is part of the
 run record rather than a hardware identity field, so it does not create a new
-unit folder or alter channel measurements. Purpose does not automatically void
+unit/switch assignment or alter channel measurements. Purpose does not automatically void
 a run; production-only reports still filter by purpose, while purpose-neutral
 COC and replacement analysis use technical compatibility and explicit run
 disposition. A completed run becomes included; stopped or failed runs remain

@@ -35,7 +35,7 @@ from domain.wavelengths import (
 )
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from hardware.device_identity import device_info_for
-from hardware.interfaces import OpticalSwitch, PowerMeter
+from hardware.interfaces import LogicalChannelRouteResult, OpticalSwitch, PowerMeter
 from hardware.session import OpticalTestSession
 
 
@@ -93,6 +93,7 @@ class MeasurementWorker(QObject):
         ),
         extra_port_safety_limit: int | None = None,
         persistence_run_id: int | None = None,
+        effective_channel_map: Mapping[int, int] | None = None,
     ):
         super().__init__()
         self.power_meter = power_meter
@@ -172,6 +173,29 @@ class MeasurementWorker(QObject):
         self.persistence_run_id = (
             int(persistence_run_id) if persistence_run_id is not None else None
         )
+        self.effective_channel_map = {
+            int(logical): int(physical)
+            for logical, physical in dict(effective_channel_map or {}).items()
+            if int(logical) > 0 and int(physical) > 0
+        }
+
+    @staticmethod
+    def _confirmed_logical_route(result, requested_channel: int) -> LogicalChannelRouteResult:
+        """Require the explicit logical-route contract from switch adapters."""
+        if not isinstance(result, LogicalChannelRouteResult):
+            raise TypeError(
+                "The optical-switch adapter returned an ambiguous channel result; "
+                "a LogicalChannelRouteResult is required."
+            )
+        if (
+            not result.confirmed
+            or result.requested_logical_channel != int(requested_channel)
+        ):
+            raise RuntimeError(
+                "Logical channel %d was not confirmed by the optical switch."
+                % int(requested_channel)
+            )
+        return result
 
     @pyqtSlot()
     def run(self):
@@ -567,12 +591,16 @@ class MeasurementWorker(QObject):
         self._raise_if_stopped()
         self._finish_negative_episode("channel_changed")
         route_started = time.perf_counter()
-        physical_port = self.switch.set_channel(channel)
+        route = self._confirmed_logical_route(
+            self.switch.set_channel(channel), channel
+        )
+        physical_port = self.effective_channel_map.get(int(channel), int(channel))
         self._record(
             SupportEventCategory.HARDWARE,
             "switch.channel_routed",
-            logical_channel=channel,
-            physical_port=physical_port,
+            requested_logical_channel=route.requested_logical_channel,
+            reported_logical_channel=route.reported_logical_channel,
+            documented_physical_port=physical_port,
             elapsed_ms=(time.perf_counter() - route_started) * 1000.0,
             status="success",
         )
@@ -1172,21 +1200,28 @@ class MeasurementWorker(QObject):
         """Route one configured extra channel and share normal measurement logic."""
         try:
             route_started = time.perf_counter()
-            physical_port = self.switch.set_channel(logical_channel)
+            route = self._confirmed_logical_route(
+                self.switch.set_channel(logical_channel), logical_channel
+            )
+            # SCPI-mapped extras use their configured logical target as the
+            # physical candidate identity. CLOSe? confirms only the logical
+            # route and is never treated as physical-mapping evidence.
+            physical_port = int(logical_channel)
         except Exception as error:
             return self._extra_issue_decision(
                 logical_channel,
                 "scpi_route_failed",
-                "SCPI could not route or verify mapped channel %d: %s"
+                "SCPI could not route or confirm logical channel %d: %s"
                 % (logical_channel, error),
             )
         self._record(
             SupportEventCategory.HARDWARE,
             "extra_ports.route_result",
-            logical_channel=logical_channel,
-            physical_port=physical_port,
+            requested_logical_channel=route.requested_logical_channel,
+            reported_logical_channel=route.reported_logical_channel,
+            physical_candidate_port=physical_port,
             command_name="CLOSe",
-            verification_status="verified",
+            verification_status="logical_route_confirmed",
             routing_method=self.extra_channel_routing_method.value,
             elapsed_ms=(time.perf_counter() - route_started) * 1000.0,
             status="success",

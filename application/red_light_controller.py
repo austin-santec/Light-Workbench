@@ -5,7 +5,7 @@ from collections.abc import Callable
 from PyQt5.QtCore import QMetaObject, QObject, QThread, Qt, pyqtSignal, pyqtSlot
 
 from domain.models import RunState
-from hardware.interfaces import OpticalSwitch
+from hardware.interfaces import LogicalChannelRouteResult, OpticalSwitch
 from hardware.session import OpticalTestSession
 
 
@@ -40,8 +40,13 @@ class RedLightTestWorker(QObject):
         if self._finished:
             return
         try:
-            physical_port = self.switch.set_channel(int(channel))
-            self.channel_selected.emit(int(channel), int(physical_port))
+            route = self.switch.set_channel(int(channel))
+            if not isinstance(route, LogicalChannelRouteResult) or not route.confirmed:
+                raise RuntimeError("The switch did not confirm the requested logical channel.")
+            self.channel_selected.emit(
+                route.requested_logical_channel,
+                route.reported_logical_channel,
+            )
         except Exception as error:
             self.failed.emit("Could not select channel %d: %s" % (channel, error))
 

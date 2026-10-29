@@ -223,9 +223,11 @@ def build_effective_replacement_projection(
 
     expected_pair = (1310, 1550) if context_run.wavelength_mode == "SM" else (850, 1300)
     candidates = []
+    source_measurements = []
     review = []
     for run in included:
         for record in measurements_by_run.get(run.run_id, ()):
+            source_measurements.append(record)
             if _wavelength_pair(record) != expected_pair:
                 review.append(
                     "Measurement %d uses incompatible wavelengths" % record.measurement_id
@@ -456,6 +458,17 @@ def build_effective_replacement_projection(
     analysis["missing_channels"] = list(missing)
     analysis["designated_spares"] = sorted(int(value) for value in active_spares)
 
+    considered_measurement_ids = sorted(
+        int(record.measurement_id) for record in source_measurements
+    )
+    included_run_states = [
+        {
+            "run_id": run.run_id,
+            "analysis_status": run.analysis_status,
+            "superseded_by_run_id": run.superseded_by_run_id,
+        }
+        for run in included
+    ]
     source_material = {
         "assignment_id": context_run.assignment_id,
         "context_run_id": context_run.run_id,
@@ -464,8 +477,8 @@ def build_effective_replacement_projection(
             dict(context_run.measurement_hardware.get("switch") or {}).get("serial")
             or ""
         ),
-        "runs": [(run.run_id, run.analysis_status) for run in included],
-        "measurements": [item.record.measurement_id for item in front + extras],
+        "runs": included_run_states,
+        "measurements": considered_measurement_ids,
         "replacements": [item.replacement_id for item in replacement_rows],
         "spare_events": sorted(int(value) for value in spare_event_ids),
         "criteria": dict(context_run.limit_snapshot),
@@ -479,10 +492,13 @@ def build_effective_replacement_projection(
         "switch_serial": source_material["switch_serial"],
         "included_run_ids": [run.run_id for run in included],
         "included_run_numbers": [run.run_number for run in included],
+        "included_run_states": included_run_states,
+        "considered_measurement_ids": considered_measurement_ids,
+        "accepted_measurement_count": len(considered_measurement_ids),
         "selected_measurement_ids": [item.record.measurement_id for item in front],
         "extra_measurement_ids": [item.record.measurement_id for item in extras],
         "measurement_high_watermark_id": max(
-            (item.record.measurement_id for item in front + extras), default=None
+            considered_measurement_ids, default=None
         ),
         "replacement_ids": [item.replacement_id for item in replacement_rows],
         "replacement_high_watermark_id": max(

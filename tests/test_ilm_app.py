@@ -36,6 +36,7 @@ from domain.run_status import (
     RunStatusAssessment,
 )
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
+from hardware.interfaces import LogicalChannelRouteResult
 from domain.measurement_attempts import new_measurement_attempt
 from ilm_app import (
     AboutDialog,
@@ -101,7 +102,10 @@ class ReferenceSwitch:
         return 48
 
     def set_channel(self, channel):
-        return channel
+        return LogicalChannelRouteResult(channel, channel)
+
+    def current_logical_channel(self):
+        return 1
 
     def close(self):
         self.connected = False
@@ -2422,6 +2426,17 @@ class MainWindowTests(unittest.TestCase):
                 window.hardware_completed()
 
             analysis.assert_called_once_with(launch_source="post_run_prompt")
+        finally:
+            window.close()
+
+    def test_manual_analysis_button_uses_named_launch_source(self):
+        window = MainWindow()
+        try:
+            window.replacement_analysis_button.setEnabled(True)
+            with patch.object(window, "show_replacement_analysis") as analysis:
+                window.replacement_analysis_button.click()
+
+            analysis.assert_called_once_with(launch_source="manual_button")
         finally:
             window.close()
 

@@ -400,30 +400,22 @@ def read_channel(
     routed_physical_port,
     wait_for_cable=True,
 ):
-    """Wait for cable placement, verify routing, and read both wavelengths."""
+    """Wait for cable placement, confirm logical routing, and read both wavelengths."""
     if wait_for_cable:
         input(
             "Move the cable to channel %d, then press Enter when ready: "
             % channel
         )
 
-    # CLOSe? reports the physical port. A different number is normal when the
-    # switch maps this logical test channel to a replacement port.
-    actual_channel = switch.current_channel()
-    if actual_channel != routed_physical_port:
-        print(
-            "Warning: test channel %d initially routed to physical port %d, "
-            "but the OSX-150 now reports port %d. Continuing with port %d."
-            % (
-                channel,
-                routed_physical_port,
-                actual_channel,
-                actual_channel,
-            )
+    reported_channel = switch.current_logical_channel()
+    if reported_channel != channel:
+        raise RuntimeError(
+            "OSX logical route mismatch: requested %d but CLOSe? reported %d."
+            % (channel, reported_channel)
         )
 
     measurements = instrument.measure_both_wavelengths()
-    return measurements, actual_channel
+    return measurements, routed_physical_port
 
 
 def print_switch_position(test_channel, reported_channel):
@@ -481,7 +473,8 @@ def retest_completed_channels(
     """Retest selected completed channels and replace their saved rows."""
     for channel in channels:
         print("\nRetesting channel %d." % channel)
-        reported_channel = switch.set_channel(channel)
+        switch.set_channel(channel)
+        reported_channel = metadata.swapped_ports.get(channel, channel)
         print_switch_position(channel, reported_channel)
         if record_detected_port_swap(
             metadata,
@@ -553,7 +546,8 @@ def run_measurement_workflow(
 
     # Route the first channel before asking the user to move the cable.
     first_channel = channels[0]
-    reported_channel = switch.set_channel(first_channel)
+    switch.set_channel(first_channel)
+    reported_channel = metadata.swapped_ports.get(first_channel, first_channel)
     print_switch_position(first_channel, reported_channel)
     if record_detected_port_swap(
         metadata,
@@ -613,7 +607,10 @@ def run_measurement_workflow(
         if has_next_channel:
             next_channel = channels[channel_index + 1]
             print("Done reading, moving to next channel")
-            reported_channel = switch.set_channel(next_channel)
+            switch.set_channel(next_channel)
+            reported_channel = metadata.swapped_ports.get(
+                next_channel, next_channel
+            )
             print_switch_position(next_channel, reported_channel)
             if record_detected_port_swap(
                 metadata,
@@ -652,7 +649,6 @@ def main():
         # validated against its configured logical channel count.
         switch.connect()
         print("Connected to %s" % switch.identity)
-        print("Current OSX-150 channel: %d" % switch.current_channel())
         channel_count = switch.configured_channel_count()
         print("OSX-150 configured test-channel count: %d" % channel_count)
 

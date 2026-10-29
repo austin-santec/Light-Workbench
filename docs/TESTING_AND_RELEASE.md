@@ -70,6 +70,8 @@ replacement chains and verification states, every persisted result state,
 deterministic source fingerprints, permanent run voiding, and COC/status
 consistency. Migration tests must discover migration 0005, preserve old rows,
 convert excluded reasons to valid JSON, and retain legacy analysis statuses.
+They must also discover migration 0006, preserve ambiguous historical rows,
+and reclassify only unambiguous extra-candidate measurements.
 
 Persistent-connection tests must verify partial connection success, duplicate
 session prevention, exclusive lease conflicts, release without disconnect,
@@ -77,7 +79,8 @@ single-thread native calls, laser-safe shutdown, and application-close cleanup.
 
 Extra-channel coverage must remain hardware-free. Verify that missing admin
 configuration defaults to SCPI; SCPI extras use the exact finite configured
-range, call only `set_channel()`, retain returned physical ports separately,
+range, call only `set_channel()`, treat the requested configured channel as the
+physical candidate identity, confirm the same logical value through `CLOSe?`,
 skip accepted continuation rows, hide No More Physical Ports, and never save a
 failed route. Preserve CLI coverage for exact `b0 writereg mems.ch <port>\r\n`
 formatting, TCP port 2323, raw (not Telnet) transport, bounded reads, separate
@@ -105,12 +108,13 @@ measurement timing. Verify the ILM, switch, driver, VISA resource ownership,
 reference calculation, start/stop, and clean close behavior.
 
 For SCPI-mapped extras, verify the configured range on representative OSX-150
-firmware, including `CLOSe?` physical-port results and failure handling. For
+firmware, including `CLOSe?` logical-channel confirmation and mismatch failure
+handling. Confirm that no test treats its response as a physical port. For
 direct physical-port routing, additionally verify TCP/2323 framing and
 termination on both supported models/firmware families, capture actual success
 and error responses, confirm whether an approved readback exists, test the
 operator-confirmed unverified path, and prove that returning to a normal
-channel uses `CLOSe` and its existing `CLOSe?` verification.
+channel uses `CLOSe` and logical `CLOSe?` confirmation.
 
 ## Required checks
 
@@ -164,9 +168,9 @@ machine that only runs the packaged executable.
 
 ## Generated files
 
-`build/`, `dist/`, `__pycache__/`, packaged ZIP files, and local production run
-data are generated artifacts. They should not be treated as source modules or
-used as the location for architecture decisions.
+`build/`, `dist/`, `__pycache__/`, packaged ZIP files, explicit exports, and
+legacy/sample local run data are generated artifacts. They should not be
+treated as source modules or used as the location for architecture decisions.
 
 ## Release checklist
 
@@ -175,7 +179,7 @@ used as the location for architecture decisions.
   indefinite retention, over-size warnings, redaction, bounded queues, fallback writing,
   trace fan-out, bundles, and UI dialogs without using real hardware.
 - Tests pass.
-- Production Start Run preflight tests cover normal-operator field blocking,
+- Start Run preflight tests cover normal-operator field blocking,
   channel-mode validation, reference authorization, the Admin metadata-only
   exception, and no-file/no-hardware-side-effect failures.
 - Build succeeds.

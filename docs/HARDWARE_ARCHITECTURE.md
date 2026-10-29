@@ -56,11 +56,12 @@ adapter opens a fresh session and probes only `*IDN?`
 with LF, then CRLF if needed. A supported identity selects the session ending.
 It then queries `CFG:SWT:END?` and requires a positive configured channel count
 before the switch is considered ready. `CLOSe?` is not used during connection;
-it is only used to verify the physical port after a `CLOSe <channel>` routing
-command. A zero count, SCPI error, timeout, or nonnumeric response retains the
+after `CLOSe <channel>`, it reports the active logical channel and confirms that
+the requested logical route became active. It does not report or verify the
+underlying physical mapping. A zero count, SCPI error, timeout, or nonnumeric response retains the
 known model, serial, firmware, address, ending, command, and response in
 transient diagnostics while safely closing the session and blocking routing.
-These details are hardware status only and do not alter run CSV/JSON data or
+These details are hardware status only and do not alter persisted run data or
 measurement timing.
 
 Normal switch VISA failures are classified at the hardware boundary before
@@ -88,15 +89,19 @@ without claiming that the switch was physically disconnected.
 
 Normal channels `1..N`, where `N` is parsed from the unit part number, continue
 to use USB/VISA `CLOSe <logical channel>`, the existing 250 ms switch-settling
-delay, and `CLOSe?` physical-port verification. A larger `CFG:SWT:END?` result
+delay, and `CLOSe?` logical-channel confirmation. The adapter returns a typed
+result containing requested and reported logical channels; a mismatch blocks
+measurement. The documented physical port comes from the assignment's
+effective channel map, not from switch readback. A larger `CFG:SWT:END?` result
 does not expand the normal pass beyond `N`.
 
 The administrator-selected extra-channel method is fixed for a run. The
 default `scpi_mapped` method treats `CFG:SWT:END?` as the known configured
 logical endpoint `M`. If `M > N`, it offers exactly `N + 1..M`, routes each
 candidate through the same verified `set_channel()` SCPI path, and completes
-automatically at `M`. The commanded logical channel and returned physical port
-are retained separately. `M = N` means no SCPI extras are configured; `M < N`
+automatically at `M`. The requested configured extra channel is retained as the
+physical candidate identity, while `CLOSe?` confirms only the same logical
+target. `M = N` means no SCPI extras are configured; `M < N`
 is a blocking configuration mismatch. Operators must temporarily configure
 the extra mappings outside Light Workbench; the application does not edit the
 module map.
@@ -257,9 +262,10 @@ Light Workbench does not infer the mode from ILM identity, firmware, serial
 number, product option, power readings, or cached history.
 
 The selected mode is stored with each reference and reading. New MM readings
-use the independent MM limit profile and normal analysis; the current COC
-workflow remains SM-only because its report templates and qualification rules
-are SM-specific. Historical compatibility records remain loadable for review.
+use the independent MM limit profile and normal analysis. COC export supports
+approved OSX-100 SM and MM templates and OSX-150 SM templates; OSX-150 MM
+remains blocked because no approved template/profile exists. Historical
+compatibility records remain loadable for review.
 
 Device identity and any adapter capability metadata are recorded for support,
 but they do not select or override the operator's mode. The main window does
@@ -268,9 +274,9 @@ product option. A future adapter can describe native MM hardware at the same
 boundary without changing the manual selection workflow.
 
 The application records both wavelength sets and the classification in
-references, accepted readings, diagnostic exports, traces, CSV/JSON run data,
-and accepted-attempt history. Mode changes are blocked during active hardware
-operations and select the matching session reference without deleting the
+references, accepted database readings, diagnostic exports, traces, legacy
+CSV/JSON run data, and accepted-attempt history. Mode changes are blocked during
+active hardware operations and select the matching session reference without deleting the
 other mode's reference. The laser/source order,
 settling constants, and `reference - measured power` calculation are unchanged.
 All profile-aware validation and diagnostic calls receive the active OPM pair
@@ -364,7 +370,7 @@ Transient communication errors remain distinct from confirmed disconnects.
 
 ## Measurement pipeline
 
-The intended future pipeline is:
+The current measurement pipeline is:
 
 ```text
 select channel

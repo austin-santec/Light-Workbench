@@ -59,8 +59,8 @@ For every channel, it can:
 - Display both insertion-loss values before saving them.
 - Accept the displayed reading with Enter.
 - Discard and retest the same channel by entering `-` and pressing Enter.
-- Record switch and main-board metadata and automatically detect swapped ports
-  encountered during the selected test channels.
+- Record switch and main-board metadata and apply the assignment's documented
+  logical-to-physical map to accepted readings.
 - Use the entered serial numbers in the run folder and CSV names.
 - Preserve every previously accepted row if the run is stopped with Ctrl+C.
 - Store multiple numbered runs for one unit while sharing completed replacements
@@ -93,8 +93,8 @@ From `Tools > Red Light Test...`, the operator can open a separate pre-test
 window for checking a switch with a VFL. Opening the menu item does not connect
 to the switch. Click `Start Red Light Test` to connect and select channel 1;
 then use the channel number, Up/Down keys, Previous/Next buttons, or a typed
-channel number to route the switch. The dialog reports the physical port
-returned by the switch and releases it when stopped or closed. The switch
+channel number to route the switch. The dialog reports logical-channel
+confirmation from the switch and releases it when stopped or closed. The switch
 remains connected to Light Workbench for later use. It does not
 measure IL, create run files, or affect COC data.
 
@@ -478,8 +478,9 @@ The administrator-selected routing method is fixed for the run:
 
 - `SCPI mapped channels` is the default. Extra channels must be temporarily
   present in the switch module configuration. Light Workbench tests the exact
-  configured range above the front-panel count with the normal verified
-  `CLOSe`/`CLOSe?` path and stops at the configured endpoint.
+  configured range above the front-panel count with `CLOSe` and logical
+  `CLOSe?` confirmation, treats each requested configured channel as that
+  candidate's physical identity, and stops at the configured endpoint.
 - `CLI direct physical ports (Experimental)` retains sequential unknown-capacity
   discovery over TCP port 2323. It is available only through Admin Config and
   requires the operator to identify the last installed port.
@@ -574,7 +575,7 @@ workbook is located.
 Saved readings remain available for a later explicit export.
 Retest readings replace complete configured wavelength pairs by logical
 channel according to persisted recency. The source run, measurement ID,
-attempt, timestamp, and reported physical port remain traceable. A changed
+attempt, timestamp, and documented physical port remain traceable. A changed
 physical port must match a completed Current Port -> Replacement Port record.
 
 The report is blocked if a required front-panel channel is missing, invalid,
@@ -839,6 +840,8 @@ source `1` is 1550 nm.
 
 The program always requests a **logical test channel**, such as channel 2. The
 OSX-150 applies whatever replacement mapping is saved in its own configuration.
+On approved firmware, `CLOSe?` reports that logical channel; it does not reveal
+the underlying physical route.
 
 For example, if logical channel 2 has been replaced by physical port 49:
 
@@ -846,17 +849,12 @@ For example, if logical channel 2 has been replaced by physical port 49:
 OSX-150 test channel 2 is using replacement physical port 49.
 ```
 
-This is informational and does not stop the test. The CSV records logical
-channel `2`, because that is the position being tested. The same behavior works
-for other replacements, including physical ports 50-56, without hard-coded
-mappings in Python.
-
-Every mismatch encountered while routing a tested channel is automatically
-added to the `Swapped ports` metadata row in the form `2->49, 36->52`. If no
-mismatches are encountered, the row says `None detected in tested channels`.
-For a one-channel or partial-range run, this describes only the channels tested
-in that run; the program does not move through unselected channels merely to
-inspect their mappings.
+Light Workbench confirms logical channel `2`, then obtains physical port `49`
+from the assignment's append-only replacement history. The accepted database
+measurement stores both values. A post-replacement reading is valid evidence
+only when it was taken after the replacement and its recorded physical port
+matches the current effective assignment map. Light Workbench does not infer or
+repair that map from `CLOSe?`.
 
 For a full pass, the required front-panel range comes from the part number.
 `CFG:SWT:END?` supplies the configured logical count: fewer configured channels

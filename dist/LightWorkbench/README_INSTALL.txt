@@ -199,7 +199,9 @@ After a completed OSX-150 front-panel pass, extra-channel behavior follows the
 method selected in Admin Config. The default SCPI method offers only logical
 channels above the front-panel count that are already present in the switch's
 temporary module configuration, routes them with `CLOSe`, verifies them with
-`CLOSe?`, and stops at the configured endpoint. Light Workbench does not add or
+logical `CLOSe?` confirmation, and stops at the configured endpoint. The query
+does not report a physical mapping; the requested configured extra channel is
+the candidate port identity. Light Workbench does not add or
 remove those mappings. The experimental CLI method instead probes direct
 physical ports sequentially and keeps the operator-controlled `No More Physical
 Ports` action because capacity is unknown. The application never falls back

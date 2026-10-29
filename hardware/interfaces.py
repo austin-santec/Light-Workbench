@@ -8,12 +8,38 @@ or a particular instrument model.
 """
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from domain.models import ConnectionState, DeviceInfo
 
 
 WAVELENGTHS_NM: tuple[int, ...] = (1310, 1550)
+
+
+@dataclass(frozen=True)
+class LogicalChannelRouteResult:
+    """Confirmation that a requested SCPI logical channel became active.
+
+    ``CLOSe?`` is a logical-channel query on approved firmware.  This result
+    deliberately contains no physical-port field so callers cannot mistake a
+    route acknowledgement for evidence of the switch's internal mapping.
+    """
+
+    requested_logical_channel: int
+    reported_logical_channel: int
+
+    def __post_init__(self) -> None:
+        requested = int(self.requested_logical_channel)
+        reported = int(self.reported_logical_channel)
+        if requested < 1 or reported < 1:
+            raise ValueError("Logical channel values must be positive")
+        object.__setattr__(self, "requested_logical_channel", requested)
+        object.__setattr__(self, "reported_logical_channel", reported)
+
+    @property
+    def confirmed(self) -> bool:
+        return self.requested_logical_channel == self.reported_logical_channel
 
 
 @runtime_checkable
@@ -66,8 +92,11 @@ class OpticalSwitch(Protocol):
     def configured_channel_count(self) -> int:
         """Return the number of logical channels configured for the test."""
 
-    def set_channel(self, channel: int) -> int:
-        """Select a logical channel and return its physical port."""
+    def current_logical_channel(self) -> int:
+        """Return the logical channel reported by the switch."""
+
+    def set_channel(self, channel: int) -> LogicalChannelRouteResult:
+        """Select and confirm a logical channel without inferring its mapping."""
 
     def close(self) -> None:
         """Release the switch connection."""

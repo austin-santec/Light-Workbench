@@ -1,17 +1,18 @@
 import unittest
 
-from hardware.interfaces import LaserSource, OpticalSwitch
+from hardware.interfaces import LaserSource, LogicalChannelRouteResult, OpticalSwitch
 from hardware.simulated import SimulatedLaserSource, SimulatedOpticalSwitch
 
 
 class SimulatedHardwareTests(unittest.TestCase):
     def test_simulated_switch_routes_channels_and_tracks_selection(self):
-        switch = SimulatedOpticalSwitch(3, [101, 102, 103])
+        switch = SimulatedOpticalSwitch(3)
         switch.connect()
 
         self.assertIsInstance(switch, OpticalSwitch)
         self.assertEqual(switch.configured_channel_count(), 3)
-        self.assertEqual(switch.set_channel(2), 102)
+        self.assertEqual(switch.set_channel(2), LogicalChannelRouteResult(2, 2))
+        self.assertEqual(switch.current_logical_channel(), 2)
         self.assertEqual(switch.selected_channels, [2])
 
         switch.close()

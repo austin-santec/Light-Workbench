@@ -51,7 +51,7 @@ class SwitchVisaErrorTests(unittest.TestCase):
             with self.subTest(status_code=status_code):
                 classification = classify_switch_visa_error(
                     VisaIOError(status_code),
-                    operation="querying the active physical port",
+                    operation="querying the active logical channel",
                 )
                 self.assertEqual(classification.category, category)
                 self.assertIn(expected_text, classification.operator_message)
@@ -85,7 +85,7 @@ class SwitchVisaErrorTests(unittest.TestCase):
         self.assertEqual(communication[0]["error_category"], "system_error")
         self.assertEqual(communication[0]["command"], "CLOSe 3")
 
-    def test_current_channel_query_wraps_connection_lost(self):
+    def test_current_logical_channel_query_wraps_connection_lost(self):
         class Instrument:
             def query(self, _command):
                 raise VisaIOError(-1073807194)
@@ -96,7 +96,7 @@ class SwitchVisaErrorTests(unittest.TestCase):
         switch.profile = SantecSwitchProfile(model="OSX-100")
 
         with self.assertRaises(SwitchCommunicationError) as caught:
-            switch.current_channel()
+            switch.current_logical_channel()
 
         self.assertEqual(
             caught.exception.classification.category,

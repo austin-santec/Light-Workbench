@@ -167,14 +167,14 @@ class RedLightTestDialog(QDialog):
         self.select_channel(1)
         self.stop_button.setEnabled(True)
 
-    def _channel_selected(self, channel, physical_port):
+    def _channel_selected(self, channel, reported_channel):
         self._last_routed_channel = channel
         self.selected_channel_label.setText(
             "Selected channel: %d of %d" % (channel, self.channel_count)
         )
         self.status_label.setText(
-            "Physical port %s selected. Observe the VFL output, then choose "
-            "another channel." % physical_port
+            "Logical channel %s confirmed. Observe the VFL output, then choose "
+            "another channel." % reported_channel
         )
 
     def _switch_failed(self, message):
@@ -193,7 +193,7 @@ class RedLightTestDialog(QDialog):
         self.switch = None
 
     def select_channel(self, channel=None):
-        """Route the selected channel and report the physical port returned."""
+        """Route the selected logical channel and report its confirmation."""
         if not self.started or self.red_controller.worker is None:
             return
         channel = self.channel_spin.value() if channel is None else int(channel)

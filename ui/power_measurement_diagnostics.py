@@ -163,7 +163,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self.history = []
         self.reference_progress = None
         self.channel_count = 0
-        self.last_physical_port = None
+        self.last_reported_logical_channel = None
         self.last_reference_measurements = None
 
         self.monitor_timer = QTimer(self)
@@ -219,8 +219,8 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self.channel_spin.setKeyboardTracking(False)
         self.channel_spin.setToolTip("Logical channel to route through the switch.")
         switch_form.addRow("Logical channel:", self.channel_spin)
-        self.physical_port_label = QLabel("-")
-        switch_form.addRow("Physical port:", self.physical_port_label)
+        self.reported_channel_label = QLabel("-")
+        switch_form.addRow("Confirmed logical channel:", self.reported_channel_label)
         switch_layout.addLayout(switch_form)
         channel_buttons = QHBoxLayout()
         self.set_channel_button = QPushButton("Set Channel")
@@ -551,9 +551,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
         self.pending_method = method
         self.pending_trace_id = len(self.history) + 1
         channel = self.channel_spin.value() if self.switch_connected else None
-        physical_port = (
-            self.last_physical_port if self.switch_connected else None
-        )
+        physical_port = None
         self.status_label.setText(
             "Reading %d nm and %d nm absolute power..." % self.wavelengths
         )
@@ -609,7 +607,12 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
                 self.measurement_configuration.classification.value
             ),
             logical_channel=(self.channel_spin.value() if self.switch_connected else None),
-            physical_port=(self.last_physical_port if self.switch_connected else None),
+            physical_port=None,
+            reported_logical_channel=(
+                self.last_reported_logical_channel
+                if self.switch_connected
+                else None
+            ),
             acquisition_method=method,
             reading_state="diagnostic_in_memory",
             both_wavelengths_complete=True,
@@ -674,11 +677,7 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
             method=method,
             channel=self.channel_spin.value() if self.switch_connected else None,
-            physical_port=(
-                self.last_physical_port
-                if self.switch_connected and self.last_physical_port is not None
-                else None
-            ),
+            physical_port=None,
             measured_1310=float(measured[self.wavelengths[0]]),
             reference_1310=float(reference_1310),
             insertion_loss_1310=float(loss_1310),
@@ -945,12 +944,12 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
             "Selecting logical channel %d..." % self.channel_spin.value()
         )
 
-    def _channel_selected(self, channel, physical_port):
-        self.last_physical_port = physical_port
-        self.physical_port_label.setText(str(physical_port))
+    def _channel_selected(self, channel, reported_channel):
+        self.last_reported_logical_channel = reported_channel
+        self.reported_channel_label.setText(str(reported_channel))
         self.switch_status_label.setText(
-            "Logical channel %d selected; physical port %s is active."
-            % (channel, physical_port)
+            "Logical channel %d selected and confirmed by the switch."
+            % channel
         )
 
     def previous_channel(self):
@@ -985,9 +984,9 @@ class PowerMeasurementDiagnosticsDialog(QDialog):
     def _reset_switch_state(self):
         self.switch_connected = False
         self.channel_count = 0
-        self.last_physical_port = None
+        self.last_reported_logical_channel = None
         self.channel_spin.setRange(1, 1)
-        self.physical_port_label.setText("-")
+        self.reported_channel_label.setText("-")
         self.switch_status_label.setText("Switch not connected")
         self._update_controls()
 

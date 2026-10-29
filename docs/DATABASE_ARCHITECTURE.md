@@ -16,10 +16,11 @@ Database-neutral repositories and the unit, assignment, run-lifecycle,
 atomic-measurement, current/history query, and assignment-scoped routing
 boundaries are connected to the production hardware workflow.
 
-This document defines the SQL Server schema and persistence boundaries for the
-future database-backed version of Light Workbench. The database will start
-clean and will store future runs only. Existing CSV and JSON runs are mostly
-development/test data and are not scheduled for bulk import.
+This document defines the implemented SQL Server schema and persistence
+boundaries for the database-primary Light Workbench branch. The database was
+introduced as a clean start and stores newly created runs only. Existing CSV
+and JSON runs are mostly development/test or legacy data and are not scheduled
+for bulk import.
 
 On this database branch, SQL Server is authoritative for new run data. Existing
 CSV/JSON files remain viewable as legacy data and are not uploaded.
@@ -82,7 +83,7 @@ is explicitly requested.
 
 ## Design goals
 
-- Store future accepted switch-test data in one authoritative SQL Server
+- Store newly accepted switch-test data in one authoritative SQL Server
   schema.
 - Preserve the unit, installed switch, run, accepted measurement, retest,
   replacement, and designated-spare relationships.
@@ -101,7 +102,7 @@ is explicitly requested.
 
 ## Non-goals
 
-The first database implementation will not:
+The database-primary design does not:
 
 - Import existing `ILM-Reads` folders in bulk.
 - Store temporary, live, invalid, or unwritten meter samples.
@@ -109,9 +110,9 @@ The first database implementation will not:
 - Store COC workbooks, diagnostic exports, or support-log JSONL records.
 - Add an offline synchronization queue or local SQLite outbox.
 - Infer or command switch replacement mappings.
-- Store a pass/fail result that can become stale when reporting rules change.
-- Replace the existing application before the database implementation is
-  verified.
+- Store a mutable run pass/fail flag as measurement truth. Run/result displays
+  are derived from accepted measurements and immutable snapshots; saved
+  replacement-analysis classifications remain historical snapshots.
 
 ## Ownership model
 
@@ -490,7 +491,7 @@ history remains available for support and trend review.
 | `analyzed_at_utc` | `DATETIME2(3)` | Calculation time |
 | `analyzed_by` | `NVARCHAR(100)` | Operator associated with the run |
 | `application_version` | `VARCHAR(30)` | Version that calculated the result |
-| `source_measurement_high_watermark_id` | `BIGINT` | Highest accepted measurement included |
+| `source_measurement_high_watermark_id` | `BIGINT` | Maximum accepted measurement ID in the complete assignment-scoped source set; it may belong to any included run |
 | `front_panel_channel_count` | `INT` | Front-panel count used |
 | `wavelengths_json` | `NVARCHAR(MAX)` | Wavelength pair used |
 | `criteria_json` | `NVARCHAR(MAX)` | Limit and analysis criteria snapshot |
@@ -502,11 +503,14 @@ New `result_status` values are `optimized`, `recommendations_available`,
 `fail_no_viable_recovery`, `incomplete_input`, and `review_required`. Legacy
 `no_viable_recommendations` and `not_applicable_no_extra_ports` values remain
 loadable. `result_details_json.source_snapshot` contains assignment/context
-identity, included runs, selected measurement IDs, replacement/spare event
-IDs, watermarks, and a deterministic state fingerprint. The scalar measurement
-high-watermark remains for compatibility and referential integrity; freshness
-uses the full fingerprint. A changed source state makes the snapshot stale but
-never mutates or removes it from history.
+identity, included run states, every considered accepted measurement ID
+(including superseded attempts and replaced-channel rows), selected measurement
+IDs, replacement/spare event IDs, watermarks, and a deterministic state
+fingerprint. Save-time validation confirms that the context run, included runs,
+measurements, replacement history, and spare history still match atomically.
+The scalar measurement high-watermark remains for compatibility and referential
+integrity; freshness uses the full fingerprint. A changed source state makes
+the snapshot stale but never mutates or removes it from history.
 
 ### `REPLACEMENT_ANALYSIS_RECOMMENDATIONS`
 
@@ -667,7 +671,7 @@ prevention key.
 
 ### Starting a run
 
-Before a production run begins, the application must:
+Before a database-backed run begins, the application must:
 
 1. Confirm database connectivity and supported schema version.
 2. Resolve the unit, switch, and active assignment. A conflicting pairing is
@@ -683,7 +687,7 @@ closes those assignments, creates the fresh identity map, and inserts the new
 spare events, and saved analyses remain attached to their original assignment;
 none are carried into the new pairing.
 
-Red Light Test and Power Measurement Diagnostics do not create production run
+Red Light Test and Power Measurement Diagnostics do not create run
 records and may remain usable when the database is unavailable.
 
 ### Writing a measurement
@@ -793,8 +797,9 @@ Resolved:
 - SQL Server is the target engine.
 - Development uses `localhost\SQLExpress`, `LWBTestDB`, and Windows
   Authentication.
-- The database starts with future data; no historical bulk import is planned.
-- SQL Server becomes authoritative for new run data on the database branch.
+- The database was introduced as a clean start; no historical bulk import is
+  planned.
+- SQL Server is authoritative for new run data on the database branch.
 - Support logs remain local.
 - The ten-table schema and four read-only views are the approved
   baseline.
@@ -810,8 +815,8 @@ Remaining before production:
 
 ## Related documents
 
-- `docs/DATA_ARCHITECTURE.md` - current file-backed behavior and transition
-  boundary.
+- `docs/DATA_ARCHITECTURE.md` - current SQL-primary data behavior and legacy
+  file-compatibility boundary.
 - `docs/DATABASE_ROADMAP.md` - implementation milestones and exit criteria.
 - `docs/PROJECT_LAYOUT.md` - repository and source placement.
 - `docs/SUPPORT_LOGGING.md` - local engineering-log ownership.

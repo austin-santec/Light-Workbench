@@ -8,7 +8,8 @@ covers the current application workflow, deployment requirements, and operator
 features. This file focuses on architecture, coding practices, testing, and
 how to choose the other documents in this folder.
 
-The database development branch is SQL Server-primary for new production runs.
+The database development branch is SQL Server-primary for new recorded hardware
+runs of every purpose.
 Existing CSV/JSON runs can still be opened for review, but they are not
 uploaded or silently treated as writable database runs.
 
@@ -31,13 +32,16 @@ requirement into completed, partial, and not-yet-implemented work.
   switch, session, and shutdown boundaries.
 - [`DATA_ARCHITECTURE.md`](DATA_ARCHITECTURE.md) — units, runs, persistence,
   exports, and compatibility rules.
-- [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md) — approved SQL
-  Server-primary schema for future runs, including unit/switch
+- [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md) — implemented SQL
+  Server-primary schema for new runs, including unit/switch
   assignments, accepted attempts, replacements, spares, and analysis
   eligibility.
-- [`DATABASE_ROADMAP.md`](DATABASE_ROADMAP.md) — staged database milestones,
-  SQL Server Express development setup, tests, network rollout, and exit
-  criteria. Historical bulk import is intentionally out of scope.
+- [`DATABASE_ROADMAP.md`](DATABASE_ROADMAP.md) — completed local database
+  milestones, SQL Server Express development setup, tests, and the deferred
+  network-pilot exit criteria. Historical bulk import is intentionally out of
+  scope.
+- [`SAMPLE_DATABASE_DATA.md`](SAMPLE_DATABASE_DATA.md) — guarded synthetic
+  database scenarios, seeding commands, and safety rules.
 - [`TESTING_AND_RELEASE.md`](TESTING_AND_RELEASE.md) — test commands, build,
   packaging, and release checks.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — change workflow and review questions.
@@ -55,8 +59,9 @@ requirement into completed, partial, and not-yet-implemented work.
 Model-specific quality criteria are defined in `domain/limit_profiles.py`,
 stored through `infrastructure/limit_profile_repository.py`, and edited from
 the session-only `Edit > Admin Mode...` / `Edit > Admin Config...` workflow.
-New run JSON files snapshot the criteria so historical analysis does not change
-when an administrator updates a future profile.
+New database runs snapshot the criteria so historical analysis does not change
+when an administrator updates a future profile. Legacy JSON runs retain their
+existing criteria-snapshot compatibility behavior.
 
 The current release version is maintained in `config/app_info.py`; do not
 duplicate it in this index. The current desktop entry point is `ilm_app.py`,
@@ -87,8 +92,8 @@ Diagnostic history exports use local-time names in the form
 `diagnostic-history-YYYYMMDD-HHMMSS.csv` or `.json`, with deterministic numeric
 collision suffixes for automatically suggested names. The OP815 adapter also
 performs a final wavelength verification immediately before `ReadPower`; an
-unsupported or actual-wavelength mismatch blocks the diagnostic sample. Raw
-index/count convention differences are retained as trace warnings.
+unsupported or reported OPM-wavelength mismatch blocks the diagnostic sample.
+Raw index/count convention differences are retained as trace warnings.
 
 Final COC output is prepared from persisted run data rather than the visible
 table. The application derives the front-panel count from the selected context

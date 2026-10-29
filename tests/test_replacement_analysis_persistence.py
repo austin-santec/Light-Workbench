@@ -171,6 +171,63 @@ class ReplacementAnalysisPersistenceTests(unittest.TestCase):
             )
         )
 
+    def test_assignment_scoped_snapshot_can_use_measurement_from_an_included_run(self):
+        second = self.repository.create(
+            RunSpec(
+                assignment_id=self.run.assignment_id,
+                run_number=2,
+                client_run_uuid=uuid4(),
+                run_started_at_utc=NOW,
+                tested_by="AT",
+                wavelength_mode="SM",
+                operating_band="O band",
+                application_version="test",
+                measurement_hardware={"ilm": {"model": "OP815"}},
+                limit_snapshot={"model": "OSX-150", "failure_db": 2.5},
+                front_panel_channel_count=48,
+            )
+        )
+        considered = sorted(self.repository.measurements)
+        result = self._result()
+        result["recommendations"] = []
+        result["source_snapshot"] = {
+            "assignment_id": self.run.assignment_id,
+            "context_run_id": second.run_id,
+            "included_run_ids": [self.run.run_id, second.run_id],
+            "included_run_states": [
+                {
+                    "run_id": self.run.run_id,
+                    "analysis_status": self.run.analysis_status,
+                    "superseded_by_run_id": self.run.superseded_by_run_id,
+                },
+                {
+                    "run_id": second.run_id,
+                    "analysis_status": second.analysis_status,
+                    "superseded_by_run_id": second.superseded_by_run_id,
+                },
+            ],
+            "considered_measurement_ids": considered,
+            "measurement_high_watermark_id": max(considered),
+            "replacement_ids": [],
+            "spare_event_ids": [],
+            "state_fingerprint_sha256": "a" * 64,
+        }
+
+        saved = ReplacementAnalysisPersistenceWorkflow(self.repository).save_result(
+            run_id=second.run_id,
+            result=result,
+            analyzed_by="AT",
+            application_version="test",
+            front_panel_channel_count=48,
+            wavelengths=(1310, 1550),
+            criteria={"model": "OSX-150"},
+            measurement_count=3,
+        )
+
+        self.assertEqual(saved.record.run_id, second.run_id)
+        self.assertTrue(saved.is_current("a" * 64))
+        self.assertFalse(saved.is_current("legacy-nonnumeric-state"))
+
 
 if __name__ == "__main__":
     unittest.main()
