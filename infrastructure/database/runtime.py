@@ -46,6 +46,7 @@ def build_database_primary_workflow(
             database_server=settings.server,
             database_name=settings.database,
             database_driver=settings.driver,
+            database_authentication=settings.authentication,
             details="Per-user database.ini is active.",
         )
     factory = DatabaseConnectionFactory(settings)

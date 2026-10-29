@@ -25,6 +25,9 @@ RAW_RESPONSE_LIMIT = 1024
 DETAIL_LIMIT = 4096
 PROHIBITED_KEY_PARTS = (
     "password",
+    "pwd",
+    "connection_string",
+    "connectionstring",
     "token",
     "credential",
     "clipboard",

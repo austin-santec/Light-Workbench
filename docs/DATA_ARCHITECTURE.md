@@ -66,7 +66,9 @@ continue to load as native SM 1310/1550 runs.
 ## Format responsibilities
 
 - SQL Server: canonical structured application data for new recorded hardware runs on
-  the database branch.
+  the database branch. Runtime connections use Windows Authentication by default;
+  explicit SQL-password authentication is supported for approved workgroup
+  deployments.
 - JSON/CSV: legacy viewing, explicit exports, and compatibility with existing
   tools; they are not an automatic authoritative write path on this branch.
 - Clipboard raw-data copy: transient tab-separated text from accepted readings;

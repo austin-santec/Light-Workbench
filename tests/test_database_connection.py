@@ -5,6 +5,8 @@ from infrastructure.database.connection import (
     DatabaseConnectionError,
     DatabaseConnectionFactory,
     DatabaseErrorCategory,
+    build_sql_password_connection_string,
+    build_connection_string,
     build_windows_connection_string,
     classify_database_exception,
 )
@@ -50,6 +52,51 @@ class DatabaseConnectionTests(unittest.TestCase):
         self.assertIn("Trusted_Connection=yes", value)
         self.assertNotIn("UID=", value.upper())
         self.assertNotIn("PWD=", value.upper())
+
+    def test_connection_string_uses_sql_password_without_windows_auth(self):
+        value = build_sql_password_connection_string(
+            "tcp:AT-YOGA,49172",
+            "LWBTestDB",
+            "ODBC Driver 18 for SQL Server",
+            "lwb_app",
+            "TestOnly-Password-123!",
+            True,
+        )
+        self.assertIn("UID={lwb_app}", value)
+        self.assertIn("PWD={TestOnly-Password-123!}", value)
+        self.assertNotIn("TRUSTED_CONNECTION", value.upper())
+
+    def test_sql_password_connection_string_escapes_odbc_metacharacters(self):
+        value = build_sql_password_connection_string(
+            "tcp:server,49172",
+            "LWBTestDB",
+            "ODBC Driver 18 for SQL Server",
+            "user;name",
+            "pa};ss=word",
+            True,
+        )
+        self.assertIn("UID={user;name}", value)
+        self.assertIn("PWD={pa}};ss=word}", value)
+
+    def test_runtime_builder_dispatches_to_sql_password_mode(self):
+        settings = DatabaseSettings(
+            server="tcp:AT-YOGA,49172",
+            authentication="sql_password",
+            username="lwb_app",
+            password="TestOnly-Password-123!",
+        )
+        value = build_connection_string(settings)
+        self.assertIn("UID={lwb_app}", value)
+        self.assertNotIn("Trusted_Connection", value)
+
+    def test_authentication_error_detail_redacts_passwords(self):
+        result = classify_database_exception(
+            Exception("28000", "Login failed PWD=TestOnly-Password-123!;"),
+            ("TestOnly-Password-123!",),
+        )
+        self.assertEqual(result.category, DatabaseErrorCategory.AUTHENTICATION)
+        self.assertNotIn("TestOnly-Password-123!", result.technical_detail)
+        self.assertIn("PWD=<redacted>", result.technical_detail)
 
     def test_factory_bounds_connection_and_closes_it(self):
         created = _Connection()

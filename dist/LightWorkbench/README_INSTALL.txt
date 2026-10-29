@@ -13,10 +13,12 @@ application files.
 DATABASE BRANCH STORAGE
 -----------------------
 
-New production runs require the configured SQL Server database and Windows
-Authentication. Start Run is blocked when connectivity or schema preflight
-fails. Write IL saves the complete two-wavelength reading to SQL Server before
-the application advances; a failed write remains pending for retry.
+New production runs require the configured SQL Server database. Windows
+Authentication is the default, and SQL Server Authentication is supported for
+approved workgroup deployments. Start Run is blocked when connectivity or
+schema preflight fails. Write IL saves the complete two-wavelength reading to
+SQL Server before the application advances; a failed write remains pending for
+retry.
 
 Existing CSV/JSON runs can still be opened for review but are not uploaded and
 cannot be continued as database runs. Support logs, diagnostic exports, and COC
@@ -33,9 +35,11 @@ The database endpoint is stored in the per-user file:
 If the file does not exist, Light Workbench creates it automatically with
 the local development defaults. Existing files are preserved during startup,
 upgrades, and rebuilds. The file contains the SQL Server instance, database,
-ODBC driver, encryption policy, certificate policy, and bounded timeouts. It
-does not contain a username or password; Windows Authentication uses the
-signed-in Windows account.
+ODBC driver, authentication mode, optional SQL username/password, encryption
+policy, certificate policy, and bounded timeouts. Windows Authentication uses
+the signed-in Windows account. For SQL Server Authentication, enter the
+approved login and password in the per-user file; do not copy that file into
+source control or support bundles.
 
 If the file is malformed or contains an invalid setting, database use is
 blocked and the application identifies the file and the setting that must be

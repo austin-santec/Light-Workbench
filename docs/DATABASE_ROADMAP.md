@@ -7,7 +7,9 @@ This roadmap records implementation of the approved SQL Server schema in
 database-focused branch. New runs are SQL Server-primary; existing local runs
 remain view-only compatibility data and are not scheduled for bulk import.
 Milestone 11 is intentionally deferred until local database behavior has been
-manually validated and a managed network SQL Server rollout is approved.
+manually validated and a managed network SQL Server rollout is approved. A
+temporary workgroup pilot can use the implemented SQL-password connection mode
+without changing the schema or migration history.
 
 ## Milestone 0 - Freeze the database contract
 
@@ -84,18 +86,22 @@ using 32-bit Python, `pyodbc`, Windows Authentication, and ODBC Driver 18.
 
 ## Milestone 2 - Connection and configuration boundary
 
-Status: complete. Non-secret per-user SQL Server settings, automatic create-only
+Status: complete. Per-user SQL Server settings, automatic create-only
 initialization of the per-user `database.ini`, preservation of existing files,
-invalid-file validation, a credential-free example configuration, a bounded
-Windows-authenticated connection factory, short transaction contexts,
-read-only migration compatibility preflight, classified operator diagnostics,
-and credential-free support events are implemented. Database use is enabled by
-  default on the database branch and production persistence is connected.
+invalid-file validation, a credential-free example configuration, bounded
+Windows- and SQL-password-authenticated connection modes, short transaction
+contexts, read-only migration compatibility preflight, classified operator
+diagnostics, and credential-free support events are implemented. Database use
+is enabled by default on the database branch and production persistence is
+connected.
 
 ### Implement
 
 - Add configurable SQL Server instance and database settings.
-- Use Windows Authentication without embedded credentials.
+- Use Windows Authentication by default without embedded credentials.
+- Support explicit SQL Server Authentication for workgroup deployments through
+  per-user `database.ini` fields for authentication mode, username, and
+  password.
 - Add a database connection factory under `infrastructure/`.
 - Add bounded connections, parameterized commands, and short transactions.
 - Add startup/explicit connection diagnostics and schema compatibility checks.
@@ -111,6 +117,8 @@ and credential-free support events are implemented. Database use is enabled by
 ### Tests
 
 - Valid Windows-authenticated connection.
+- Valid SQL-password-authenticated connection using a dedicated least-privilege
+  login.
 - Unavailable server and invalid instance.
 - Missing database.
 - Insufficient permissions.
@@ -122,13 +130,30 @@ and credential-free support events are implemented. Database use is enabled by
 - UI and hardware modules do not know connection-string or SQL details.
 - Connection failures are actionable and do not expose credentials.
 
+### Workgroup SQL-password deployment
+
+This is an implemented extension of Milestone 2, not a schema milestone.
+
+- Enable SQL Server Mixed Mode on the approved host and restart the instance.
+- Create a dedicated SQL login such as `lwb_app`; keep `sa` disabled.
+- Map its database user to `lwb_app_writer` in `LWBTestDB`.
+- Configure each station's per-user INI with `authentication = sql_password`,
+  the shared login, and the shared password.
+- Keep migrations administrator-controlled through Windows Authentication.
+- Verify the SQL login from SSMS before validating Light Workbench.
+
+The shared login does not provide station identity at the SQL layer; station
+number and tester fields remain the application-level attribution. Password
+rotation requires updating each station's INI. No schema migration is needed.
+
 ### Operator/developer diagnostic
 
 Database settings are stored in
 `%LOCALAPPDATA%\LightWorkbench\config\database.ini`. The file contains only
-the endpoint, database, driver, encryption policy, and bounded timeouts. It
-never stores a username or password because the process uses Windows
-Authentication.
+the endpoint, database, driver, authentication policy, optional username and
+password, encryption policy, and bounded timeouts. SQL-password deployments
+intentionally store the shared password in plaintext in this per-user file;
+support logs and bundles never include it.
 
 Run the read-only readiness check with:
 
@@ -564,7 +589,7 @@ remain the current scope. This milestone does not authorize a network rollout.
 domain/          Database-independent entities, validation, status, and rules
 application/     Run/measurement/assignment orchestration and recovery flows
 infrastructure/  SQL Server connection factory, migrations, and repositories
-config/          Non-secret database endpoint and application settings
+config/          Database endpoint/authentication settings and application metadata
 ui/              Connection status, recovery prompts, and reporting screens
 tests/           Fake repository tests and isolated SQL integration tests
 docs/            Architecture, operations, and schema guidance

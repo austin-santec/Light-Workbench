@@ -149,7 +149,9 @@ def _print_scenarios(scenarios) -> None:
 def _print_target(settings) -> None:
     print(f"Target SQL Server: {settings.server}")
     print(f"Target database: {settings.database}")
-    print(f"Windows authentication: yes; enabled: {settings.enabled}")
+    print(
+        f"Authentication: {settings.authentication}; enabled: {settings.enabled}"
+    )
 
 
 def _print_dry_run(scenarios) -> None:

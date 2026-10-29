@@ -1,7 +1,8 @@
-"""Bounded Windows-authenticated SQL Server connection infrastructure."""
+"""Bounded SQL Server connection infrastructure."""
 
 from __future__ import annotations
 
+import re
 from contextlib import contextmanager
 from enum import Enum
 from typing import Any, Callable, Iterator
@@ -47,6 +48,12 @@ def _safe_odbc_value(value: str, label: str) -> str:
     return value.strip()
 
 
+def _odbc_quoted_value(value: str) -> str:
+    """Quote an ODBC value, including embedded closing braces safely."""
+
+    return "{" + str(value).replace("}", "}}") + "}"
+
+
 def build_windows_connection_string(
     server: str,
     database: str,
@@ -71,9 +78,83 @@ def build_windows_connection_string(
     )
 
 
-def classify_database_exception(error: Exception) -> DatabaseConnectionError:
+def build_sql_password_connection_string(
+    server: str,
+    database: str,
+    driver: str,
+    username: str,
+    password: str,
+    trust_server_certificate: bool,
+    encrypt: bool = True,
+) -> str:
+    """Build an encrypted ODBC string using SQL Server Authentication."""
+
+    server = _safe_odbc_value(server, "SQL Server instance")
+    database = _safe_odbc_value(database, "database name")
+    driver = _safe_odbc_value(driver, "ODBC driver")
+    if not str(username).strip():
+        raise ValueError("SQL-password authentication requires a database username")
+    if not str(password):
+        raise ValueError("SQL-password authentication requires a database password")
+    trust_value = "yes" if trust_server_certificate else "no"
+    encrypt_value = "yes" if encrypt else "no"
+    return (
+        f"DRIVER={{{driver}}};"
+        f"SERVER={server};"
+        f"DATABASE={database};"
+        f"UID={_odbc_quoted_value(username.strip())};"
+        f"PWD={_odbc_quoted_value(password)};"
+        f"Encrypt={encrypt_value};"
+        f"TrustServerCertificate={trust_value};"
+    )
+
+
+def build_connection_string(settings: DatabaseSettings) -> str:
+    """Build the runtime connection string for the configured auth mode."""
+
+    if settings.authentication == "windows":
+        return build_windows_connection_string(
+            settings.server,
+            settings.database,
+            settings.driver,
+            settings.trust_server_certificate,
+            settings.encrypt,
+        )
+    if settings.authentication == "sql_password":
+        return build_sql_password_connection_string(
+            settings.server,
+            settings.database,
+            settings.driver,
+            settings.username,
+            settings.password,
+            settings.trust_server_certificate,
+            settings.encrypt,
+        )
+    raise ValueError(f"Unsupported database authentication: {settings.authentication}")
+
+
+def _redact_database_detail(detail: str, secrets: tuple[str, ...] = ()) -> str:
+    """Remove credentials before a driver detail reaches logs or UI."""
+
+    for secret in secrets:
+        if secret:
+            detail = detail.replace(secret, "<redacted>")
+    return re.sub(
+        r"(?i)(password|pwd)\s*=\s*([^;\s]*)",
+        r"\1=<redacted>",
+        detail,
+    )
+
+
+def classify_database_exception(
+    error: Exception,
+    secrets: tuple[str, ...] = (),
+) -> DatabaseConnectionError:
     """Translate ODBC/SQL Server details into a stable, safe category."""
-    detail = " ".join(str(item) for item in getattr(error, "args", ()) or (error,))
+    detail = _redact_database_detail(
+        " ".join(str(item) for item in getattr(error, "args", ()) or (error,)),
+        secrets,
+    )
     upper = detail.upper()
     if "ENCRYPTION NOT SUPPORTED ON THE CLIENT" in upper:
         category = DatabaseErrorCategory.CONFIGURATION
@@ -89,13 +170,13 @@ def classify_database_exception(error: Exception) -> DatabaseConnectionError:
         message = "The database connection timed out."
     elif "28000" in upper or "18456" in upper or "LOGIN FAILED" in upper:
         category = DatabaseErrorCategory.AUTHENTICATION
-        message = "Windows Authentication was rejected by SQL Server."
+        message = "The configured database authentication was rejected by SQL Server."
     elif "4060" in upper or "CANNOT OPEN DATABASE" in upper:
         category = DatabaseErrorCategory.DATABASE_MISSING
         message = "The configured Light Workbench database is unavailable."
     elif any(token in upper for token in (" 229", " 262", " 916", "PERMISSION")):
         category = DatabaseErrorCategory.PERMISSION_DENIED
-        message = "The Windows account does not have the required database permissions."
+        message = "The configured database identity does not have the required permissions."
     elif any(
         token in upper
         for token in ("08001", "08004", "08S01", "10060", "10061", "SERVER DOES NOT EXIST")
@@ -131,13 +212,7 @@ class DatabaseConnectionFactory:
                     str(exc),
                 ) from exc
             connector = pyodbc.connect
-        connection_string = build_windows_connection_string(
-            self.settings.server,
-            self.settings.database,
-            self.settings.driver,
-            self.settings.trust_server_certificate,
-            self.settings.encrypt,
-        )
+        connection_string = build_connection_string(self.settings)
         try:
             return connector(
                 connection_string,
@@ -147,7 +222,14 @@ class DatabaseConnectionFactory:
         except DatabaseConnectionError:
             raise
         except Exception as exc:
-            raise classify_database_exception(exc) from exc
+            raise classify_database_exception(
+                exc,
+                (
+                    (self.settings.password,)
+                    if self.settings.authentication == "sql_password"
+                    else ()
+                ),
+            ) from exc
 
     @contextmanager
     def connection(self) -> Iterator[Any]:
@@ -187,6 +269,8 @@ __all__ = [
     "DatabaseConnectionError",
     "DatabaseConnectionFactory",
     "DatabaseErrorCategory",
+    "build_connection_string",
+    "build_sql_password_connection_string",
     "build_windows_connection_string",
     "classify_database_exception",
 ]

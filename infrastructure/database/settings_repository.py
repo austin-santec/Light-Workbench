@@ -1,4 +1,4 @@
-"""INI persistence for non-secret database endpoint settings."""
+"""INI persistence for per-user database endpoint and authentication settings."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from infrastructure.database.connection import DatabaseConfigurationError
 
 
 class DatabaseSettingsRepository:
-    """Load and save SQL settings without ever handling credentials."""
+    """Load and save the explicit per-user database configuration."""
 
     SECTION = "database"
 
@@ -41,6 +41,11 @@ class DatabaseSettingsRepository:
                 server=section.get("server", defaults.server),
                 database=section.get("database", defaults.database),
                 driver=section.get("driver", defaults.driver),
+                authentication=section.get(
+                    "authentication", defaults.authentication
+                ),
+                username=section.get("username", defaults.username),
+                password=section.get("password", defaults.password),
                 encrypt=self._boolean(section, "encrypt", defaults.encrypt),
                 trust_server_certificate=self._boolean(
                     section,
@@ -90,6 +95,9 @@ class DatabaseSettingsRepository:
             "server": settings.server,
             "database": settings.database,
             "driver": settings.driver,
+            "authentication": settings.authentication,
+            "username": settings.username,
+            "password": settings.password,
             "encrypt": str(settings.encrypt).lower(),
             "trust_server_certificate": str(
                 settings.trust_server_certificate
@@ -109,6 +117,9 @@ class DatabaseSettingsRepository:
             "server": settings.server,
             "database": settings.database,
             "driver": settings.driver,
+            "authentication": settings.authentication,
+            "username": settings.username,
+            "password": settings.password,
             "encrypt": str(settings.encrypt).lower(),
             "trust_server_certificate": str(
                 settings.trust_server_certificate

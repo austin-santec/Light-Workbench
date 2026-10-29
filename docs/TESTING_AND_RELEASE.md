@@ -25,6 +25,18 @@ idempotency, atomic two-wavelength writes, attempt numbering, current-value
 views, and database-unavailable behavior. Historical bulk-import tests are not
 required by the approved clean-start design.
 
+Database configuration tests must cover the default Windows Authentication
+mode and explicit SQL-password mode. Use synthetic credentials only. Assert
+that SQL-password connection strings contain UID/PWD without
+`Trusted_Connection`, that Windows strings contain `Trusted_Connection` without
+UID/PWD, and that usernames/passwords with ODBC metacharacters are safely
+quoted. Support-log and diagnostic tests must prove that passwords, PWD values,
+connection strings, and settings representations never appear in output.
+
+Administrator migrations remain Windows-authenticated even when runtime
+stations use SQL-password authentication. No test may modify the live SQL
+login, `LWBTestDB`, or a workstation's real `database.ini`.
+
 Run the current migration integration tests explicitly on Windows:
 
 ```powershell

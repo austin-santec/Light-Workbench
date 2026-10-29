@@ -17,7 +17,7 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--config",
         default=str(DEFAULT_PATHS.database_config_path),
-        help="Path to the non-secret database INI file.",
+        help="Path to the per-user database INI file; SQL-password mode may contain credentials.",
     )
     args = parser.parse_args(argv)
     try:

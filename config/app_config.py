@@ -63,7 +63,11 @@ def default_timing_profile_path() -> Path:
 
 
 def default_database_config_path() -> Path:
-    """Return the per-user, non-secret SQL Server settings location."""
+    """Return the per-user SQL Server settings location.
+
+    SQL-password deployments may intentionally store credentials in this file;
+    it is never part of the repository or support bundle.
+    """
     local_app_data = os.environ.get("LOCALAPPDATA")
     base = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
     return base / "LightWorkbench" / "config" / "database.ini"
