@@ -1,0 +1,110 @@
+{
+  "iterations": 3,
+  "main_board_serial": "99190",
+  "reports": [
+    {
+      "context": {
+        "counts": {
+          "active_spare_count": 2,
+          "current_measurement_count": 53,
+          "database_connection_count": 20,
+          "database_transaction_count": 19,
+          "designated_spare_event_count": 2,
+          "measurement_history_count": 53,
+          "persisted_analysis_count": 2,
+          "persisted_recommendation_count": 6,
+          "projection_measurement_row_count": 58,
+          "related_run_count": 4,
+          "replacement_history_count": 3
+        },
+        "load_source": "unit_run_number",
+        "operation_id": "db-load-0373652fb90442b4af5dc21c060d8d6e",
+        "stage_timings_ms": {
+          "database_readiness": 2,
+          "hardware_identity": 1,
+          "measurement_snapshot": 6,
+          "projection_calculation": 0,
+          "projection_source_data": 14,
+          "replacement_analysis_history": 4,
+          "routing_snapshot": 3,
+          "unit_run_lookup": 1
+        },
+        "workflow_elapsed_ms": 36
+      },
+      "elapsed_ms": 36,
+      "iteration": 1
+    },
+    {
+      "context": {
+        "counts": {
+          "active_spare_count": 2,
+          "current_measurement_count": 53,
+          "database_connection_count": 20,
+          "database_transaction_count": 19,
+          "designated_spare_event_count": 2,
+          "measurement_history_count": 53,
+          "persisted_analysis_count": 2,
+          "persisted_recommendation_count": 6,
+          "projection_measurement_row_count": 58,
+          "related_run_count": 4,
+          "replacement_history_count": 3
+        },
+        "load_source": "unit_run_number",
+        "operation_id": "db-load-9296c392d8974d96b8305cb08053bcbe",
+        "stage_timings_ms": {
+          "database_readiness": 3,
+          "hardware_identity": 1,
+          "measurement_snapshot": 5,
+          "projection_calculation": 0,
+          "projection_source_data": 15,
+          "replacement_analysis_history": 4,
+          "routing_snapshot": 3,
+          "unit_run_lookup": 1
+        },
+        "workflow_elapsed_ms": 37
+      },
+      "elapsed_ms": 37,
+      "iteration": 2
+    },
+    {
+      "context": {
+        "counts": {
+          "active_spare_count": 2,
+          "current_measurement_count": 53,
+          "database_connection_count": 20,
+          "database_transaction_count": 19,
+          "designated_spare_event_count": 2,
+          "measurement_history_count": 53,
+          "persisted_analysis_count": 2,
+          "persisted_recommendation_count": 6,
+          "projection_measurement_row_count": 58,
+          "related_run_count": 4,
+          "replacement_history_count": 3
+        },
+        "load_source": "unit_run_number",
+        "operation_id": "db-load-411781a745e149509fa581ee4194a615",
+        "stage_timings_ms": {
+          "database_readiness": 2,
+          "hardware_identity": 2,
+          "measurement_snapshot": 6,
+          "projection_calculation": 0,
+          "projection_source_data": 15,
+          "replacement_analysis_history": 4,
+          "routing_snapshot": 3,
+          "unit_run_lookup": 1
+        },
+        "workflow_elapsed_ms": 37
+      },
+      "elapsed_ms": 37,
+      "iteration": 3
+    }
+  ],
+  "run_number": 1,
+  "summary": {
+    "average_ms": 36.666666666666664,
+    "maximum_ms": 37,
+    "median_ms": 37,
+    "minimum_ms": 36
+  },
+  "warmups": 1
+}

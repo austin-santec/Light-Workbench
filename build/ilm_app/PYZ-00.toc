@@ -689,6 +689,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\database\\connection.py',
    'PYMODULE'),
+  ('infrastructure.database.load_metrics',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\load_metrics.py',
+   'PYMODULE'),
   ('infrastructure.database.maintenance',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\database\\maintenance.py',

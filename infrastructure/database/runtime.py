@@ -51,10 +51,11 @@ def build_database_primary_workflow(
         )
     factory = DatabaseConnectionFactory(settings)
     repositories = SqlRepositories(factory)
-    diagnostics = DatabaseDiagnosticsService(support_logger)
+    diagnostics = DatabaseDiagnosticsService(support_logger, factory=factory)
     return DatabasePrimaryRunWorkflow(
         repositories,
         readiness_check=lambda: diagnostics.check(settings),
+        support_logger=support_logger,
     )
 
 

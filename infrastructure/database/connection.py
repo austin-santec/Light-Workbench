@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import re
 from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from enum import Enum
+from threading import get_ident
 from typing import Any, Callable, Iterator
 
 from config.database_config import DatabaseSettings
+from infrastructure.database.load_metrics import (
+    measure_active_stage,
+    record_connection,
+    record_transaction,
+)
 
 
 class DatabaseErrorCategory(str, Enum):
@@ -40,6 +48,14 @@ class DatabaseConfigurationError(DatabaseConnectionError):
 
     def __init__(self, message: str, detail: str = ""):
         super().__init__(DatabaseErrorCategory.CONFIGURATION, message, detail)
+
+
+@dataclass
+class _ReadSessionState:
+    """One context-local connection owned by a read-only workflow."""
+
+    connection: Any
+    owner_thread_id: int
 
 
 def _safe_odbc_value(value: str, label: str) -> str:
@@ -199,8 +215,27 @@ class DatabaseConnectionFactory:
     ) -> None:
         self.settings = settings
         self._connector = connector
+        self._read_session_state: ContextVar[_ReadSessionState | None] = ContextVar(
+            "light_workbench_database_read_session_%x" % id(self),
+            default=None,
+        )
+
+    def _active_read_session(self) -> _ReadSessionState | None:
+        state = self._read_session_state.get()
+        if state is not None and state.owner_thread_id != get_ident():
+            raise RuntimeError(
+                "Database read sessions cannot be shared between threads"
+            )
+        return state
+
+    def _set_command_timeout(self, target: Any) -> None:
+        try:
+            target.timeout = self.settings.command_timeout_seconds
+        except (AttributeError, TypeError):
+            pass
 
     def connect(self):
+        record_connection()
         connector = self._connector
         if connector is None:
             try:
@@ -233,6 +268,10 @@ class DatabaseConnectionFactory:
 
     @contextmanager
     def connection(self) -> Iterator[Any]:
+        active = self._active_read_session()
+        if active is not None:
+            yield active.connection
+            return
         connection = self.connect()
         try:
             yield connection
@@ -240,20 +279,75 @@ class DatabaseConnectionFactory:
             connection.close()
 
     @contextmanager
+    def read_session(self) -> Iterator[Any]:
+        """Reuse one connection for a bounded read workflow and never commit it.
+
+        Nested repository transaction scopes receive independent cursors on this
+        connection.  The outer scope rolls the transaction back even after a
+        successful load, which keeps the boundary read-only if a future caller
+        accidentally invokes a mutating repository method.
+        """
+
+        active = self._active_read_session()
+        if active is not None:
+            yield active.connection
+            return
+
+        with measure_active_stage("connection_open"):
+            connection = self.connect()
+        self._set_command_timeout(connection)
+        state = _ReadSessionState(connection, get_ident())
+        token = self._read_session_state.set(state)
+        record_transaction()
+        operation_failed = False
+        try:
+            yield connection
+        except BaseException:
+            operation_failed = True
+            raise
+        finally:
+            cleanup_error = None
+            with measure_active_stage("read_session_cleanup"):
+                try:
+                    connection.rollback()
+                except Exception as error:
+                    cleanup_error = error
+                self._read_session_state.reset(token)
+                try:
+                    connection.close()
+                except Exception as error:
+                    cleanup_error = cleanup_error or error
+                if cleanup_error is not None and not operation_failed:
+                    raise cleanup_error
+
+    @contextmanager
     def transaction(self) -> Iterator[Any]:
         """Yield one parameterized-command cursor and commit atomically."""
-        with self.connection() as connection:
+        active = self._active_read_session()
+        if active is not None:
+            cursor = active.connection.cursor()
+            self._set_command_timeout(cursor)
+            operation_failed = False
             try:
-                connection.timeout = self.settings.command_timeout_seconds
-            except (AttributeError, TypeError):
-                pass
+                yield cursor
+            except BaseException:
+                operation_failed = True
+                raise
+            finally:
+                try:
+                    cursor.close()
+                except Exception:
+                    if not operation_failed:
+                        raise
+            return
+
+        record_transaction()
+        with self.connection() as connection:
+            self._set_command_timeout(connection)
             cursor = connection.cursor()
             # pyodbc exposes query timeout on Connection; lightweight test
             # doubles and some DB-API drivers expose it on Cursor instead.
-            try:
-                cursor.timeout = self.settings.command_timeout_seconds
-            except (AttributeError, TypeError):
-                pass
+            self._set_command_timeout(cursor)
             try:
                 yield cursor
                 connection.commit()

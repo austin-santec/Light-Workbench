@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
@@ -60,6 +61,11 @@ class InMemoryRepositories:
         ] = {}
         self._next_ids: dict[str, int] = {}
         self._lock = RLock()
+
+    @contextmanager
+    def read_session(self):
+        """Match the SQL load-session contract without adding persistence."""
+        yield self
 
     def _next(self, name: str) -> int:
         value = self._next_ids.get(name, 0) + 1
@@ -765,6 +771,14 @@ class InMemoryRepositories:
                 key=lambda item: item.measurement_id,
             )
         )
+
+    def history_for_runs(
+        self, run_ids: tuple[int, ...]
+    ) -> dict[int, tuple[MeasurementRecord, ...]]:
+        return {
+            run_id: self.history_for_run(run_id)
+            for run_id in dict.fromkeys(int(value) for value in run_ids)
+        }
 
     def snapshot_for_run(
         self, run_id: int

@@ -92,6 +92,10 @@ class SqlRepositories:
     def __init__(self, factory: DatabaseConnectionFactory) -> None:
         self._factory = factory
 
+    def read_session(self):
+        """Return the factory's bounded, rollback-only read scope."""
+        return self._factory.read_session()
+
     def get_or_create(self, spec):
         if isinstance(spec, UnitSpec):
             return self._get_or_create_unit(spec)
@@ -1158,6 +1162,32 @@ class SqlRepositories:
                 run_id,
             ).fetchall()
             return tuple(self._measurement(row) for row in rows)
+
+    def history_for_runs(
+        self, run_ids: tuple[int, ...]
+    ) -> dict[int, tuple[MeasurementRecord, ...]]:
+        """Load append-only histories for related runs without N+1 queries."""
+        values = tuple(dict.fromkeys(int(value) for value in run_ids))
+        grouped: dict[int, list[MeasurementRecord]] = {
+            run_id: [] for run_id in values
+        }
+        if not values:
+            return {}
+        with self._factory.transaction() as cursor:
+            # SQL Server accepts at most 2,100 parameters per statement.
+            for start in range(0, len(values), 1000):
+                chunk = values[start : start + 1000]
+                placeholders = ", ".join("?" for _value in chunk)
+                rows = cursor.execute(
+                    self._MEASUREMENT_SELECT
+                    + " WHERE measurement.run_id IN (%s) " % placeholders
+                    + "ORDER BY measurement.run_id, measurement.measurement_id",
+                    *chunk,
+                ).fetchall()
+                for row in rows:
+                    record = self._measurement(row)
+                    grouped[record.run_id].append(record)
+        return {run_id: tuple(grouped[run_id]) for run_id in values}
 
     def snapshot_for_run(
         self, run_id: int

@@ -230,6 +230,18 @@ runs use the database-primary workflows and repository contracts under
 `application/` and `infrastructure/database/`. The established `run_data.py`
 and `run_persistence.py` import paths remain compatibility facades.
 
+A database-backed run load owns one bounded, context-local read session. The
+application workflow orchestrates the load while infrastructure reuses one
+physical connection, rolls the read transaction back on exit, and bulk-loads
+related-run measurement history. The session ends before the loaded context is
+published to Qt and does not alter ordinary write transaction ownership.
+
+That immutable context includes the unit's lightweight run index and the
+assignment's related run snapshots. Qt publication derives comparison choices,
+composite/COC status, and replacement-analysis display data from the context,
+without repository calls. A user-requested comparison or numbered-run load
+creates a new context and therefore observes current database state.
+
 `domain/run_status.py` owns the derived two-part run assessment. Completion is
 based on accepted readings compared with the saved hardware plan, while result
 quality is based on the active criteria, front-panel coverage, replacement

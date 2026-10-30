@@ -149,6 +149,10 @@ class MeasurementRepository(Protocol):
 
     def history_for_run(self, run_id: int) -> tuple[MeasurementRecord, ...]: ...
 
+    def history_for_runs(
+        self, run_ids: tuple[int, ...]
+    ) -> dict[int, tuple[MeasurementRecord, ...]]: ...
+
     def snapshot_for_run(
         self, run_id: int
     ) -> tuple[tuple[MeasurementRecord, ...], tuple[MeasurementRecord, ...]]: ...

@@ -70,6 +70,57 @@ class DatabasePrimaryUiTests(unittest.TestCase):
         window.active_run_reference_snapshot = {"snapshot_id": "ref-1"}
         return window
 
+    def _write(self, context, channel, first=0.65, second=0.50):
+        pending = self.workflow.measurements.prepare_measurement(
+            run_id=context.run.run_id,
+            logical_channel=channel,
+            physical_port=channel,
+            wavelength_1_nm=1310,
+            wavelength_1_il_db=first,
+            wavelength_2_nm=1550,
+            wavelength_2_il_db=second,
+            reference_snapshot={"snapshot_id": "ref-1"},
+            written_by="AT",
+        )
+        _record, refreshed = self.workflow.commit_measurement(pending)
+        return refreshed
+
+    def _start_second_run(self):
+        self.workflow.finish_run(self.context.run.run_id, "complete")
+        return self.workflow.start_new_run(
+            unit_spec=UnitSpec(
+                "MB-DB-1",
+                "OSX-150-1A-002-09-FA-00B-3H",
+                2,
+                "OSX-150",
+            ),
+            switch_spec=SwitchSpec("SW-DB-1", "OSX-150", 4),
+            installed_by="AT",
+            initial_channel_map={1: 1, 2: 2},
+            tested_by="AT",
+            wavelength_mode="SM",
+            operating_band="O band",
+            application_version="test",
+            measurement_hardware={
+                "planned_channels": [1, 2],
+                "opm_wavelengths_nm": [1310, 1550],
+                "source_wavelengths_nm": [1310, 1550],
+                "source_ids": [0, 1],
+            },
+            limit_snapshot={
+                "model": "OSX-150",
+                "wavelength_mode": "SM",
+                "profile_name": "test",
+                "revision": 1,
+                "too_good_below_db": 0.5,
+                "warning_enabled": True,
+                "warning_above_db": 2.25,
+                "fail_above_db": 2.5,
+            },
+            part_number_snapshot="OSX-150-1A-002-09-FA-00B-3H",
+            front_panel_channel_count=2,
+        )
+
     def test_database_write_updates_ui_without_creating_file_recorder(self):
         window = self._window()
         window.run_repository.new_recorder = MagicMock(
@@ -178,6 +229,41 @@ class DatabasePrimaryUiTests(unittest.TestCase):
         self.assertEqual(window.database_run_context.run.run_id, self.context.run.run_id)
         self.assertEqual(window.metadata_labels["Source file"].text(), "SQL Server")
         window.run_repository.load_csv.assert_not_called()
+        window.close()
+
+    def test_loaded_context_publishes_comparison_and_coc_data_without_queries(self):
+        self.context = self._write(self.context, 1)
+        second = self._start_second_run()
+        second = self._write(second, 2, 0.70, 0.60)
+        loaded = self.workflow.load_run(second.run.run_id)
+        guarded_workflow = MagicMock(wraps=self.workflow)
+        window = MainWindow(database_workflow=guarded_workflow)
+
+        timings = window._apply_database_run_context(loaded)
+
+        self.assertEqual(window.comparison_run_combo.count(), 2)
+        self.assertEqual(window.comparison_run_combo.itemText(1), "Run 1")
+        self.assertEqual(
+            window.comparison_run_combo.itemData(1),
+            "database:%d" % self.context.run.run_id,
+        )
+        self.assertEqual(
+            tuple(option.source.run_number for option in window._coc_run_options()),
+            (1, 2),
+        )
+        self.assertIn("context_publication", timings)
+        self.assertIn("status_composite", timings)
+        guarded_workflow.assert_not_called()
+
+        window.refresh_run_status()
+        window.refresh_run_status()
+        guarded_workflow.assert_not_called()
+
+        window.comparison_run_combo.setCurrentIndex(1)
+        guarded_workflow.load_run.assert_called_once_with(
+            self.context.run.run_id,
+            load_source="comparison",
+        )
         window.close()
 
     def test_database_reports_action_opens_read_only_reporting_dialog(self):

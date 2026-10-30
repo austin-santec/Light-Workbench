@@ -1,6 +1,7 @@
 """PyQt5 desktop viewer for insertion-loss run data."""
 
 import sys
+import time
 import traceback
 import uuid
 from datetime import datetime
@@ -4068,7 +4069,7 @@ class MainWindow(QMainWindow):
             self.run_data.completed_replacements = list(self.completed_replacements)
         self.refresh_comparison_runs()
 
-    def refresh_comparison_runs(self):
+    def refresh_comparison_runs(self, *, refresh_table=True):
         """Refresh the optional previous-run selector for the active unit."""
         if not hasattr(self, "comparison_run_combo"):
             return
@@ -4085,27 +4086,13 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 current_run_number = None
 
-        if self.database_run_context is not None and self.database_workflow is not None:
-            try:
-                contexts = self.database_workflow.list_for_unit(
-                    self.database_run_context.unit.unit_id
-                )
-            except Exception as error:
-                contexts = ()
-                self._record_support(
-                    SupportEventCategory.CONNECTION,
-                    "database.comparison_query_failed",
-                    level=SupportLogLevel.ERROR,
-                    error_type=type(error).__name__,
-                    error_message=str(error),
-                    status="error",
-                )
-            for context in contexts:
-                if current_run_number == context.run.run_number:
+        if self.database_run_context is not None:
+            for entry in self.database_run_context.unit_run_index:
+                if current_run_number == entry.run_number:
                     continue
                 self.comparison_run_combo.addItem(
-                    "Run %d" % context.run.run_number,
-                    "database:%d" % context.run.run_id,
+                    "Run %d" % entry.run_number,
+                    "database:%d" % entry.run_id,
                 )
 
         run_entries = [
@@ -4153,7 +4140,8 @@ class MainWindow(QMainWindow):
             self.comparison_run_data = None
             self.comparison_run_number = None
         self.comparison_run_combo.blockSignals(False)
-        self.refresh_table()
+        if refresh_table:
+            self.refresh_table()
 
     def load_comparison_run(self, _index):
         """Load or clear the read-only comparison run selected by the user."""
@@ -4169,7 +4157,8 @@ class MainWindow(QMainWindow):
                 if self.database_workflow is None:
                     raise ValueError("Database workflow is unavailable")
                 context = self.database_workflow.load_run(
-                    int(str(selected_path).split(":", 1)[1])
+                    int(str(selected_path).split(":", 1)[1]),
+                    load_source="comparison",
                 )
                 metadata = self._database_metadata(context)
                 comparison_data = RunData(
@@ -4329,6 +4318,7 @@ class MainWindow(QMainWindow):
             return
         metadata = self._current_hardware_identity()
         if self.database_workflow is not None:
+            ui_load_started = time.perf_counter()
             try:
                 context = self.database_workflow.load_for_unit(
                     metadata.get("Main board serial", ""),
@@ -4344,7 +4334,16 @@ class MainWindow(QMainWindow):
             except (ValueError, OSError, RuntimeError) as error:
                 QMessageBox.information(self, "Run not found", str(error))
                 return
-            self._apply_database_run_context(context)
+            ui_stage_timings = self._apply_database_run_context(context)
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "database.run_load_ui_completed",
+                operation_id=context.load_operation_id,
+                status="success",
+                load_source="unit_run_number",
+                elapsed_ms=max(0, int((time.perf_counter() - ui_load_started) * 1000)),
+                stage_timings_ms=ui_stage_timings,
+            )
             self.statusBar().showMessage("Database run loaded.")
             return
         unit_directory = self._run_lookup_unit_directory(metadata)
@@ -5014,29 +5013,31 @@ class MainWindow(QMainWindow):
                 )
         return ExtraChannelRoutingMethod.SCPI_MAPPED
 
-    def _database_metadata(self, context):
-        hardware = context.run.measurement_hardware
+    def _database_metadata(self, context, snapshot=None):
+        snapshot = snapshot or context.snapshot
+        run = snapshot.run
+        hardware = run.measurement_hardware
         routing = hardware.get("extra_channel_routing", {})
         if not hasattr(routing, "get"):
             routing = {}
-        metadata = dict(context.snapshot.metadata)
+        metadata = dict(snapshot.metadata)
         metadata.update(
             {
                 "Mode": "Real hardware",
                 "Main board serial": context.unit.main_board_serial,
                 "Switch serial": context.switch.switch_serial,
-                "Part number": context.run.part_number_snapshot
+                "Part number": run.part_number_snapshot
                 or context.unit.part_number
                 or "",
                 "Switch model": context.switch.switch_model,
-                "Run number": str(context.run.run_number),
-                "Run purpose": run_purpose_label(context.run.run_purpose),
-                "run_purpose": context.run.run_purpose,
+                "Run number": str(run.run_number),
+                "Run purpose": run_purpose_label(run.run_purpose),
+                "run_purpose": run.run_purpose,
                 "OPM wavelengths nm": ",".join(
                     str(value)
                     for value in hardware.get(
                         "opm_wavelengths_nm",
-                        (1310, 1550) if context.run.wavelength_mode == "SM" else (850, 1300),
+                        (1310, 1550) if run.wavelength_mode == "SM" else (850, 1300),
                     )
                 ),
                 "Source wavelengths nm": ",".join(
@@ -5075,28 +5076,32 @@ class MainWindow(QMainWindow):
         )
         return metadata
 
-    def _database_coc_source(self, context):
-        front_panel_count = context.run.front_panel_channel_count
+    def _database_coc_source(self, context, snapshot=None):
+        snapshot = snapshot or context.snapshot
+        run = snapshot.run
+        front_panel_count = run.front_panel_channel_count
         logical_measurements = tuple(
             record
-            for record in context.snapshot.measurements
+            for record in snapshot.measurements
             if front_panel_count is None
             or int(record.channel) <= int(front_panel_count)
         )
         return CocSourceRun(
-            run_number=context.run.run_number,
+            run_number=run.run_number,
             source_path=None,
-            source_identifier="database-run:%d" % context.run.run_id,
+            source_identifier="database-run:%d" % run.run_id,
             measurements=logical_measurements,
-            metadata=self._database_metadata(context),
-            criteria=dict(context.run.limit_snapshot),
-            run_purpose=context.run.run_purpose,
-            run_id=context.run.run_id,
-            assignment_id=context.run.assignment_id,
+            metadata=self._database_metadata(context, snapshot),
+            criteria=dict(run.limit_snapshot),
+            run_purpose=run.run_purpose,
+            run_id=run.run_id,
+            assignment_id=run.assignment_id,
         )
 
     def _apply_database_run_context(self, context, *, update_setup=True):
         """Publish one committed database snapshot to existing UI consumers."""
+        publication_started = time.perf_counter()
+        ui_stage_timings = {}
         previous_analysis_id = (
             self.database_run_context.replacement_analysis.record.analysis_id
             if self.database_run_context is not None
@@ -5274,9 +5279,23 @@ class MainWindow(QMainWindow):
             )
         self.run_data.replacement_analysis = self.replacement_analysis
         self.clear_current_reading()
-        self.refresh_comparison_runs()
-        self.refresh_analysis()
+        ui_stage_timings["context_state_publication"] = max(
+            0,
+            int((time.perf_counter() - publication_started) * 1000),
+        )
+        comparison_started = time.perf_counter()
+        self.refresh_comparison_runs(refresh_table=False)
+        ui_stage_timings["comparison_selector"] = max(
+            0,
+            int((time.perf_counter() - comparison_started) * 1000),
+        )
+        self.refresh_analysis(stage_timings=ui_stage_timings)
         self._refresh_void_run_control()
+        ui_stage_timings["context_publication"] = max(
+            0,
+            int((time.perf_counter() - publication_started) * 1000),
+        )
+        return ui_stage_timings
 
     def _refresh_void_run_control(self):
         if not hasattr(self, "void_run_button"):
@@ -8818,34 +8837,79 @@ class MainWindow(QMainWindow):
             self._last_run_status_key = key
         return assessment
 
-    def refresh_analysis(self):
+    def refresh_analysis(self, *, stage_timings=None):
+        """Refresh derived displays while calculating composite status once."""
+        profile = (
+            self._profile_for_current_run()
+            if self.run_data is not None
+            else None
+        )
+        if profile is not None:
+            self._set_active_limit_profile(profile)
+        status_started = time.perf_counter()
         self.refresh_run_status()
+        if stage_timings is not None:
+            stage_timings["status_composite"] = max(
+                0,
+                int((time.perf_counter() - status_started) * 1000),
+            )
         if self.run_data is None:
             return
-        profile = self._profile_for_current_run()
+        analysis_started = time.perf_counter()
         if profile is None:
             self.metric_labels["total"].setText(str(len(self.run_data.measurements)))
             for key, label in self.metric_labels.items():
                 if key != "total":
                     label.setText("Limits unavailable")
+            if stage_timings is not None:
+                stage_timings["analysis_calculation"] = max(
+                    0,
+                    int((time.perf_counter() - analysis_started) * 1000),
+                )
+            table_started = time.perf_counter()
             self.refresh_current_reading()
             self.refresh_table()
+            if stage_timings is not None:
+                stage_timings["table_analysis_refresh"] = max(
+                    0,
+                    int((time.perf_counter() - table_started) * 1000),
+                )
+            controls_started = time.perf_counter()
             self.refresh_replacement_summary()
             self.refresh_coc_controls()
-            self.refresh_run_status()
+            if stage_timings is not None:
+                stage_timings["analysis_controls"] = max(
+                    0,
+                    int((time.perf_counter() - controls_started) * 1000),
+                )
             return
-        self._set_active_limit_profile(profile)
         summary = self.run_data.analysis_with_profile(profile)
         for key, label in self.metric_labels.items():
             if key in ("over_1310", "over_1550", "over_both"):
                 label.setText(format_channel_summary(summary[key + "_channels"]))
             else:
                 label.setText(str(summary[key]))
+        if stage_timings is not None:
+            stage_timings["analysis_calculation"] = max(
+                0,
+                int((time.perf_counter() - analysis_started) * 1000),
+            )
+        table_started = time.perf_counter()
         self.refresh_current_reading()
         self.refresh_table()
+        if stage_timings is not None:
+            stage_timings["table_analysis_refresh"] = max(
+                0,
+                int((time.perf_counter() - table_started) * 1000),
+            )
+        controls_started = time.perf_counter()
         self.refresh_replacement_summary()
         self.refresh_coc_controls()
-        self.refresh_run_status()
+        if stage_timings is not None:
+            stage_timings["analysis_controls"] = max(
+                0,
+                int((time.perf_counter() - controls_started) * 1000),
+            )
 
     def refresh_replacement_summary(self):
         """Refresh the replacement-analysis status shown beside the table."""
@@ -10167,22 +10231,21 @@ class MainWindow(QMainWindow):
 
     def _coc_run_options(self):
         """Return persisted runs for the active unit, including legacy context."""
-        if self.database_run_context is not None and self.database_workflow is not None:
-            current = self.database_run_context.run
-            contexts = tuple(
-                context
-                for context in self.database_workflow.list_for_assignment(
-                    current.assignment_id
-                )
-                if context.run.analysis_status not in {"excluded", "superseded"}
-                and context.run.superseded_by_run_id is None
-                and (context.run.run_started_at_utc, context.run.run_id)
+        if self.database_run_context is not None:
+            context = self.database_run_context
+            current = context.run
+            snapshots = tuple(
+                snapshot
+                for snapshot in context.assignment_run_snapshots
+                if snapshot.run.analysis_status not in {"excluded", "superseded"}
+                and snapshot.run.superseded_by_run_id is None
+                and (snapshot.run.run_started_at_utc, snapshot.run.run_id)
                 <= (current.run_started_at_utc, current.run_id)
             )
             return [
-                CocRunOption(self._database_coc_source(context))
-                for context in contexts
-                if context.snapshot.measurements
+                CocRunOption(self._database_coc_source(context, snapshot))
+                for snapshot in snapshots
+                if snapshot.measurements
             ]
         options = []
         if self.unit_directory is not None:

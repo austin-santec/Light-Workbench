@@ -63,6 +63,23 @@ includes bounded connection and command timeouts. Connections
 and cursors are short-lived and closed deterministically; write operations use
 explicit commit/rollback transaction scopes.
 
+Database-backed run loading uses one context-local, rollback-only read session.
+The session reuses one physical connection and one transaction across the
+readiness check and repository reads for that logical load, then always rolls
+the transaction back and closes the connection. Nested repository reads receive
+short-lived cursors and cannot commit the session. The scope is never global,
+never shared between threads, and does not change ordinary write transaction
+behavior. Related-run measurement history is fetched in bulk so replacement
+projection does not issue one current/history snapshot per run.
+
+The resulting immutable loaded-run context also carries a lightweight unit run
+index and assignment-scoped run snapshots built from that same bulk history.
+Automatic UI publication uses those in-memory values for the comparison
+selector, composite/COC status, and replacement-analysis refresh; it does not
+open another database session. Explicitly selecting a different run still
+performs a fresh bounded load, so this is per-load reuse rather than a
+cross-load cache.
+
 The application performs a read-only schema preflight before database-backed
 workflows. It reports unavailable servers, authentication failures, missing
 databases, timeouts, insufficient permissions, and incompatible migration

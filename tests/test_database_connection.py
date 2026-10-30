@@ -10,6 +10,7 @@ from infrastructure.database.connection import (
     build_windows_connection_string,
     classify_database_exception,
 )
+from infrastructure.database.load_metrics import DatabaseLoadMetrics, activate_metrics
 
 
 class _Cursor:
@@ -30,6 +31,29 @@ class _Connection:
 
     def cursor(self):
         return self.cursor_value
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        self.closed = True
+
+
+class _SessionConnection:
+    def __init__(self):
+        self.cursors = []
+        self.commits = 0
+        self.rollbacks = 0
+        self.closed = False
+        self.timeout = None
+
+    def cursor(self):
+        cursor = _Cursor()
+        self.cursors.append(cursor)
+        return cursor
 
     def commit(self):
         self.commits += 1
@@ -139,6 +163,63 @@ class DatabaseConnectionTests(unittest.TestCase):
         self.assertEqual(created.commits, 0)
         self.assertEqual(created.rollbacks, 1)
         self.assertTrue(created.closed)
+
+    def test_read_session_reuses_one_connection_and_one_transaction(self):
+        created = _SessionConnection()
+        connector_calls = []
+
+        def connector(*args, **kwargs):
+            connector_calls.append((args, kwargs))
+            return created
+
+        factory = DatabaseConnectionFactory(DatabaseSettings(), connector)
+        metrics = DatabaseLoadMetrics("test")
+        with activate_metrics(metrics):
+            with factory.read_session() as outer_connection:
+                with factory.connection() as nested_connection:
+                    self.assertIs(nested_connection, outer_connection)
+                with factory.transaction() as first_cursor:
+                    self.assertIs(first_cursor, created.cursors[0])
+                with factory.read_session() as nested_session:
+                    self.assertIs(nested_session, outer_connection)
+                    with factory.transaction() as second_cursor:
+                        self.assertIs(second_cursor, created.cursors[1])
+
+        self.assertEqual(len(connector_calls), 1)
+        self.assertEqual(metrics.counts["database_connection_count"], 1)
+        self.assertEqual(metrics.counts["database_transaction_count"], 1)
+        self.assertIn("connection_open", metrics.stage_timings_ms)
+        self.assertIn("read_session_cleanup", metrics.stage_timings_ms)
+        self.assertEqual(created.commits, 0)
+        self.assertEqual(created.rollbacks, 1)
+        self.assertTrue(created.closed)
+        self.assertTrue(all(cursor.closed for cursor in created.cursors))
+
+    def test_failed_read_session_rolls_back_closes_and_does_not_leak(self):
+        connections = [_SessionConnection(), _SessionConnection()]
+        connector_calls = []
+
+        def connector(*args, **kwargs):
+            connection = connections[len(connector_calls)]
+            connector_calls.append((args, kwargs))
+            return connection
+
+        factory = DatabaseConnectionFactory(DatabaseSettings(), connector)
+        with self.assertRaisesRegex(RuntimeError, "read failure"):
+            with factory.read_session():
+                with factory.transaction():
+                    raise RuntimeError("read failure")
+
+        with factory.read_session():
+            with factory.transaction():
+                pass
+
+        self.assertEqual(len(connector_calls), 2)
+        self.assertEqual(connections[0].commits, 0)
+        self.assertEqual(connections[0].rollbacks, 1)
+        self.assertTrue(connections[0].closed)
+        self.assertEqual(connections[1].rollbacks, 1)
+        self.assertTrue(connections[1].closed)
 
     def test_common_odbc_errors_are_classified(self):
         cases = (

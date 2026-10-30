@@ -344,6 +344,18 @@ class DatabaseRunSnapshot:
         )
 
 
+@dataclass(frozen=True)
+class DatabaseRunIndexEntry:
+    """Lightweight unit-run identity used by database-backed selectors."""
+
+    run_id: int
+    run_number: int
+
+    @classmethod
+    def from_record(cls, run: RunRecord) -> "DatabaseRunIndexEntry":
+        return cls(int(run.run_id), int(run.run_number))
+
+
 def build_database_run_snapshot(
     run: RunRecord,
     history_rows: Sequence[DatabaseMeasurementRecord],
@@ -388,7 +400,11 @@ class DatabaseRunQueryService:
         run = self._runs.get(run_id)
         if run is None:
             raise ValueError("Run was not found")
-        _current_rows, history_rows = self._measurements.snapshot_for_run(run_id)
+        return self.load_record(run)
+
+    def load_record(self, run: RunRecord) -> DatabaseRunSnapshot:
+        """Hydrate a run already loaded by the coordinating workflow."""
+        _current_rows, history_rows = self._measurements.snapshot_for_run(run.run_id)
         return build_database_run_snapshot(run, history_rows)
 
     def list_for_assignment(self, assignment_id: int) -> tuple[DatabaseRunSnapshot, ...]:
@@ -403,6 +419,7 @@ class DatabaseRunQueryService:
 
 __all__ = [
     "DatabaseRunQueryService",
+    "DatabaseRunIndexEntry",
     "DatabaseRunSnapshot",
     "build_database_run_snapshot",
 ]
