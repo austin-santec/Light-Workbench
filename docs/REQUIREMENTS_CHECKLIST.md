@@ -137,7 +137,7 @@ Each item already has useful behavior, but the noted work remains.
   - Next: complete controlled output-path and finalization validation.
 
 - [ ] **FUN-051 — Show all required run status on one screen.** `[MVP]`
-  - Works now: unit/run, hardware, reference, channel, dual-wavelength reading, progress, and limits are visible.
+  - Works now: unit/run, hardware, database readiness, reference, channel, dual-wavelength reading, progress, and limits are visible. Database readiness is warmed and monitored in the background without a permanent connection.
   - Next: show active wavelength and a unified final disposition state.
 
 - [ ] **FUN-053 — Give device/channel-specific errors and corrective actions.** `[R2]`

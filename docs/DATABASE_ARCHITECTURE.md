@@ -87,6 +87,17 @@ history as distinct categories. The preflight never applies migrations.
 Technical details recorded in local support logs exclude credentials and full
 connection strings.
 
+The desktop health indicator uses the same validated settings and connection
+factory for an independent read-only preflight shortly after startup and about
+once per minute. Each probe opens and deterministically closes a short-lived
+connection; no transaction, connection, or readiness result is retained as an
+authorization for later work. The indicator says `Ready`, rather than
+`Connected`, because it reports the most recently verified availability. A
+green indicator does not bypass the normal preflight or transaction boundary
+of a load, start, write, or reporting operation. Closing a successful probe
+returns its resources to normal ODBC pooling, which can reduce the next cold
+connection cost without creating an application-owned persistent connection.
+
 Application workflows depend on protocols in
 `application/database_repositories.py`. Typed request and result records live
 in `domain/database_records.py`. The in-memory contract implementation and the

@@ -196,6 +196,23 @@ The UI-completed event includes bounded publication stages such as
 `context_publication`. These values identify connection latency and unexpected
 post-load UI work without logging credentials or measurement payloads.
 
+### Database health monitoring
+
+The top-row database indicator runs a quiet read-only preflight after startup,
+approximately every 60 seconds, and when the operator clicks the indicator.
+Startup and manual requests/outcomes are logged, as are transitions between
+ready and unavailable. An unchanged successful periodic check is intentionally
+not logged. Events may include the check source, prior/current health state,
+elapsed time, schema versions, a sanitized error category, and whether an
+overlapping request was coalesced. They never include credentials, complete
+connection strings, or raw unbounded driver output.
+
+`Database: Ready` means the most recent check or real operation succeeded. It
+does not mean that Light Workbench retains a permanent SQL connection. A
+background failure updates the indicator and log without displaying a modal
+warning; a real operator-requested database operation retains its existing
+authoritative validation and error dialog.
+
 ## Support Logs menu
 
 `Help > Support Logs` provides:

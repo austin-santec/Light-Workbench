@@ -35,7 +35,13 @@ from domain.run_status import (
     RESULT_PASS,
     RunStatusAssessment,
 )
+from domain.reference import ReferenceMethod, new_reference_snapshot
+from application.database_health_monitor import DatabaseHealthState
+from application.run_lifecycle_workflow import DatabaseRunUnavailableError
+from config.database_config import DatabaseSettings
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
+from infrastructure.database.connection import DatabaseErrorCategory
+from infrastructure.database.preflight import DatabasePreflightResult
 from domain.hardware_connection import RemoteControlState
 from hardware.interfaces import LogicalChannelRouteResult
 from domain.measurement_attempts import new_measurement_attempt
@@ -160,6 +166,198 @@ class MainWindowTests(unittest.TestCase):
         window.showMaximized.assert_called_once_with()
         window.show.assert_not_called()
         support_logger.shutdown.assert_called_once_with()
+
+    def test_database_indicator_warms_in_background_and_click_rechecks(self):
+        tasks = []
+        results = [
+            DatabasePreflightResult(
+                True,
+                None,
+                "The database connection and schema are ready.",
+                "",
+                6,
+                6,
+                25,
+            ),
+            DatabasePreflightResult(
+                False,
+                DatabaseErrorCategory.TIMEOUT,
+                "The database connection timed out.",
+                "Synthetic timeout",
+                None,
+                6,
+                5000,
+            ),
+        ]
+
+        def probe():
+            return results.pop(0)
+
+        window = MainWindow(
+            database_settings=DatabaseSettings(server="tcp:SERVER,49172"),
+            database_health_probe=probe,
+            database_health_task_runner=tasks.append,
+        )
+        try:
+            QApplication.processEvents()
+            self.assertEqual(
+                window.database_health_monitor.snapshot.state,
+                DatabaseHealthState.CHECKING,
+            )
+            self.assertEqual(len(tasks), 1)
+
+            tasks.pop(0)()
+            self.assertEqual(
+                window.database_status_indicator.text(),
+                "Database: Ready",
+            )
+            self.assertIn(
+                "tcp:SERVER,49172",
+                window.database_status_indicator.toolTip(),
+            )
+
+            window.database_status_indicator.click()
+            self.assertEqual(len(tasks), 1)
+            tasks.pop(0)()
+            self.assertEqual(
+                window.database_status_indicator.text(),
+                "Database: Unavailable",
+            )
+        finally:
+            window.close()
+
+    def test_database_indicator_tracks_preflight_failure_not_business_validation(self):
+        ready_result = DatabasePreflightResult(
+            True,
+            None,
+            "Ready",
+            "",
+            6,
+            6,
+            1,
+        )
+        unavailable_result = DatabasePreflightResult(
+            False,
+            DatabaseErrorCategory.SERVER_UNAVAILABLE,
+            "Server unavailable",
+            "Synthetic connection failure",
+            None,
+            6,
+            5000,
+        )
+        workflow = MagicMock()
+        window = MainWindow(
+            database_workflow=workflow,
+            database_settings=DatabaseSettings(server="tcp:SERVER,49172"),
+            database_health_probe=lambda: ready_result,
+            database_health_task_runner=lambda _task: None,
+        )
+        try:
+            window.database_health_monitor.report_operation_result(ready_result)
+            workflow.load_for_unit.side_effect = ValueError("Run not found")
+            with patch("ilm_app.QMessageBox.information"):
+                window.load_selected_unit_run()
+            self.assertEqual(
+                window.database_health_monitor.snapshot.state,
+                DatabaseHealthState.READY,
+            )
+
+            workflow.load_for_unit.side_effect = DatabaseRunUnavailableError(
+                unavailable_result
+            )
+            with patch("ilm_app.QMessageBox.critical"):
+                window.load_selected_unit_run()
+            self.assertEqual(
+                window.database_health_monitor.snapshot.state,
+                DatabaseHealthState.UNAVAILABLE,
+            )
+        finally:
+            window.close()
+
+    def test_clear_workspace_unloads_ui_and_preserves_connections_and_reference(self):
+        window = MainWindow()
+        manager = window.hardware_connection_manager
+        health_monitor = window.database_health_monitor
+        reference = new_reference_snapshot(
+            -0.12,
+            0.08,
+            method=ReferenceMethod.CALCULATED,
+            measurement_configuration=window.measurement_configuration,
+        )
+        window.reference_session.apply(reference, ("test-reference-context",))
+        window._apply_reference_snapshot_to_widgets(reference)
+        window.hardware_station_number.setValue(99)
+        window._set_station_number(3, editable=False)
+        window.run_data = RunData(
+            Path("database-run-41"),
+            [MeasurementRecord(1, 1.0, 1.1, 1)],
+            {"Run number": "4", "run_purpose": "engineering"},
+        )
+        context = MagicMock()
+        context.run.run_id = 41
+        window.database_run_context = context
+        window.hardware_main_board_serial.setText("99190")
+        window.hardware_switch_serial.setText("SW-100")
+        window.hardware_part_number.setCurrentText(
+            "OSX-150-1A-048-09-FA-00B-3H"
+        )
+        window.hardware_operating_band.setCurrentText("C band")
+        window.hardware_tested_by.setText("AT")
+        window.hardware_run_number.setValue(4)
+        window._set_run_purpose("engineering", editable=False)
+        window.file_label.setText("Database: 99190 / Run 4")
+        window.table.setRowCount(1)
+
+        try:
+            with patch.object(manager, "close_all") as close_all:
+                self.assertTrue(window.clear_workspace(confirm=False))
+                close_all.assert_not_called()
+
+            self.assertIs(window.hardware_connection_manager, manager)
+            self.assertIs(window.database_health_monitor, health_monitor)
+            self.assertIs(window.reference_session.snapshot, reference)
+            self.assertTrue(window.reference_session.is_valid)
+            self.assertEqual(window.reference_1310_spin.value(), -0.12)
+            self.assertEqual(window.reference_1550_spin.value(), 0.08)
+            self.assertIsNone(window.run_data)
+            self.assertIsNone(window.database_run_context)
+            self.assertEqual(window.hardware_main_board_serial.text(), "")
+            self.assertEqual(window.hardware_switch_serial.text(), "")
+            self.assertEqual(window.hardware_part_number.currentText(), "")
+            self.assertEqual(window.hardware_operating_band.currentText(), "O band")
+            self.assertEqual(window.hardware_tested_by.text(), "")
+            self.assertEqual(window.hardware_station_number.value(), 0)
+            self.assertEqual(window.hardware_run_number.value(), 1)
+            self.assertEqual(window.hardware_run_purpose.currentData(), "production")
+            self.assertEqual(window.file_label.text(), "No run loaded")
+            self.assertEqual(window.table.rowCount(), 0)
+            self.assertEqual(window.completion_status_label.text(), "Run: Not started")
+            self.assertEqual(window.result_status_label.text(), "Result: Not evaluated")
+            self.assertEqual(window.current_channel_label.text(), "Channel: -")
+            self.assertTrue(window.clear_workspace_action.isEnabled())
+        finally:
+            window.close()
+
+    def test_clear_workspace_declines_or_blocks_without_changing_loaded_run(self):
+        window = MainWindow()
+        run_data = RunData(Path("saved.csv"), [], {"Run number": "1"})
+        window.run_data = run_data
+        try:
+            with patch(
+                "ilm_app.QMessageBox.question",
+                return_value=QMessageBox.No,
+            ):
+                self.assertFalse(window.clear_workspace())
+            self.assertIs(window.run_data, run_data)
+
+            window._database_write_request_in_flight = True
+            with patch("ilm_app.QMessageBox.information") as information:
+                self.assertFalse(window.clear_workspace(confirm=False))
+            information.assert_called_once()
+            self.assertIs(window.run_data, run_data)
+        finally:
+            window._database_write_request_in_flight = False
+            window.close()
 
     def test_loads_saved_limit_and_run_number_from_companion_json(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1017,6 +1215,7 @@ class MainWindowTests(unittest.TestCase):
             [action.text() for action in menus["File"].actions()],
             [
                 "Open CSV Run...",
+                "Clear Workspace...",
                 "Data Output Folder",
                 "Part Number Lookup Folder",
                 "COC Template...",

@@ -56,6 +56,8 @@ def build_database_primary_workflow(
         repositories,
         readiness_check=lambda: diagnostics.check(settings),
         support_logger=support_logger,
+        database_settings=settings,
+        health_check=lambda: diagnostics.check(settings, record_event=False),
     )
 
 

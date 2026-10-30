@@ -78,6 +78,16 @@ from Phase 2. On a remote workstation, compare total workflow time with
 driver, or network concern rather than evidence that additional repository
 queries remain.
 
+Database-health-monitor tests use injected probes, task runners, and clocks;
+they must not wait for the real 60-second interval or contact SQL Server.
+Cover disabled/checking/ready/unavailable transitions, startup and manual
+requests, recovery, single-in-flight coalescing, periodic log suppression,
+credential-safe tooltips, and shutdown with a late result. UI checks must
+verify readable light/dark styling and that clicking queues a check without a
+modal dialog. Release smoke testing must confirm that startup remains
+responsive and the packaged monitor uses short-lived connections with the
+same settings as normal database operations.
+
 Database configuration tests must cover the default Windows Authentication
 mode and explicit SQL-password mode. Use synthetic credentials only. Assert
 that SQL-password connection strings contain UID/PWD without

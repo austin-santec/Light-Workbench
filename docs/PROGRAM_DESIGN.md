@@ -242,6 +242,16 @@ composite/COC status, and replacement-analysis display data from the context,
 without repository calls. A user-requested comparison or numbered-run load
 creates a new context and therefore observes current database state.
 
+`application/database_health_monitor.py` owns the advisory database-health
+lifecycle. After the main window is ready it runs a short-lived schema
+preflight outside the Qt GUI thread, repeats approximately once per minute,
+and publishes immutable disabled/checking/ready/unavailable snapshots. The
+compact top-row control in `ui/database_status.py` renders those snapshots and
+allows a manual recheck. Every probe closes its connection, may warm normal
+ODBC pooling, and never replaces the authoritative preflight performed by a
+database operation. Shutdown stops scheduling and ignores late daemon-probe
+results without waiting on the network timeout.
+
 `domain/run_status.py` owns the derived two-part run assessment. Completion is
 based on accepted readings compared with the saved hardware plan, while result
 quality is based on the active criteria, front-panel coverage, replacement
@@ -405,6 +415,14 @@ session Reference panel, then the vertically scrollable
 analysis/replacement/run-information area. This is a presentation-only
 arrangement; the existing widgets and workflow callbacks remain the source of
 behavior.
+
+`File > Clear Workspace...` is an in-memory unload boundary. It resets the
+loaded run context, setup form, pending reading state, table, comparison,
+analysis, and run-specific controls to their startup presentation without
+deleting persisted data. It deliberately retains hardware-manager connections,
+database-health state, wavelength mode, settings, and the session-scoped
+reference bank. The action is unavailable while acquisition, reference
+calculation, or measurement persistence is active.
 
 The Power Measurement Diagnostics dialog places its in-memory variation
 analysis beside the history table in a resizable splitter. The panel is

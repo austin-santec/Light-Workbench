@@ -83,6 +83,7 @@ from application.part_number_lookup import (
 )
 from application.coc_workflow import CocRunOption, CocWorkflow
 from application.database_primary_workflow import DatabaseRunContext
+from application.database_health_monitor import DatabaseHealthMonitor
 from application.replacement_persistence_workflow import (
     ReplacementBatchValidationError,
 )
@@ -218,6 +219,7 @@ from ui.coc_export_dialog import CocExportDialog, format_optimization_warning
 from ui.switch_ip import SwitchIpAddressDialog
 from ui.database_reports import DatabaseReportsDialog
 from ui.database_replacements import DatabaseReplacementDialog
+from ui.database_status import DatabaseStatusIndicator
 from ui.collapsible_group_box import CollapsibleGroupBox
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
@@ -850,6 +852,9 @@ class MainWindow(QMainWindow):
         support_logger=None,
         part_lookup_controller=None,
         database_workflow=None,
+        database_settings=None,
+        database_health_probe=None,
+        database_health_task_runner=None,
     ):
         super().__init__()
         self.support_logger = support_logger or get_support_logging_service()
@@ -871,6 +876,18 @@ class MainWindow(QMainWindow):
         self._support_log_size_warning_shown = False
         self.run_data: RunData | None = None
         self.database_workflow = database_workflow
+        self.database_settings = database_settings
+        self.database_health_monitor = DatabaseHealthMonitor(
+            enabled=bool(
+                database_settings is not None
+                and getattr(database_settings, "enabled", False)
+                and database_health_probe is not None
+            ),
+            probe=database_health_probe,
+            support_logger=self.support_logger,
+            task_runner=database_health_task_runner,
+            parent=self,
+        )
         self.database_run_context: DatabaseRunContext | None = None
         self.database_pending_measurement = None
         self.hardware_pending_token = None
@@ -1017,6 +1034,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1120, 720)
         self._build_ui()
+        self.database_health_monitor.state_changed.connect(
+            self._database_health_state_changed
+        )
+        self._database_health_state_changed(self.database_health_monitor.snapshot)
+        QTimer.singleShot(0, self.database_health_monitor.start)
         self.hardware_status_panel.remote_mode_requested.connect(
             self._request_ilm_remote_mode
         )
@@ -1504,6 +1526,13 @@ class MainWindow(QMainWindow):
             bool(self.run_data and self.run_data.measurements)
             and run_available
         )
+        if hasattr(self, "clear_workspace_action"):
+            self.clear_workspace_action.setEnabled(
+                not self.hardware_run_active
+                and self.reference_thread is None
+                and not self._database_write_request_in_flight
+                and self.database_pending_measurement is None
+            )
         self._refresh_void_run_control()
 
     def _set_run_purpose_editable(self, editable: bool):
@@ -1698,6 +1727,15 @@ class MainWindow(QMainWindow):
         self.open_csv_action.triggered.connect(self.open_csv)
         file_menu = self.menuBar().addMenu("File")
         file_menu.addAction(self.open_csv_action)
+        self.clear_workspace_action = QAction("Clear Workspace...", self)
+        self.clear_workspace_action.setToolTip(
+            "Clear loaded run data and setup fields without disconnecting hardware "
+            "or invalidating the session reference."
+        )
+        self.clear_workspace_action.triggered.connect(
+            lambda _checked=False: self.clear_workspace()
+        )
+        file_menu.addAction(self.clear_workspace_action)
         data_output_action = QAction("Data Output Folder", self)
         data_output_action.triggered.connect(self.open_data_output_folder)
         file_menu.addAction(data_output_action)
@@ -1832,6 +1870,16 @@ class MainWindow(QMainWindow):
         self.sm_mode_radio.toggled.connect(self._wavelength_mode_changed)
         self.mm_mode_radio.toggled.connect(self._wavelength_mode_changed)
         header.addWidget(wavelength_mode_widget)
+        self.database_status_indicator = DatabaseStatusIndicator(
+            server=getattr(self.database_settings, "server", ""),
+            database=getattr(self.database_settings, "database", ""),
+            parent=central,
+        )
+        self.database_status_indicator.apply_theme(self.dark_mode_enabled)
+        self.database_status_indicator.clicked.connect(
+            self._request_database_health_check
+        )
+        header.addWidget(self.database_status_indicator)
         self.hardware_status_panel = HardwareStatusPanel(central)
         self.hardware_status_panel.set_laser_visible(
             self.hardware_connection_manager.has_separate_laser
@@ -3181,6 +3229,27 @@ class MainWindow(QMainWindow):
             % self.active_timing_profile.name
         )
 
+    def _database_health_state_changed(self, snapshot):
+        """Render one main-thread health snapshot without opening a connection."""
+
+        if hasattr(self, "database_status_indicator"):
+            self.database_status_indicator.set_snapshot(snapshot)
+
+    def _request_database_health_check(self):
+        """Queue an operator-requested probe without blocking the GUI thread."""
+
+        self.database_health_monitor.request_check("manual")
+
+    def _database_preflight_observed(self, result):
+        """Let a real readiness check update the advisory health indicator."""
+
+        self.database_health_monitor.report_operation_result(result)
+
+    def _database_operation_succeeded(self):
+        """Let a completed SQL workflow refresh the advisory health indicator."""
+
+        self.database_health_monitor.report_operation_ready()
+
     def toggle_dark_mode(self, enabled):
         """Apply and persist the operator's light/dark appearance choice."""
         self.dark_mode_enabled = bool(enabled)
@@ -3188,6 +3257,8 @@ class MainWindow(QMainWindow):
             self.dark_mode_action.setChecked(self.dark_mode_enabled)
         self.settings.setValue("dark_mode", self.dark_mode_enabled)
         self.setStyleSheet(self._theme_stylesheet(self.dark_mode_enabled))
+        if hasattr(self, "database_status_indicator"):
+            self.database_status_indicator.apply_theme(self.dark_mode_enabled)
         self._refresh_reading_status_color()
         self.statusBar().showMessage(
             "Dark mode enabled." if self.dark_mode_enabled else "Light mode enabled."
@@ -3251,6 +3322,189 @@ class MainWindow(QMainWindow):
         )
         if path:
             self.load_path(Path(path))
+
+    def clear_workspace(self, *, confirm=True):
+        """Return run-specific UI state to startup defaults without side effects.
+
+        This is deliberately an unload operation, not a persistence operation.
+        Connected hardware, the database-health monitor, application settings,
+        wavelength mode, and the session reference bank remain untouched.
+        """
+
+        reference_active = (
+            self.reference_controller.thread is not None
+            or self.reference_controller.worker is not None
+        )
+        persistence_active = bool(
+            self._database_write_request_in_flight
+            or self.database_pending_measurement is not None
+        )
+        if self.hardware_run_active or reference_active or persistence_active:
+            QMessageBox.information(
+                self,
+                "Workspace is busy",
+                "Stop the active run, reference calculation, or database write "
+                "before clearing the workspace.",
+            )
+            return False
+
+        if confirm:
+            choice = QMessageBox.question(
+                self,
+                "Clear workspace?",
+                "Clear the loaded run, setup fields, readings, analysis, and "
+                "table from this window?\n\n"
+                "Saved database and CSV data will not be deleted. Connected "
+                "hardware and the current session reference will be retained.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if choice != QMessageBox.Yes:
+                return False
+
+        unloaded_run_id = (
+            self.database_run_context.run.run_id
+            if self.database_run_context is not None
+            else None
+        )
+        self._active_part_lookup_request = None
+        self.current_run_workflow = None
+        self._post_run_recommendation_prompt_workflow_id = None
+        self._post_run_recommendation_prompted = False
+        self._last_run_status_key = None
+        self._active_planned_channels = None
+        self._active_extra_only = False
+        self._run_terminal_status = None
+        self._run_completion_reason = ""
+        self._run_completed_at_utc = ""
+        self._loaded_run_profile_unavailable = False
+        self._loaded_run_profile_reason = ""
+        self.active_run_reference_snapshot = None
+
+        self.database_run_context = None
+        self.database_pending_measurement = None
+        self.hardware_pending_token = None
+        self._last_measurement_acknowledgement = None
+        self._database_persistence_payload = None
+        self._database_write_request_in_flight = False
+        self._database_persistence_waiting_for_ack = False
+
+        self.run_data = None
+        self.run_recorder = None
+        self.unit_directory = None
+        self.unit_record = {}
+        self.replacement_analysis = None
+        self.replacement_analysis_history = ()
+        self.replacement_analysis_stale = False
+        self.replacement_history = []
+        self.completed_replacements = []
+        self.designated_spares = []
+        self.switch_test_timer = None
+        self.displayed_records = []
+        self.comparison_run_data = None
+        self.comparison_run_number = None
+        self.demo_measurement = None
+        self.hardware_session = HardwareRunSession()
+
+        self.hardware_channel_mode.setCurrentText(
+            ChannelMode.FULL_CONFIGURED_PASS.value
+        )
+        self.hardware_single_channel.setValue(1)
+        self.hardware_channel_ranges.clear()
+        self.manual_channel_order_checkbox.setChecked(False)
+        self.hardware_main_board_serial.clear()
+        self.hardware_switch_serial.clear()
+        self.hardware_part_number.setCurrentIndex(-1)
+        self.hardware_operating_band.setCurrentText("O band")
+        self.hardware_tested_by.clear()
+        self._station_session_default = None
+        self._set_station_number(None, editable=True)
+        self.hardware_run_number.setValue(1)
+        self._set_run_purpose("production", editable=True)
+        self.update_channel_mode_controls(self.hardware_channel_mode.currentIndex())
+        self._refresh_front_panel_channel_count_label()
+
+        self.comparison_run_combo.blockSignals(True)
+        try:
+            self.comparison_run_combo.clear()
+            self.comparison_run_combo.addItem("No comparison", None)
+            self.comparison_run_combo.setEnabled(False)
+        finally:
+            self.comparison_run_combo.blockSignals(False)
+        self.reading_filter.blockSignals(True)
+        try:
+            self.reading_filter.setCurrentIndex(FILTER_ALL)
+        finally:
+            self.reading_filter.blockSignals(False)
+
+        wavelengths = self.measurement_configuration.opm_wavelengths_nm
+        self.table.clearContents()
+        self.table.setRowCount(0)
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(
+            [
+                "Channel",
+                "%d nm IL (dB)" % wavelengths[0],
+                "%d nm IL (dB)" % wavelengths[1],
+                "Status",
+            ]
+        )
+        self.file_label.setText("No run loaded")
+        for label in self.metadata_labels.values():
+            label.setText("-")
+        for label in self.metric_labels.values():
+            label.setText("-")
+        self.completion_status_label.setText("Run: Not started")
+        self.result_status_label.setText("Result: Not evaluated")
+        self.run_purpose_status_label.setText("Purpose: Production")
+        for label in (
+            self.completion_status_label,
+            self.result_status_label,
+            self.run_purpose_status_label,
+        ):
+            label.setToolTip("No run is loaded.")
+            label.setStyleSheet("")
+
+        self.clear_current_reading()
+        self.hardware_live_indicator.setVisible(False)
+        self.demo_channel_label.setText("No hardware run active")
+        self._finish_extra_port_ui()
+        self.stop_hardware_button.setEnabled(False)
+        self.continue_hardware_button.setEnabled(False)
+        self.write_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(False)
+        self.retest_button.setEnabled(False)
+        self.replacement_summary_label.setText("Not run")
+        self.completed_replacements_label.setText(
+            "No completed replacements recorded"
+        )
+        self.replacement_analysis_button.setEnabled(False)
+        self.replacement_analysis_history_button.setEnabled(False)
+        self.record_replacements_button.setEnabled(False)
+        self.start_verification_run_button.setEnabled(False)
+        self.copy_replacement_notes_button.setEnabled(False)
+        self.view_history_button.setEnabled(False)
+        self.void_run_button.setEnabled(False)
+        self.refresh_coc_controls()
+        self._refresh_wavelength_mode_ui()
+        self.set_open_csv_available(True)
+        self._update_hardware_readiness_controls()
+
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "workspace.cleared",
+            run_id=unloaded_run_id,
+            details=(
+                "Run-specific UI state cleared; hardware connections and session "
+                "reference retained."
+            ),
+            status="success",
+        )
+        self.statusBar().showMessage(
+            "Workspace cleared. Hardware connections and reference retained.",
+            7000,
+        )
+        return True
 
     def open_data_output_folder(self):
         """Open the directory containing saved measurement-run folders."""
@@ -3479,6 +3733,7 @@ class MainWindow(QMainWindow):
         except Exception as error:
             QMessageBox.warning(self, "Database Reports", str(error))
             return
+        self._database_preflight_observed(readiness)
         if not getattr(readiness, "ready", False):
             QMessageBox.warning(
                 self,
@@ -4325,6 +4580,7 @@ class MainWindow(QMainWindow):
                     self.hardware_run_number.value(),
                 )
             except DatabaseRunUnavailableError as error:
+                self._database_preflight_observed(error.preflight_result)
                 QMessageBox.critical(
                     self,
                     "Database unavailable",
@@ -5291,6 +5547,7 @@ class MainWindow(QMainWindow):
         )
         self.refresh_analysis(stage_timings=ui_stage_timings)
         self._refresh_void_run_control()
+        self._database_operation_succeeded()
         ui_stage_timings["context_publication"] = max(
             0,
             int((time.perf_counter() - publication_started) * 1000),
@@ -6130,6 +6387,7 @@ class MainWindow(QMainWindow):
                 self._apply_database_run_context(context, update_setup=False)
                 self.hardware_run_number.setValue(selected_run_number)
             except DatabaseRunUnavailableError as error:
+                self._database_preflight_observed(error.preflight_result)
                 self._record_support(
                     SupportEventCategory.CONNECTION,
                     "database.run_start_blocked",
@@ -8585,6 +8843,8 @@ class MainWindow(QMainWindow):
             return
         if hasattr(self, "part_lookup_controller"):
             self.part_lookup_controller.close()
+        if hasattr(self, "database_health_monitor"):
+            self.database_health_monitor.stop()
         self._record_support(
             SupportEventCategory.APPLICATION,
             "application.close_completed",
@@ -11384,6 +11644,8 @@ def main():
         sys.argv[1] if len(sys.argv) > 1 else None,
         support_logger=support_logger,
         database_workflow=database_workflow,
+        database_settings=database_workflow.database_settings,
+        database_health_probe=database_workflow.check_health,
     )
     window.showMaximized()
     try:

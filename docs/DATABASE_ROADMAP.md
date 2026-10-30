@@ -577,6 +577,13 @@ sessions. Explicit run selections remain fresh bounded loads. Connection-open,
 cleanup, and UI publication sub-stages are logged so a remote pilot can
 separate network/login cost from query and widget work.
 
+The workstation application now also has a nonblocking top-row database
+readiness indicator. A startup warm-up and restrained periodic preflight use
+short-lived connections, support manual rechecks, and detect recovery without
+modal background warnings. This is client availability monitoring only; the
+network pilot still requires server-side backup, capacity, uptime, and health
+monitoring before production rollout.
+
 ### Implement
 
 - Deploy the migrations to the approved network SQL Server.

@@ -24,11 +24,16 @@ class DatabaseDiagnosticsService:
         self._factory_type = factory_type
         self._factory = factory
 
-    def check(self, settings: DatabaseSettings) -> DatabasePreflightResult:
+    def check(
+        self,
+        settings: DatabaseSettings,
+        *,
+        record_event: bool = True,
+    ) -> DatabasePreflightResult:
         result = check_database_preflight(
             self._factory if self._factory is not None else self._factory_type(settings)
         )
-        if self._support_logger is not None:
+        if record_event and self._support_logger is not None:
             self._support_logger.record(
                 SupportEventCategory.CONNECTION,
                 "database.preflight_completed",

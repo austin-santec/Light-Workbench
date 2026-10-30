@@ -80,10 +80,20 @@ class DatabaseRunContext:
 class DatabasePrimaryRunWorkflow:
     """Keep Qt and hardware code independent from SQL and connection details."""
 
-    def __init__(self, repositories, readiness_check, support_logger=None) -> None:
+    def __init__(
+        self,
+        repositories,
+        readiness_check,
+        support_logger=None,
+        *,
+        database_settings=None,
+        health_check=None,
+    ) -> None:
         self.repositories = repositories
         self._readiness_check = readiness_check
+        self._health_check = health_check or readiness_check
         self._support_logger = support_logger
+        self.database_settings = database_settings
         self.assignments = UnitSwitchAssignmentWorkflow(
             repositories, repositories, repositories
         )
@@ -96,6 +106,11 @@ class DatabasePrimaryRunWorkflow:
 
     def check_ready(self):
         return self._readiness_check()
+
+    def check_health(self):
+        """Run the quiet readiness probe used by the background monitor."""
+
+        return self._health_check()
 
     def start_new_run(
         self,

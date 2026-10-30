@@ -46,6 +46,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\database_diagnostics.py',
    'PYMODULE'),
+  ('application.database_health_monitor',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\database_health_monitor.py',
+   'PYMODULE'),
   ('application.database_primary_workflow',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\database_primary_workflow.py',
@@ -1601,6 +1605,10 @@
   ('ui.database_reports',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\database_reports.py',
+   'PYMODULE'),
+  ('ui.database_status',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\database_status.py',
    'PYMODULE'),
   ('ui.hardware_status',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
