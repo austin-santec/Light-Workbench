@@ -172,6 +172,10 @@ machine that only runs the packaged executable.
 - Build from a clean or controlled environment when preparing a release.
 - Verify that support files, templates, assets, documentation, and
   `OP815M.dll` are present beside/in the packaged application as intended.
+- Require the Microsoft Visual C++ 2015-2022 Redistributable (x86) on build and
+  target computers. Do not package application-local `VCRUNTIME140.dll`,
+  `MSVCP140.dll`, or `MSVCP140_1.dll`; stale private copies can force ODBC
+  Driver 18 to load an incompatible runtime and fail with a generic `HY000`.
 - Treat every file in `infrastructure/database/sql_migrations/` as a required
   immutable runtime resource. `ilm_app.spec` discovers the `.sql` files
   dynamically and places them under
@@ -197,6 +201,8 @@ treated as source modules or used as the location for architecture decisions.
 - Build succeeds.
 - Packaged executable starts on a clean target machine.
 - Dependency check is included.
+- `Check Dependencies.cmd` reports a missing system x86 Visual C++ runtime
+  before attempting to launch the packaged application.
 - README and installation instructions are current.
 - No production measurements or machine-specific paths are packaged.
 - Release notes describe behavior changes and migration concerns.
@@ -208,6 +214,8 @@ templates. It also requires the source and packaged SQL migration directories
 to exist, verifies that the source set is nonempty, and compares every packaged
 migration with source by filename and SHA-256 hash. Missing, altered, or stale
 packaged migrations fail verification; the verifier never repairs a release.
+The verifier also rejects application-local Visual C++ runtime DLLs that could
+override the supported system x86 redistributable.
 
 `package_release.ps1` repeats that verification, reads the version from
 `config\app_info.py`, and creates `releases\LightWorkbench-v<version>.zip`. It does

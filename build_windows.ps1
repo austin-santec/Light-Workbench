@@ -39,6 +39,44 @@ function Test-BuildPythonCandidate {
     }
 }
 
+function Assert-SystemX86VisualCppRuntime {
+    $runtimeDirectory = if ([Environment]::Is64BitOperatingSystem) {
+        Join-Path $env:WINDIR "SysWOW64"
+    }
+    else {
+        Join-Path $env:WINDIR "System32"
+    }
+    $requiredRuntimeNames = @(
+        "VCRUNTIME140.dll",
+        "MSVCP140.dll",
+        "MSVCP140_1.dll"
+    )
+    $missingRuntimePaths = @(
+        foreach ($runtimeName in $requiredRuntimeNames) {
+            $runtimePath = Join-Path $runtimeDirectory $runtimeName
+            if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
+                $runtimePath
+            }
+        }
+    )
+    if ($missingRuntimePaths.Count -gt 0) {
+        throw @"
+The Microsoft Visual C++ 2015-2022 Redistributable (x86) is required.
+Missing 32-bit runtime file(s):
+$($missingRuntimePaths -join [Environment]::NewLine)
+Install or repair the supported x86 redistributable, then run the build again.
+"@
+    }
+
+    $runtimeVersion = (
+        Get-Item -LiteralPath (Join-Path $runtimeDirectory "VCRUNTIME140.dll")
+    ).VersionInfo.FileVersion
+    Write-Host (
+        "Using system x86 Visual C++ runtime: {0} ({1})" -f `
+            $runtimeDirectory, $runtimeVersion
+    )
+}
+
 $selectedPython = $null
 $explicitPython = $PythonExecutable
 if ([string]::IsNullOrWhiteSpace($explicitPython)) {
@@ -92,6 +130,8 @@ Install it, pass -PythonExecutable <path>, or set LWB_BUILD_PYTHON to its full p
 "@
 }
 
+Assert-SystemX86VisualCppRuntime
+
 Write-Host (
     "Using build Python: {0} ({1}, {2}-bit)" -f `
         $selectedPython.Path, $selectedPython.Version, $selectedPython.Architecture
@@ -115,7 +155,9 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Check Dependencies.cmd") `
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "ILM_READING_GUIDE.html") `
     -Destination (Join-Path $distributionPath "ILM_READING_GUIDE.html") -Force
 
-& (Join-Path $PSScriptRoot "verify_release.ps1") -DistributionPath $distributionPath
+& (Join-Path $PSScriptRoot "verify_release.ps1") `
+    -DistributionPath $distributionPath `
+    -PythonExecutable $selectedPython.Path
 if ($LASTEXITCODE -ne 0) {
     throw "Packaged release layout verification failed."
 }
@@ -124,4 +166,5 @@ Write-Host "Build complete: dist\LightWorkbench\LightWorkbench.exe"
 Write-Host "Installation guide included: dist\LightWorkbench\README_INSTALL.txt"
 Write-Host "Dependency checker included: dist\LightWorkbench\Check Dependencies.cmd"
 Write-Host "ILM operator guide included: dist\LightWorkbench\ILM_READING_GUIDE.html"
+Write-Host "The target computer needs the x86 Visual C++ 2015-2022 Redistributable."
 Write-Host "The target computer still needs the 32-bit VISA runtime for real hardware."
