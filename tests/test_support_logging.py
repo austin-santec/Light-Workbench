@@ -231,6 +231,8 @@ class SupportLogWriterTests(unittest.TestCase):
             {
                 "destination": "C:/Users/TestUser/Documents/run.json",
                 "password": "secret",
+                "pwd": "secret",
+                "connection_string": "DRIVER={...};PWD={secret};",
                 "clipboard_contents": "private",
                 "raw_response": "R" * (RAW_RESPONSE_LIMIT + 20),
             },
@@ -238,6 +240,8 @@ class SupportLogWriterTests(unittest.TestCase):
         )
         self.assertEqual(payload["destination"], "%USERPROFILE%/Documents/run.json")
         self.assertNotIn("password", payload)
+        self.assertNotIn("pwd", payload)
+        self.assertNotIn("connection_string", payload)
         self.assertNotIn("clipboard_contents", payload)
         self.assertEqual(len(payload["raw_response"]), RAW_RESPONSE_LIMIT)
 

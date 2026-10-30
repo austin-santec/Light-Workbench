@@ -57,13 +57,17 @@ older records.
 
 The database-focused branch has completed its SQL Server-primary cutover
 through Milestone 10. Development targets
-`localhost\SQLExpress`, database `LWBTestDB`, with Windows Authentication. The
-per-user endpoint file is `%LOCALAPPDATA%\LightWorkbench\config\database.ini`.
+`localhost\SQLExpress`, database `LWBTestDB`, with Windows Authentication by
+default. Approved workgroup deployments may use SQL Server Authentication with
+the explicit `sql_password` mode and the dedicated least-privilege runtime
+login. The per-user endpoint/authentication file is
+`%LOCALAPPDATA%\LightWorkbench\config\database.ini`.
 The application creates it with documented local defaults on first database
 initialization when missing, never replaces an existing file, and blocks
 database use with actionable feedback if an existing file is malformed or
 invalid. The tracked `config/database.ini.example` file contains no
-credentials.
+credentials; SQL-password credentials are entered only in the per-user file
+and are excluded from logs, support bundles, and source control.
 The forward-only migration runner and initial eight-table/two-view schema are in
 `infrastructure/database/`; migration 0003 adds the nullable positive
 `IL_RUNS.station_number` field. Guarded reset and backup/restore tools operate only

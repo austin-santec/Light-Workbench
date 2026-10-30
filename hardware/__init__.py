@@ -10,6 +10,7 @@ from .interfaces import (
     OpticalSwitch,
     OpticalSwitchNetworkInfo,
     PowerMeter,
+    RemoteControllable,
 )
 from .factory import HardwareFactory
 from .simulated import SimulatedLaserSource, SimulatedOpticalSwitch
@@ -21,6 +22,7 @@ __all__ = [
     "OpticalSwitch",
     "OpticalSwitchNetworkInfo",
     "PowerMeter",
+    "RemoteControllable",
     "OpticalTestSession",
     "SimulatedLaserSource",
     "SimulatedOpticalSwitch",

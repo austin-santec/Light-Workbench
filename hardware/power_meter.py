@@ -8,7 +8,9 @@ from hardware.interfaces import (
     PowerMeter,
     validate_wavelength_readings,
 )
+from domain.hardware_connection import RemoteControlState
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
+from domain.measurement_timing import MeasurementTimingProfile
 from domain.wavelengths import (
     MeasurementConfiguration,
     SM_SOURCE_PROFILE,
@@ -32,6 +34,7 @@ class SantecPowerMeter:
         self._measurement_configuration = measurement_configuration(
             "SM", source_profile
         )
+        self._measurement_timing = MeasurementTimingProfile("standard", "Standard")
 
     @property
     def description(self):
@@ -68,6 +71,25 @@ class SantecPowerMeter:
     def source_capability_profile(self):
         return self._source_profile
 
+    @property
+    def remote_control_supported(self) -> bool:
+        """Return whether the wrapped driver exposes local/remote control."""
+        return callable(getattr(self._driver, "set_remote_control", None))
+
+    @property
+    def remote_control_state(self) -> RemoteControlState | None:
+        """Return the driver's last confirmed local/remote state."""
+        if not self.remote_control_supported:
+            return None
+        return getattr(self._driver, "remote_control_state", None)
+
+    def set_remote_control(self, enabled: bool) -> RemoteControlState:
+        """Change OP815 local/remote control without closing the session."""
+        setter = getattr(self._driver, "set_remote_control", None)
+        if setter is None:
+            raise RuntimeError("This measurement adapter does not support remote mode.")
+        return setter(bool(enabled))
+
     def configure_measurement(self, configuration: MeasurementConfiguration):
         if not isinstance(configuration, MeasurementConfiguration):
             raise TypeError("A MeasurementConfiguration is required.")
@@ -75,6 +97,15 @@ class SantecPowerMeter:
         setter = getattr(self._driver, "configure_measurement", None)
         if setter is not None:
             setter(configuration)
+
+    def configure_timing(self, timing: MeasurementTimingProfile):
+        """Apply the run's immutable production timing snapshot."""
+        if not isinstance(timing, MeasurementTimingProfile):
+            raise TypeError("A MeasurementTimingProfile is required.")
+        self._measurement_timing = timing.validate()
+        setter = getattr(self._driver, "configure_measurement_timing", None)
+        if setter is not None:
+            setter(self._measurement_timing)
 
     def set_trace_callback(self, callback):
         """Enable optional diagnostic tracing on the wrapped OP815 driver."""
@@ -145,6 +176,7 @@ class SimulatedPowerMeter:
         self._measurement_configuration = measurement_configuration(
             "SM", source_profile
         )
+        self._measurement_timing = MeasurementTimingProfile("standard", "Standard")
 
     def connect(self):
         self.connected = True
@@ -158,6 +190,11 @@ class SimulatedPowerMeter:
                 "The simulated source profile cannot provide the selected mode."
             )
         self._measurement_configuration = configuration
+
+    def configure_timing(self, timing: MeasurementTimingProfile):
+        if not isinstance(timing, MeasurementTimingProfile):
+            raise TypeError("A MeasurementTimingProfile is required.")
+        self._measurement_timing = timing.validate()
 
     def get_device_info(
         self,

@@ -394,6 +394,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\measurement_attempts.py',
    'PYMODULE'),
+  ('domain.measurement_timing',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\measurement_timing.py',
+   'PYMODULE'),
   ('domain.models',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\models.py',
@@ -740,6 +744,10 @@
   ('infrastructure.support_log_writer',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\support_log_writer.py',
+   'PYMODULE'),
+  ('infrastructure.timing_profile_repository',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\timing_profile_repository.py',
    'PYMODULE'),
   ('infrastructure.unit_persistence',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
@@ -1617,6 +1625,10 @@
   ('ui.switch_ip',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\switch_ip.py',
+   'PYMODULE'),
+  ('ui.timing_profiles',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\timing_profiles.py',
    'PYMODULE'),
   ('urllib',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\urllib\\__init__.py',

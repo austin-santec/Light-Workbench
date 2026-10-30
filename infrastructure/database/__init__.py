@@ -5,6 +5,8 @@ from infrastructure.database.connection import (
     DatabaseConnectionError,
     DatabaseConnectionFactory,
     DatabaseErrorCategory,
+    build_connection_string,
+    build_sql_password_connection_string,
     build_windows_connection_string,
     classify_database_exception,
 )
@@ -58,6 +60,8 @@ __all__ = [
     "RESTORE_VERIFICATION_DATABASE_NAME",
     "SqlRepositories",
     "UnsupportedSchemaVersionError",
+    "build_connection_string",
+    "build_sql_password_connection_string",
     "build_windows_connection_string",
     "check_database_preflight",
     "classify_database_exception",

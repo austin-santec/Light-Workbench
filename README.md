@@ -695,8 +695,11 @@ Red Light Test activity is intentionally excluded.
 - The ILM and OSX-150 connected by USB and powered on
 
 For the packaged executable, the target computer must also have the compatible
-32-bit VISA runtime installed. The executable does not modify or bundle a
-VISA installation.
+32-bit VISA runtime and the Microsoft Visual C++ 2015-2022 Redistributable
+(x86) installed. The executable does not modify or bundle a VISA installation
+or private Visual C++ runtime. Avoid copying `VCRUNTIME140.dll` or
+`MSVCP140*.dll` into the application directory: older local copies can override
+the runtime required by native components such as ODBC Driver 18.
 
 The DLL is 32-bit, so 64-bit Python cannot load it. Installing both Python
 architectures on the same computer is fine as long as this application is

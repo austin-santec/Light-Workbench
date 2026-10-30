@@ -207,6 +207,7 @@
       <li><strong>Select SM or MM.</strong> Use the two radio buttons in the header. SM measures 1310/1550 nm; MM measures 850/1300 nm. The application trusts this operator selection and does not infer the mode from the ILM serial, firmware, or model.</li>
       <li><strong>Connect the hardware.</strong> Click <span class="button">Connect Hardware...</span> to connect everything needed for a normal run. Use its menu only when you intentionally need to connect or disconnect the measurement hardware or switch separately.</li>
       <li><strong>Verify the status panel.</strong> Both required devices must show a connected/available state before Start Run can proceed. The panel shows model and serial information when the device supplies it.</li>
+      <li><strong>Use ILM Remote Mode when needed.</strong> The checkbox is checked when Light Workbench controls the ILM. Clear it to return control to the ILM front panel without disconnecting the USB/DLL session, then check it again before resuming automated measurements.</li>
       <li><strong>Resolve connection problems first.</strong> Use the detailed popup and <strong>Help &gt; Support Logs</strong> if a device reports Error. Tools that use only one instrument may still operate when the other instrument is unavailable.</li>
     </ol>
     <div class="tip"><strong>Mode timing:</strong> Select the wavelength mode before calculating a reference. Changing mode selects that mode's session reference and is blocked during active hardware work.</div>
@@ -238,7 +239,7 @@
       <li>Confirm <strong>Reference status</strong> reports a calculated reference for the current mode and connected measurement hardware.</li>
       <li>Reconnect the switch path for the run. Do not recalculate a reference while a hardware run is active.</li>
     </ol>
-    <div class="warning"><strong>Reference safeguards:</strong> A calculated power below -40.0 dBm is treated as a dark/disconnected reference and is rejected. A confirmed measurement-hardware disconnect clears the session references and requires recalculation. Disconnecting only the optical switch does not clear them. Manual reference authorization is available only in Admin Mode through <strong>Apply Manual Reference</strong>.</div>
+    <div class="warning"><strong>Reference safeguards:</strong> A calculated power below -40.0 dBm is treated as a dark/disconnected reference and is rejected. A confirmed measurement-hardware disconnect clears the session references and requires recalculation. Returning the connected ILM to local/front-panel mode does not clear the reference, but recalculate if the optical path or source behavior was changed locally. Automated measurement remains blocked until ILM Remote Mode is restored. Disconnecting only the optical switch does not clear references. Manual reference authorization is available only in Admin Mode through <strong>Apply Manual Reference</strong>.</div>
 
     <h2>5. Understand the quality limits</h2>
     <p>Normal operators do not edit limits. The application selects the saved model/mode profile; authorized administrators can change profiles through <strong>Edit &gt; Admin Mode...</strong> and <strong>Edit &gt; Admin Config...</strong>. New runs snapshot the active criteria so later profile changes do not rewrite historical results.</p>

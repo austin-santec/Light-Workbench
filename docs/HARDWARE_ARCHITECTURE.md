@@ -7,6 +7,9 @@ Application workflows should depend on capability contracts in
 
 - `PowerMeter`: connects, reads both wavelengths, reads reference values, and
   closes.
+- `RemoteControllable`: optional capability for a connected meter that can
+  switch between application remote control and front-panel local control
+  without closing its session.
 - `LaserSource`: connects, selects wavelength, enables/disables output, and
   closes.
 - `OpticalSwitch`: connects, reports configured logical channels, selects a
@@ -234,6 +237,35 @@ tool callback cannot remove the global subscriber. The switch adapter emits
 the corresponding discovery, LF/CRLF identity, channel-count, route, response,
 timing, failure, and cleanup events. Subscribers are failure-isolated and no
 trace path may add hardware calls or change settling delays.
+
+## ILM remote/local control
+
+The OP815 exposes the approved `RemoteMode` DLL function. Light Workbench
+enters remote mode automatically when the ILM connects, preserving the
+existing measurement workflow. The main window's `ILM Remote Mode` checkbox
+can call `RemoteMode(0)` to return control to the ILM front panel or
+`RemoteMode(1)` to return control to Light Workbench without closing the USB
+or DLL session.
+
+Connection state and measurement readiness are separate. A connected ILM in
+local mode remains visible as connected, but it is not measurement-ready:
+automated reads, reference calculation, runs, and other ILM commands remain
+disabled until remote mode is confirmed. Mode changes are serialized through
+the connection manager and are rejected while a workflow owns the measurement
+hardware. Sources are turned off before local control is granted.
+
+Remote mode is transient session state. It is not stored in run data or the
+database. A successful local/remote transition does not invalidate or replace
+the active session reference. A confirmed ILM disconnect still clears the
+session references and requires recalculation after reconnection. If the
+operator changes the optical path or source behavior while the ILM is local,
+the reference should be recalculated before production testing.
+
+The DLL has no dependable remote-mode query, so the application displays the
+last command-confirmed state. A rejected or uncertain transition is shown as
+`Unknown`, blocks measurement, and leaves the session open so the operator can
+retry or explicitly disconnect. Unsupported future meter adapters may omit
+this optional capability and retain their normal readiness behavior.
 
 For each diagnostic wavelength, the OP815 sequence remains SetWavelength,
 wavelength settling, source enable, source settling, and ReadPower. The

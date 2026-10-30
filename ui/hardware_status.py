@@ -1,12 +1,24 @@
 """Presentation widget for transient connected-hardware identity."""
 
-from PyQt5.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QSizePolicy
+from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtWidgets import (
+    QCheckBox,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
+from domain.hardware_connection import RemoteControlState
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
 
 
 class HardwareStatusPanel(QGroupBox):
     """Display meter and switch connection state without vendor UI logic."""
+
+    remote_mode_requested = pyqtSignal(bool)
 
     _STATE_COLORS = {
         ConnectionState.CONNECTED: "#22c55e",
@@ -31,6 +43,22 @@ class HardwareStatusPanel(QGroupBox):
         self.laser_source_status = QLabel()
         self.laser_source_status.setObjectName("laser_source_status")
         self.laser_source_status.hide()
+        remote_mode_widget = QWidget(self)
+        remote_mode_layout = QVBoxLayout(remote_mode_widget)
+        remote_mode_layout.setContentsMargins(0, 0, 0, 0)
+        remote_mode_layout.setSpacing(0)
+        self.remote_mode_checkbox = QCheckBox("ILM Remote Mode")
+        self.remote_mode_checkbox.setObjectName("ilm_remote_mode_checkbox")
+        self.remote_mode_checkbox.setToolTip(
+            "When enabled, Light Workbench controls the ILM. When disabled, "
+            "the ILM remains connected for front-panel control and the current "
+            "session reference is retained."
+        )
+        self.remote_mode_checkbox.toggled.connect(self.remote_mode_requested)
+        self.remote_mode_state_label = QLabel("Remote mode: Disconnected")
+        self.remote_mode_state_label.setObjectName("ilm_remote_mode_state")
+        remote_mode_layout.addWidget(self.remote_mode_checkbox)
+        remote_mode_layout.addWidget(self.remote_mode_state_label)
         self._test_mode_text = ""
         self._last_device_info = {}
         for label in (
@@ -41,8 +69,10 @@ class HardwareStatusPanel(QGroupBox):
             label.setWordWrap(True)
             label.setMinimumWidth(205)
             layout.addWidget(label)
-        self.setMinimumWidth(440)
-        self.setMaximumWidth(560)
+        layout.addWidget(remote_mode_widget)
+        self.remote_mode_widget = remote_mode_widget
+        self.setMinimumWidth(600)
+        self.setMaximumWidth(760)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.clear()
 
@@ -54,6 +84,7 @@ class HardwareStatusPanel(QGroupBox):
                 state=ConnectionState.DISCONNECTED,
             )
         )
+        self.set_remote_mode_state(None, connected=False, busy=False)
         self.set_device_status(
             DeviceInfo(
                 category=DeviceCategory.POWER_METER,
@@ -156,6 +187,49 @@ class HardwareStatusPanel(QGroupBox):
         ):
             color = self._STATE_COLORS[ConnectionState.ERROR]
         label.setStyleSheet("color: %s;" % color)
+
+    def set_remote_mode_state(self, state, *, connected: bool, busy: bool):
+        """Render the optional ILM remote/local capability state."""
+        try:
+            state = RemoteControlState(state) if state is not None else None
+        except (TypeError, ValueError):
+            state = RemoteControlState.UNKNOWN
+
+        supported = bool(connected and state is not None)
+        self.remote_mode_checkbox.blockSignals(True)
+        try:
+            self.remote_mode_checkbox.setChecked(
+                state == RemoteControlState.REMOTE
+            )
+        finally:
+            self.remote_mode_checkbox.blockSignals(False)
+
+        if not connected:
+            label_text = "Remote mode: Disconnected"
+        elif state is None:
+            label_text = "Remote mode: Not supported"
+        else:
+            label_text = {
+                RemoteControlState.REMOTE: "Remote mode: Remote",
+                RemoteControlState.LOCAL: "Remote mode: Local",
+                RemoteControlState.CHANGING: "Remote mode: Changing…",
+                RemoteControlState.UNKNOWN: "Remote mode: Unknown",
+            }[state]
+        self.remote_mode_state_label.setText(label_text)
+        self.remote_mode_checkbox.setEnabled(
+            bool(
+                supported
+                and not busy
+                and state != RemoteControlState.CHANGING
+            )
+        )
+        self.remote_mode_state_label.setToolTip(
+            "The reference is retained across a successful remote/local "
+            "transition. Recalculate it if the optical setup was changed "
+            "while the ILM was local."
+            if state == RemoteControlState.LOCAL
+            else label_text
+        )
 
     @staticmethod
     def _category_label(category):

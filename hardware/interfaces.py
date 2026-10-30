@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from domain.hardware_connection import RemoteControlState
 from domain.models import ConnectionState, DeviceInfo
 
 
@@ -60,6 +61,16 @@ class PowerMeter(Protocol):
 
     def close(self) -> None:
         """Stop measurement activity and release the meter."""
+
+
+@runtime_checkable
+class RemoteControllable(Protocol):
+    """Optional capability for meters that support local/remote control."""
+
+    remote_control_state: RemoteControlState
+
+    def set_remote_control(self, enabled: bool) -> RemoteControlState:
+        """Select local or remote control without closing the session."""
 
 
 @runtime_checkable

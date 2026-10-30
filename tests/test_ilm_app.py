@@ -36,6 +36,7 @@ from domain.run_status import (
     RunStatusAssessment,
 )
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
+from domain.hardware_connection import RemoteControlState
 from hardware.interfaces import LogicalChannelRouteResult
 from domain.measurement_attempts import new_measurement_attempt
 from ilm_app import (
@@ -596,6 +597,44 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("Response: 0", switch_status.toolTip())
         window.close()
 
+    def test_ilm_remote_mode_panel_tracks_control_and_busy_states(self):
+        window = MainWindow()
+        try:
+            panel = window.hardware_status_panel
+            panel.set_remote_mode_state(
+                RemoteControlState.REMOTE,
+                connected=True,
+                busy=False,
+            )
+            self.assertTrue(panel.remote_mode_checkbox.isChecked())
+            self.assertTrue(panel.remote_mode_checkbox.isEnabled())
+            self.assertIn("Remote", panel.remote_mode_state_label.text())
+
+            panel.set_remote_mode_state(
+                RemoteControlState.LOCAL,
+                connected=True,
+                busy=False,
+            )
+            self.assertFalse(panel.remote_mode_checkbox.isChecked())
+            self.assertTrue(panel.remote_mode_checkbox.isEnabled())
+            self.assertIn("Local", panel.remote_mode_state_label.text())
+
+            panel.set_remote_mode_state(
+                RemoteControlState.CHANGING,
+                connected=True,
+                busy=False,
+            )
+            self.assertFalse(panel.remote_mode_checkbox.isEnabled())
+
+            panel.set_remote_mode_state(
+                RemoteControlState.REMOTE,
+                connected=True,
+                busy=True,
+            )
+            self.assertFalse(panel.remote_mode_checkbox.isEnabled())
+        finally:
+            window.close()
+
     def test_front_panel_count_display_tracks_part_number_without_manual_input(self):
         window = MainWindow()
         try:
@@ -987,7 +1026,12 @@ class MainWindowTests(unittest.TestCase):
         )
         self.assertEqual(
             [action.text() for action in menus["Edit"].actions()],
-            ["Keybinds...", "Admin Mode...", "Admin Config..."],
+            [
+                "Keybinds...",
+                "Admin Mode...",
+                "Admin Config...",
+                "Timing Profiles...",
+            ],
         )
         self.assertEqual(
             [action.text() for action in menus["Tools"].actions()],

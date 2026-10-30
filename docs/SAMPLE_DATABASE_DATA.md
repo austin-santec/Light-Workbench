@@ -73,9 +73,11 @@ python tools/seed_sample_runs.py --all --apply
 
 The initial approved target is Windows-authenticated
 `localhost\SQLEXPRESS` / `LWBTestDB`, loaded from the normal per-user
-`database.ini`. The command refuses disabled settings, non-local servers, and
-database names that do not clearly identify a test/development/local/sandbox
-database. It does not accept credentials on the command line.
+`database.ini`. Approved workgroup deployments may use the same command with
+the explicit `sql_password` settings in that file. The command refuses
+disabled settings, non-local servers, and database names that do not clearly
+identify a test/development/local/sandbox database. It does not accept
+credentials on the command line.
 
 ## Safety and repeatability
 

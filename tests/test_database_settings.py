@@ -28,6 +28,9 @@ class DatabaseSettingsTests(unittest.TestCase):
         self.assertTrue(settings.enabled)
         self.assertEqual(settings.server, r"localhost\SQLEXPRESS")
         self.assertEqual(settings.database, "LWBTestDB")
+        self.assertEqual(settings.authentication, "windows")
+        self.assertEqual(settings.username, "")
+        self.assertEqual(settings.password, "")
 
     def test_ensure_exists_creates_default_file_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -129,9 +132,39 @@ class DatabaseSettingsTests(unittest.TestCase):
             actual = repository.load()
             text = path.read_text(encoding="utf-8").lower()
         self.assertEqual(actual, expected)
-        self.assertNotIn("password", text)
-        self.assertNotIn("username", text)
+        self.assertIn("authentication = windows", text)
+        self.assertIn("username =", text)
+        self.assertIn("password =", text)
         self.assertNotIn("trusted_connection", text)
+
+    def test_sql_password_settings_round_trip_without_exposing_repr(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "database.ini"
+            expected = DatabaseSettings(
+                server="tcp:AT-YOGA,49172",
+                authentication="sql_password",
+                username="lwb_app",
+                password="TestOnly-Password-123!",
+            )
+            repository = DatabaseSettingsRepository(path)
+            repository.save(expected)
+            actual = repository.load()
+            serialized = path.read_text(encoding="utf-8")
+            representation = repr(actual)
+
+        self.assertEqual(actual, expected)
+        self.assertIn("sql_password", serialized)
+        self.assertNotIn(expected.password, representation)
+
+    def test_unknown_authentication_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Authentication"):
+            DatabaseSettings(authentication="kerberos")
+
+    def test_sql_password_requires_username_and_password(self):
+        with self.assertRaisesRegex(ValueError, "username"):
+            DatabaseSettings(authentication="sql_password", password="secret")
+        with self.assertRaisesRegex(ValueError, "password"):
+            DatabaseSettings(authentication="sql_password", username="lwb_app")
 
     def test_invalid_timeout_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Connection timeout"):

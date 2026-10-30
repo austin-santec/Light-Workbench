@@ -24,7 +24,7 @@ existing production workflow:
 | `GetUSBSerialNumber` | Read the ILM serial number. |
 | `OpenUSBDevice` | Open the selected USB device. |
 | `OpenDriver` | Initialize the DLL driver. |
-| `RemoteMode` | Enter and leave remote mode. |
+| `RemoteMode` | Enter and leave remote mode. Light Workbench exposes this as the session-only `ILM Remote Mode` control while keeping the USB/DLL session open. |
 | `OperationMode` | Existing startup command; its OP831-specific meaning requires vendor clarification before changing it. |
 | `SetWavelength` | Select the OPM calibration wavelength (1310/1550 nm for SM or 850/1300 nm for MM). It does not select or prove the physical laser wavelength. |
 | `GetWavelength` | Read back the selected OPM wavelength before reading power. It does not verify the emitted physical source wavelength. |

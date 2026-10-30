@@ -55,6 +55,7 @@ imports:
  &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
@@ -201,6 +202,7 @@ imports:
  &#8226;   <a href="#infrastructure.limit_profile_repository">infrastructure.limit_profile_repository</a>
  &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
+ &#8226;   <a href="#infrastructure.timing_profile_repository">infrastructure.timing_profile_repository</a>
  &#8226;   <a href="#infrastructure.unit_repository">infrastructure.unit_repository</a>
  &#8226;   <a href="#io">io</a>
  &#8226;   <a href="#keyword">keyword</a>
@@ -243,6 +245,7 @@ imports:
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
  &#8226;   <a href="#ui.support_logs">ui.support_logs</a>
  &#8226;   <a href="#ui.switch_ip">ui.switch_ip</a>
+ &#8226;   <a href="#ui.timing_profiles">ui.timing_profiles</a>
  &#8226;   <a href="#uuid">uuid</a>
  &#8226;   <a href="#warnings">warnings</a>
  &#8226;   <a href="#weakref">weakref</a>
@@ -436,6 +439,7 @@ imported by:
  &#8226;   <a href="#ui.collapsible_group_box">ui.collapsible_group_box</a>
  &#8226;   <a href="#ui.database_replacements">ui.database_replacements</a>
  &#8226;   <a href="#ui.database_reports">ui.database_reports</a>
+ &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
  &#8226;   <a href="#ui.reading_history">ui.reading_history</a>
@@ -498,6 +502,7 @@ imported by:
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
  &#8226;   <a href="#ui.support_logs">ui.support_logs</a>
  &#8226;   <a href="#ui.switch_ip">ui.switch_ip</a>
+ &#8226;   <a href="#ui.timing_profiles">ui.timing_profiles</a>
 
   </div>
 
@@ -545,6 +550,7 @@ imported by:
  &#8226;   <a href="#domain.database_reporting">domain.database_reporting</a>
  &#8226;   <a href="#domain.database_run_lifecycle">domain.database_run_lifecycle</a>
  &#8226;   <a href="#domain.effective_replacement_analysis">domain.effective_replacement_analysis</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#domain.reference_catalog">domain.reference_catalog</a>
  &#8226;   <a href="#domain.run_purpose">domain.run_purpose</a>
@@ -559,10 +565,12 @@ imported by:
  &#8226;   <a href="#infrastructure.database.runtime">infrastructure.database.runtime</a>
  &#8226;   <a href="#infrastructure.database.settings_repository">infrastructure.database.settings_repository</a>
  &#8226;   <a href="#infrastructure.database.sql_repositories">infrastructure.database.sql_repositories</a>
+ &#8226;   <a href="#infrastructure.timing_profile_repository">infrastructure.timing_profile_repository</a>
  &#8226;   <a href="#pyodbc">pyodbc</a>
  &#8226;   <a href="#ui.coc_export_dialog">ui.coc_export_dialog</a>
  &#8226;   <a href="#ui.database_replacements">ui.database_replacements</a>
  &#8226;   <a href="#ui.database_reports">ui.database_reports</a>
+ &#8226;   <a href="#ui.timing_profiles">ui.timing_profiles</a>
 
   </div>
 
@@ -1943,6 +1951,7 @@ imports:
  &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#domain.extra_ports">domain.extra_ports</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.support_events">domain.support_events</a>
  &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
@@ -1992,6 +2001,7 @@ imports:
  &#8226;   <a href="#application">application</a>
  &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
@@ -2107,6 +2117,7 @@ imports:
  &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#domain.extra_ports">domain.extra_ports</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
@@ -2182,6 +2193,7 @@ imports:
  &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#domain.extra_ports">domain.extra_ports</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
@@ -3857,6 +3869,7 @@ imported by:
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
  &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
  &#8226;   <a href="#infrastructure.support_log_writer">infrastructure.support_log_writer</a>
+ &#8226;   <a href="#infrastructure.timing_profile_repository">infrastructure.timing_profile_repository</a>
  &#8226;   <a href="#tools.dependency_check">tools.dependency_check</a>
 
   </div>
@@ -3923,6 +3936,7 @@ imports:
 imported by:
     <a href="#infrastructure.database.settings_repository">infrastructure.database.settings_repository</a>
  &#8226;   <a href="#infrastructure.limit_profile_repository">infrastructure.limit_profile_repository</a>
+ &#8226;   <a href="#infrastructure.timing_profile_repository">infrastructure.timing_profile_repository</a>
  &#8226;   <a href="#pyvisa.util">pyvisa.util</a>
 
   </div>
@@ -4293,6 +4307,7 @@ imported by:
  &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
@@ -4485,6 +4500,7 @@ imported by:
  &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
  &#8226;   <a href="#domain.measurement_attempts">domain.measurement_attempts</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
@@ -4732,7 +4748,11 @@ imports:
   <div class="import">
 imported by:
     <a href="#application.hardware_connection">application.hardware_connection</a>
+ &#8226;   <a href="#hardware.interfaces">hardware.interfaces</a>
+ &#8226;   <a href="#hardware.power_meter">hardware.power_meter</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#op815_driver">op815_driver</a>
+ &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
 
   </div>
 
@@ -4812,6 +4832,36 @@ imported by:
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
  &#8226;   <a href="#ui.reading_history">ui.reading_history</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="domain.measurement_timing"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/domain/measurement_timing.py" type="text/plain"><tt>domain.measurement_timing</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain">domain</a>
+ &#8226;   <a href="#math">math</a>
+ &#8226;   <a href="#re">re</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application.measurement_worker">application.measurement_worker</a>
+ &#8226;   <a href="#application.power_diagnostics_controller">application.power_diagnostics_controller</a>
+ &#8226;   <a href="#application.run_controller">application.run_controller</a>
+ &#8226;   <a href="#application.run_start">application.run_start</a>
+ &#8226;   <a href="#hardware.power_meter">hardware.power_meter</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#infrastructure.timing_profile_repository">infrastructure.timing_profile_repository</a>
+ &#8226;   <a href="#op815_driver">op815_driver</a>
+ &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
+ &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
+ &#8226;   <a href="#ui.timing_profiles">ui.timing_profiles</a>
 
   </div>
 
@@ -8658,6 +8708,7 @@ imported by:
 imports:
     <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#hardware">hardware</a>
  &#8226;   <a href="#typing">typing</a>
@@ -8721,6 +8772,8 @@ imported by:
 imports:
     <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware">hardware</a>
@@ -9501,6 +9554,7 @@ imported by:
  &#8226;   <a href="#infrastructure.schema">infrastructure.schema</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
  &#8226;   <a href="#infrastructure.support_log_writer">infrastructure.support_log_writer</a>
+ &#8226;   <a href="#infrastructure.timing_profile_repository">infrastructure.timing_profile_repository</a>
  &#8226;   <a href="#infrastructure.unit_persistence">infrastructure.unit_persistence</a>
  &#8226;   <a href="#infrastructure.unit_repository">infrastructure.unit_repository</a>
 
@@ -9623,6 +9677,7 @@ imports:
  &#8226;   <a href="#enum">enum</a>
  &#8226;   <a href="#infrastructure.database">infrastructure.database</a>
  &#8226;   <a href="#pyodbc">pyodbc</a>
+ &#8226;   <a href="#re">re</a>
  &#8226;   <a href="#typing">typing</a>
 
   </div>
@@ -9972,6 +10027,29 @@ imports:
 imported by:
     <a href="#application.support_logging">application.support_logging</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="infrastructure.timing_profile_repository"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/infrastructure/timing_profile_repository.py" type="text/plain"><tt>infrastructure.timing_profile_repository</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#config.app_config">config.app_config</a>
+ &#8226;   <a href="#configparser">configparser</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
+ &#8226;   <a href="#infrastructure">infrastructure</a>
+ &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#tempfile">tempfile</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
 
   </div>
 
@@ -10466,6 +10544,7 @@ imported by:
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain.coc_preparation">domain.coc_preparation</a>
  &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.run_status">domain.run_status</a>
  &#8226;   <a href="#fractions">fractions</a>
  &#8226;   <a href="#openpyxl.compat.strings">openpyxl.compat.strings</a>
@@ -11441,6 +11520,8 @@ imported by:
 imports:
     <a href="#ctypes">ctypes</a>
  &#8226;   <a href="#datetime">datetime</a>
+ &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#pathlib">pathlib</a>
@@ -16319,6 +16400,7 @@ imported by:
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
  &#8226;   <a href="#infrastructure.support_log_writer">infrastructure.support_log_writer</a>
+ &#8226;   <a href="#infrastructure.timing_profile_repository">infrastructure.timing_profile_repository</a>
  &#8226;   <a href="#infrastructure.unit_persistence">infrastructure.unit_persistence</a>
  &#8226;   <a href="#inspect">inspect</a>
  &#8226;   <a href="#linecache">linecache</a>
@@ -16450,6 +16532,7 @@ imported by:
  &#8226;   <a href="#infrastructure.run_repository">infrastructure.run_repository</a>
  &#8226;   <a href="#infrastructure.support_bundle">infrastructure.support_bundle</a>
  &#8226;   <a href="#infrastructure.support_log_writer">infrastructure.support_log_writer</a>
+ &#8226;   <a href="#infrastructure.timing_profile_repository">infrastructure.timing_profile_repository</a>
  &#8226;   <a href="#infrastructure.unit_persistence">infrastructure.unit_persistence</a>
  &#8226;   <a href="#infrastructure.unit_repository">infrastructure.unit_repository</a>
  &#8226;   <a href="#op815_driver">op815_driver</a>
@@ -17548,6 +17631,7 @@ imported by:
  &#8226;   <a href="#ctypes.macholib.framework">ctypes.macholib.framework</a>
  &#8226;   <a href="#ctypes.util">ctypes.util</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.part_numbers">domain.part_numbers</a>
  &#8226;   <a href="#email._encoded_words">email._encoded_words</a>
  &#8226;   <a href="#email._header_value_parser">email._header_value_parser</a>
@@ -17573,6 +17657,7 @@ imported by:
  &#8226;   <a href="#importlib.metadata._text">importlib.metadata._text</a>
  &#8226;   <a href="#infrastructure.coc_export">infrastructure.coc_export</a>
  &#8226;   <a href="#infrastructure.csv_run_loader">infrastructure.csv_run_loader</a>
+ &#8226;   <a href="#infrastructure.database.connection">infrastructure.database.connection</a>
  &#8226;   <a href="#infrastructure.database.maintenance">infrastructure.database.maintenance</a>
  &#8226;   <a href="#infrastructure.database.migrations">infrastructure.database.migrations</a>
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>
@@ -18434,6 +18519,7 @@ imported by:
  &#8226;   <a href="#infrastructure.coc_export">infrastructure.coc_export</a>
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
  &#8226;   <a href="#infrastructure.limit_profile_repository">infrastructure.limit_profile_repository</a>
+ &#8226;   <a href="#infrastructure.timing_profile_repository">infrastructure.timing_profile_repository</a>
  &#8226;   <a href="#multiprocessing.connection">multiprocessing.connection</a>
  &#8226;   <a href="#multiprocessing.heap">multiprocessing.heap</a>
  &#8226;   <a href="#multiprocessing.synchronize">multiprocessing.synchronize</a>
@@ -18932,6 +19018,7 @@ imported by:
  &#8226;   <a href="#ui.red_light_test">ui.red_light_test</a>
  &#8226;   <a href="#ui.support_logs">ui.support_logs</a>
  &#8226;   <a href="#ui.switch_ip">ui.switch_ip</a>
+ &#8226;   <a href="#ui.timing_profiles">ui.timing_profiles</a>
 
   </div>
 
@@ -19044,7 +19131,9 @@ imported by:
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/ui/hardware_status.py" type="text/plain"><tt>ui.hardware_status</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+    <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
+ &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#domain.hardware_connection">domain.hardware_connection</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#ui">ui</a>
 
@@ -19067,6 +19156,7 @@ imports:
  &#8226;   <a href="#application.live_controller">application.live_controller</a>
  &#8226;   <a href="#application.timing">application.timing</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.factory">hardware.factory</a>
@@ -19097,6 +19187,7 @@ imports:
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain.diagnostic_analysis">domain.diagnostic_analysis</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
  &#8226;   <a href="#hardware.device_identity">hardware.device_identity</a>
@@ -19184,6 +19275,25 @@ imported by:
 imports:
     <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
  &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#ui">ui</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ui.timing_profiles"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/ui/timing_profiles.py" type="text/plain"><tt>ui.timing_profiles</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#__future__">__future__</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#ui">ui</a>
 
   </div>

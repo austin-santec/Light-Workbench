@@ -13,6 +13,7 @@ from PyQt5.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 
 from application.timing import LIVE_WRITE_INTERVAL_SECONDS
 from domain.extra_ports import ExtraChannelRoutingMethod
+from domain.measurement_timing import MeasurementTimingProfile
 from domain.models import RunState
 from domain.wavelengths import MeasurementConfiguration
 from hardware.interfaces import OpticalSwitch, PowerMeter
@@ -33,6 +34,7 @@ class HardwareRunRequest:
     resume_full_pass: bool = False
     live_write_mode: bool = False
     live_write_interval: float = LIVE_WRITE_INTERVAL_SECONDS
+    measurement_timing: MeasurementTimingProfile | None = None
     support_logger: object | None = None
     workflow_id: str = ""
     reference_snapshot: Mapping[str, object] | None = None
@@ -134,6 +136,7 @@ class HardwareRunController(QObject):
                 resume_full_pass=request.resume_full_pass,
                 live_write_mode=request.live_write_mode,
                 live_write_interval=request.live_write_interval,
+                measurement_timing=request.measurement_timing,
                 support_logger=request.support_logger,
                 workflow_id=request.workflow_id,
                 measurement_configuration_value=request.measurement_configuration,

@@ -13,10 +13,12 @@ application files.
 DATABASE BRANCH STORAGE
 -----------------------
 
-New production runs require the configured SQL Server database and Windows
-Authentication. Start Run is blocked when connectivity or schema preflight
-fails. Write IL saves the complete two-wavelength reading to SQL Server before
-the application advances; a failed write remains pending for retry.
+New production runs require the configured SQL Server database. Windows
+Authentication is the default, and SQL Server Authentication is supported for
+approved workgroup deployments. Start Run is blocked when connectivity or
+schema preflight fails. Write IL saves the complete two-wavelength reading to
+SQL Server before the application advances; a failed write remains pending for
+retry.
 
 Existing CSV/JSON runs can still be opened for review but are not uploaded and
 cannot be continued as database runs. Support logs, diagnostic exports, and COC
@@ -33,9 +35,11 @@ The database endpoint is stored in the per-user file:
 If the file does not exist, Light Workbench creates it automatically with
 the local development defaults. Existing files are preserved during startup,
 upgrades, and rebuilds. The file contains the SQL Server instance, database,
-ODBC driver, encryption policy, certificate policy, and bounded timeouts. It
-does not contain a username or password; Windows Authentication uses the
-signed-in Windows account.
+ODBC driver, authentication mode, optional SQL username/password, encryption
+policy, certificate policy, and bounded timeouts. Windows Authentication uses
+the signed-in Windows account. For SQL Server Authentication, enter the
+approved login and password in the per-user file; do not copy that file into
+source control or support bundles.
 
 If the file is malformed or contains an invalid setting, database use is
 blocked and the application identifies the file and the setting that must be
@@ -53,6 +57,9 @@ installed separately. Microsoft Excel is also not required for COC export.
 The target computer needs:
 
   * Windows 10 or Windows 11.
+  * Microsoft Visual C++ 2015-2022 Redistributable (x86). Light Workbench uses
+    the supported 32-bit system runtime instead of bundling private runtime
+    DLLs. This is also required when ODBC Driver 18 is used for SQL Server.
   * The ILM/OP815 USB driver.
   * A compatible 32-bit VISA runtime, such as NI-VISA with 32-bit support.
   * The ILM and supported OSX-100/OSX-150 connected by USB and powered on for hardware tests.
@@ -67,7 +74,8 @@ The target computer needs:
     is an experimental alternative.
 
 The application is 32-bit. It normally runs on both 32-bit and 64-bit Windows,
-but a 64-bit computer must still have the 32-bit VISA support installed.
+but a 64-bit computer must still have the x86 Visual C++ Redistributable and
+32-bit VISA support installed.
 
 Santec Terminal may already have installed VISA, but it does not necessarily
 install the ILM/OP815 driver. Check with your equipment administrator or the
@@ -96,8 +104,10 @@ installation.
      the _internal folder.
 
 The ZIP also includes Check Dependencies.cmd. Run it on a new computer for a
-quick diagnostic report before attempting a hardware test. The checker does
-not change run data or COC data, move switch channels, or turn on lasers.
+quick diagnostic report before attempting a hardware test. The launcher first
+checks that the x86 Visual C++ runtime files are installed, then starts the
+application's remaining dependency checks. The checker does not change run
+data or COC data, move switch channels, or turn on lasers.
 
 Open ILM_READING_GUIDE.html in any web browser for the operator's ILM testing
 instructions. It is a self-contained guide and does not require internet access.
@@ -349,13 +359,22 @@ a positive configured channel count.
 The program will not start
   Confirm LightWorkbench.exe and the _internal folder are still together and
   that the ZIP was fully extracted. If Windows shows a security warning, use
-  the approved company process to allow this trusted application.
+  the approved company process to allow this trusted application. Install or
+  repair the Microsoft Visual C++ 2015-2022 Redistributable (x86); do not copy
+  VCRUNTIME140.dll or MSVCP140*.dll into the application folder.
+
+"Light Workbench could not communicate with the database" with ODBC HY000
+  Run Check Dependencies.cmd and confirm ODBC Driver 18 and the Microsoft
+  Visual C++ 2015-2022 Redistributable (x86) are installed. Do not restore or
+  add private VCRUNTIME140.dll or MSVCP140*.dll files under _internal; older
+  bundled copies can override the runtime required by ODBC Driver 18.
 
 
 7. SAFE DEPLOYMENT CHECKLIST
 ----------------------------
 
   [ ] The complete LightWorkbench folder was extracted.
+  [ ] Microsoft Visual C++ 2015-2022 Redistributable (x86) is installed.
   [ ] ILM/OP815 USB driver is installed.
   [ ] 32-bit VISA runtime is installed.
   [ ] Santec Terminal is closed before testing.

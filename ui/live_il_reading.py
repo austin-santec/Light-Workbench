@@ -24,6 +24,7 @@ from PyQt5.QtWidgets import (
 
 from application.live_controller import LiveILReadingController
 from application.timing import LIVE_UPDATE_PAUSE_MS
+from domain.measurement_timing import MeasurementTimingProfile
 from domain.measurement import (
     calculate_insertion_loss,
     format_dark_reference_error,
@@ -45,7 +46,9 @@ class LiveILReadingWorker(QObject):
     failed = pyqtSignal(str)
     finished = pyqtSignal()
 
-    def __init__(self, meter, measurement_configuration_value=None):
+    def __init__(
+        self, meter, measurement_configuration_value=None, measurement_timing=None
+    ):
         super().__init__()
         self.meter = meter
         self.hardware_session = OpticalTestSession(meter)
@@ -55,6 +58,11 @@ class LiveILReadingWorker(QObject):
             if measurement_configuration_value is not None
             else measurement_configuration("SM", SM_SOURCE_PROFILE)
         )
+        self.measurement_timing = (
+            measurement_timing.validate()
+            if measurement_timing is not None
+            else MeasurementTimingProfile("standard", "Standard").validate()
+        )
 
     @pyqtSlot()
     def start(self):
@@ -63,6 +71,9 @@ class LiveILReadingWorker(QObject):
             configure = getattr(self.meter, "configure_measurement", None)
             if configure is not None:
                 configure(self.measurement_configuration)
+            configure_timing = getattr(self.meter, "configure_timing", None)
+            if configure_timing is not None:
+                configure_timing(self.measurement_timing)
             self.connected.emit(self.meter.description or "OP815 connected")
         except Exception as error:
             # Leave the worker event loop available until the UI receives the
@@ -157,6 +168,7 @@ class LiveILReadingDialog(QDialog):
         support_logger=None,
         workflow_id="",
         measurement_configuration_value=None,
+        measurement_timing=None,
     ):
         super().__init__(parent)
         self.hardware_factory = HardwareFactory()
@@ -173,6 +185,11 @@ class LiveILReadingDialog(QDialog):
             measurement_configuration_value
             if measurement_configuration_value is not None
             else measurement_configuration("SM", SM_SOURCE_PROFILE)
+        )
+        self.measurement_timing = (
+            measurement_timing.validate()
+            if measurement_timing is not None
+            else MeasurementTimingProfile("standard", "Standard").validate()
         )
         first_wavelength, second_wavelength = (
             self.measurement_configuration.opm_wavelengths_nm
@@ -368,7 +385,9 @@ class LiveILReadingDialog(QDialog):
             return
         try:
             self.live_controller.start(
-                self.meter_factory, self.measurement_configuration
+                self.meter_factory,
+                self.measurement_configuration,
+                self.measurement_timing,
             )
             self.thread = self.live_controller.thread
             self.worker = self.live_controller.worker
@@ -729,7 +748,7 @@ class LiveILReadingDialog(QDialog):
             self.status_label.setText(
                 "Live update complete. Next reading will start shortly."
             )
-            self.live_update_timer.start(LIVE_UPDATE_PAUSE_MS)
+            self.live_update_timer.start(self.measurement_timing.live_update_pause_ms)
         else:
             self.read_button.setEnabled(self.connected and not self.repeatability_active)
             self.live_update_button.setEnabled(
@@ -748,6 +767,7 @@ class LiveILReadingDialog(QDialog):
         if self.support_logger is None:
             return
         try:
+            fields.setdefault("timing_profile", self.measurement_timing.as_dict())
             self.support_logger.record(
                 category,
                 event,

@@ -1,9 +1,16 @@
 import threading
 import unittest
 
+from PyQt5.QtCore import Qt
+
 from application.hardware_connection import HardwareConnectionManager
 from application.measurement_worker import MeasurementWorker
-from domain.hardware_connection import HardwareBusyError, HardwareCapability
+from domain.hardware_connection import (
+    HardwareBusyError,
+    HardwareCapability,
+    HardwareNotReadyError,
+    RemoteControlState,
+)
 from domain.models import ConnectionState
 from hardware.interfaces import LogicalChannelRouteResult
 from hardware.factory import HardwareFactory
@@ -42,6 +49,33 @@ class FakeMeter:
         self.call_threads.append(threading.get_ident())
         self.close_count += 1
         self.remote = False
+
+
+class RemoteFakeMeter(FakeMeter):
+    """Fake OP815-like meter for remote/local connection tests."""
+
+    remote_control_supported = True
+
+    def __init__(self, fail_remote=False):
+        super().__init__()
+        self.fail_remote = fail_remote
+        self.remote_mode_calls = []
+
+    @property
+    def remote_control_state(self):
+        return (
+            RemoteControlState.REMOTE
+            if self.remote
+            else RemoteControlState.LOCAL
+        )
+
+    def set_remote_control(self, enabled):
+        self.call_threads.append(threading.get_ident())
+        self.remote_mode_calls.append(bool(enabled))
+        if self.fail_remote:
+            raise RuntimeError("remote mode rejected")
+        self.remote = bool(enabled)
+        return self.remote_control_state
 
 
 class FakeSwitch:
@@ -207,6 +241,88 @@ class HardwareConnectionManagerTests(unittest.TestCase):
         self.assertFalse(self.manager.measurement_ready)
         self.assertTrue(self.manager.switch_ready)
         self.assertEqual(switch.connect_count, 1)
+
+    def test_remote_mode_changes_readiness_without_closing_meter(self):
+        self.manager, meter, _ = self.make_manager(meter=RemoteFakeMeter())
+        self.manager.connect_measurement_hardware().result(timeout=2)
+
+        self.assertTrue(self.manager.measurement_ready)
+        self.assertEqual(
+            self.manager.snapshot(HardwareCapability.MEASUREMENT).remote_control_state,
+            RemoteControlState.REMOTE,
+        )
+
+        local_result = self.manager.set_measurement_remote_mode(False).result(
+            timeout=2
+        )
+        self.assertEqual(local_result.state, RemoteControlState.LOCAL)
+        self.assertFalse(self.manager.measurement_ready)
+        self.assertEqual(meter.close_count, 0)
+
+        proxy = self.manager.create_power_meter_proxy(
+            object(), "Live IL Reading", connect_if_needed=False
+        )
+        with self.assertRaisesRegex(HardwareNotReadyError, "remote mode"):
+            proxy.connect()
+
+        remote_result = self.manager.set_measurement_remote_mode(True).result(
+            timeout=2
+        )
+        self.assertEqual(remote_result.state, RemoteControlState.REMOTE)
+        self.assertTrue(self.manager.measurement_ready)
+        self.assertEqual(meter.close_count, 0)
+        self.assertEqual(meter.remote_mode_calls, [False, True])
+
+    def test_connected_snapshot_publishes_detected_remote_state(self):
+        self.manager, _, _ = self.make_manager(meter=RemoteFakeMeter())
+        snapshots = []
+        self.manager.snapshot_changed.connect(
+            snapshots.append,
+            type=Qt.DirectConnection,
+        )
+
+        self.manager.connect_measurement_hardware().result(timeout=2)
+
+        connected_snapshots = [
+            snapshot
+            for snapshot in snapshots
+            if snapshot.capability == HardwareCapability.MEASUREMENT
+            and snapshot.connected
+        ]
+        self.assertTrue(connected_snapshots)
+        self.assertEqual(
+            connected_snapshots[-1].remote_control_state,
+            RemoteControlState.REMOTE,
+        )
+
+    def test_remote_mode_rejects_busy_meter_without_changing_connection(self):
+        self.manager, meter, _ = self.make_manager(meter=RemoteFakeMeter())
+        self.manager.connect_measurement_hardware().result(timeout=2)
+        proxy = self.manager.create_power_meter_proxy(
+            object(), "Live IL Reading", connect_if_needed=False
+        )
+        proxy.connect()
+
+        result = self.manager.set_measurement_remote_mode(False).result(timeout=2)
+
+        self.assertIn("Live IL Reading", result.error)
+        self.assertEqual(result.state, RemoteControlState.REMOTE)
+        self.assertFalse(self.manager.measurement_ready)
+        self.assertEqual(meter.close_count, 0)
+        proxy.close()
+
+    def test_remote_mode_failure_keeps_session_open_and_blocks_measurement(self):
+        self.manager, meter, _ = self.make_manager(
+            meter=RemoteFakeMeter(fail_remote=True)
+        )
+        self.manager.connect_measurement_hardware().result(timeout=2)
+
+        result = self.manager.set_measurement_remote_mode(False).result(timeout=2)
+
+        self.assertIn("remote mode rejected", result.error)
+        self.assertEqual(result.state, RemoteControlState.UNKNOWN)
+        self.assertFalse(self.manager.measurement_ready)
+        self.assertEqual(meter.close_count, 0)
 
     def test_partial_failure_keeps_successful_device(self):
         self.manager, meter, _ = self.make_manager(switch=FakeSwitch(fail=True))

@@ -31,9 +31,12 @@ Always-on engineering support logs remain local.
 - Database engine: Microsoft SQL Server.
 - Development instance: `localhost\SQLExpress`.
 - Development database: `LWBTestDB`.
-- Authentication: Windows Authentication.
+- Authentication: Windows Authentication by default, with explicit SQL Server
+  Authentication support for workgroup deployments.
+- Temporary workgroup pilot: SQL Server Mixed Mode with a dedicated least-
+  privilege `lwb_app` SQL login and encrypted ODBC connections.
 - Production direction: the same versioned schema on a managed network SQL
-  Server using Windows/domain groups and encrypted connections.
+  Server using the approved authentication method and encrypted connections.
 - No SQLite database, shared database file, local synchronization database, or
   historical bulk-import milestone is planned.
 
@@ -42,7 +45,7 @@ in source code or the executable. Because the supported Light Workbench
 runtime is 32-bit Python, the selected SQL Server ODBC driver and Python
 database adapter must support that runtime.
 
-Runtime endpoint settings are kept in the per-user non-secret file
+Runtime endpoint and authentication settings are kept in the per-user file
 `%LOCALAPPDATA%\LightWorkbench\config\database.ini`. On first database
 initialization, Light Workbench creates this file with the local development
 defaults if it is missing. Creation is create-only; an existing file is never
@@ -51,8 +54,12 @@ file blocks database use and reports the path and validation problem rather
 than silently falling back to hidden defaults. A tracked, credential-free
 example is available at `config/database.ini.example`.
 
-Light Workbench uses the signed-in Windows identity and does not store SQL
-usernames or passwords. The configuration includes bounded connection and command timeouts. Connections
+The default authentication mode is Windows Authentication and uses the signed-
+in Windows identity. Workgroup deployments may explicitly select
+`authentication = sql_password` and provide a SQL login and plaintext password
+in the per-user INI. The password is never stored in source control, support
+bundles, logs, error details, or connection diagnostics. The configuration
+includes bounded connection and command timeouts. Connections
 and cursors are short-lived and closed deterministically; write operations use
 explicit commit/rollback transaction scopes.
 
@@ -71,7 +78,8 @@ driver-specific rows do not cross that boundary. Both implementations follow
 the same idempotency and current/history semantics before UI integration.
 
 The migration tool uses `pyodbc`, Windows Authentication, and an explicitly
-provided server/database target. Local integration testing uses
+provided server/database target. It remains administrator-only and does not
+use the shared runtime SQL login. Local integration testing uses
 `LWBTestDB_Integration`; migrations must never be tested against development or
 production data.
 
@@ -764,7 +772,17 @@ automatic synchronization mechanism.
 
 ## Security and operations
 
-- Use Windows Authentication and least-privilege database roles.
+- Use Windows Authentication by default and least-privilege database roles.
+- For workgroup deployments, use a dedicated SQL login mapped only to
+  `lwb_app_writer`; never use `sa`, `sysadmin`, or `db_owner` for the runtime.
+- SQL-password credentials are intentionally plaintext in the per-user INI for
+  the approved temporary deployment model. Keep that file out of source
+  control, support bundles, and shared folders.
+- The shared SQL login identifies the application deployment, not an individual
+  station. Station number and tester fields remain the application-level
+  attribution fields.
+- Rotate the shared password by updating the SQL login and every workstation's
+  per-user INI.
 - Give normal application users only the operations needed by repositories.
 - Do not grant the application role arbitrary delete access to accepted data.
 - Encrypt network SQL Server connections in production.

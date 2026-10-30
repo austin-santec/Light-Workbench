@@ -116,6 +116,11 @@ identity is represented by vendor-neutral `DeviceInfo` models and selected by
 an adapter-owned capability registry; an unverified or unknown switch model is
 reported clearly and is not treated as an OSX-100/OSX-150-compatible device.
 
+The OP815 also exposes an `ILM Remote Mode` control. Local mode leaves the
+connection open for front-panel operation, pauses automated ILM commands, and
+retains the current session reference until the ILM is explicitly
+disconnected.
+
 `Help > Support Logs` exposes the always-on local engineering log folder,
 status, path copy, and explicit support-bundle export. Support logging uses a
 bounded background queue and is isolated from measurement and persistence

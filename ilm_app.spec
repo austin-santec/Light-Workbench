@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 project_root = Path(SPEC).resolve().parent
 sys.path.insert(0, str(project_root))
@@ -16,6 +16,18 @@ migration_datas = [
     (str(path), "infrastructure/database/sql_migrations")
     for path in discover_sql_migrations(migration_directory)
 ]
+
+# PyQt5 wheels and PyInstaller can collect private copies of the Microsoft
+# Visual C++ runtime.  ODBC Driver 18 is a native component and must not be
+# forced to use an older application-local runtime (the resulting version
+# mismatch presents as the otherwise unhelpful HY000 "driver did not supply an
+# error" failure).  Light Workbench therefore relies on the supported x86
+# Visual C++ Redistributable installed in Windows instead.
+excluded_msvc_runtime_names = {
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "vcruntime140.dll",
+}
 
 
 a = Analysis(
@@ -72,6 +84,13 @@ a = Analysis(
     excludes=[],
     noarchive=False,
 )
+
+a.binaries = [
+    binary
+    for binary in a.binaries
+    if PureWindowsPath(binary[0]).name.lower()
+    not in excluded_msvc_runtime_names
+]
 
 pyz = PYZ(a.pure)
 
