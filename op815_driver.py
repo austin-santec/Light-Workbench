@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from domain.hardware_connection import RemoteControlState
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
 from domain.measurement_timing import MeasurementTimingProfile
 from domain.wavelengths import (
@@ -295,6 +296,62 @@ class OP815:
         if status != 1:
             raise RuntimeError("%s failed with status %d" % (operation, status))
 
+    @property
+    def remote_control_state(self):
+        """Return the last DLL-confirmed local/remote control state."""
+        return (
+            RemoteControlState.REMOTE
+            if self.remote_enabled
+            else RemoteControlState.LOCAL
+        )
+
+    def set_remote_control(self, enabled: bool) -> RemoteControlState:
+        """Change local/remote control without closing the OP815 session.
+
+        The OP815 DLL exposes only a command, not a remote-mode query.  The
+        state is therefore updated only after the DLL confirms the command.
+        Sources are disabled before returning control to the front panel.
+        """
+        if not self.driver_open:
+            raise RuntimeError("The OP815 driver is not open.")
+
+        enabled = bool(enabled)
+        if enabled == bool(self.remote_enabled):
+            return self.remote_control_state
+
+        started = time.perf_counter()
+        try:
+            if not enabled:
+                self.turn_all_sources_off()
+            status = self.remote_mode(1 if enabled else 0)
+            self._require_success(
+                "RemoteMode(%d)" % (1 if enabled else 0),
+                status,
+            )
+        except Exception as error:
+            self._trace(
+                "remote_mode",
+                operation="RemoteMode(%d)" % (1 if enabled else 0),
+                requested_remote=enabled,
+                status="error",
+                error=str(error),
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            )
+            raise
+
+        self.remote_enabled = enabled
+        state = self.remote_control_state
+        self._trace(
+            "remote_mode",
+            operation="RemoteMode(%d)" % (1 if enabled else 0),
+            requested_remote=enabled,
+            resulting_state=state.value,
+            status="success",
+            status_code=status,
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+        )
+        return state
+
     def _get_string(self, function, device_index, operation):
         """Read a text property that the DLL returns through a pointer."""
         value = ctypes.c_wchar_p()
@@ -391,15 +448,7 @@ class OP815:
             self._require_success("OpenDriver", status)
             self.driver_open = True
 
-            status = self.remote_mode(1)
-            self._trace(
-                "command",
-                operation="RemoteMode(1)",
-                status="success" if status == 1 else "error",
-                status_code=status,
-            )
-            self._require_success("RemoteMode(1)", status)
-            self.remote_enabled = True
+            self.set_remote_control(True)
 
             # This legacy DLL build does not return a dependable status from
             # OperationMode.  The physical sources are therefore controlled

@@ -35,6 +35,7 @@ items still need representative equipment testing before formal acceptance.
 - [x] **FUN-008 — Block a final report when required channels are untested.** `[MVP]`
 - [x] **FUN-009a — Connect the ILM-100 through the OP815 interface and keep it remote.** `[MVP]`
 - [x] **FUN-009b — Let the user disconnect the ILM and return it to local operation.** `[MVP]`
+  - The connected ILM can also be placed in local/front-panel mode with `ILM Remote Mode` without closing the USB/DLL session; automated measurement remains blocked until remote mode is restored.
 - [x] **FUN-012 — Require a two-wavelength reference before production testing.** `[MVP]`
 - [x] **FUN-013 — Store reference values, time, method, and meter identity.** `[MVP]`
 - [x] **FUN-014b — Let an administrator edit minimum, warning, and failure limits.** `[MVP]`

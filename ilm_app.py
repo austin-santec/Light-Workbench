@@ -111,6 +111,7 @@ from domain.hardware_connection import (
     HardwareBusyError,
     HardwareCapability,
     HardwareNotReadyError,
+    RemoteControlState,
 )
 from domain.models import (
     ChannelMode,
@@ -937,6 +938,9 @@ class MainWindow(QMainWindow):
         self.hardware_connection_manager.operation_finished.connect(
             self._hardware_connection_operation_finished
         )
+        self.hardware_connection_manager.measurement_remote_mode_finished.connect(
+            self._measurement_remote_mode_finished
+        )
         self.hardware_connection_manager.switch_ip_query_finished.connect(
             self._switch_ip_query_finished
         )
@@ -1012,6 +1016,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1120, 720)
         self._build_ui()
+        self.hardware_status_panel.remote_mode_requested.connect(
+            self._request_ilm_remote_mode
+        )
         self._refresh_admin_branding()
         self._connect_hardware_controller()
         self._record_support(
@@ -1398,6 +1405,15 @@ class MainWindow(QMainWindow):
 
     def _hardware_connection_snapshot_changed(self, _snapshot):
         """Apply capability readiness to only hardware-dependent controls."""
+        if (
+            hasattr(self, "hardware_status_panel")
+            and _snapshot.capability == HardwareCapability.MEASUREMENT
+        ):
+            self.hardware_status_panel.set_remote_mode_state(
+                _snapshot.remote_control_state,
+                connected=_snapshot.connected,
+                busy=bool(_snapshot.owner),
+            )
         self._sync_reference_context()
         if self.run_data is None:
             model = self._connected_switch_model()
@@ -1406,6 +1422,40 @@ class MainWindow(QMainWindow):
             )
             if profile is not None and hasattr(self, "criteria_profile_label"):
                 self._set_active_limit_profile(profile)
+        self._update_hardware_readiness_controls()
+
+    def _request_ilm_remote_mode(self, enabled: bool):
+        """Request an OP815 local/remote transition through the manager."""
+        self._record_support(
+            SupportEventCategory.CONNECTION,
+            "connection.measurement_remote_mode_requested",
+            requested_remote=bool(enabled),
+            status="requested",
+        )
+        self.hardware_connection_manager.set_measurement_remote_mode(enabled)
+
+    def _measurement_remote_mode_finished(self, result):
+        """Render the result of a non-disconnecting remote-mode transition."""
+        if result.error:
+            QMessageBox.warning(
+                self,
+                "ILM Remote Mode",
+                "Light Workbench could not change the ILM control mode:\n\n%s"
+                % result.error,
+            )
+        else:
+            state_text = (
+                "Remote"
+                if result.state == RemoteControlState.REMOTE
+                else "Local"
+                if result.state == RemoteControlState.LOCAL
+                else result.state.value.title()
+            )
+            self.statusBar().showMessage(
+                "ILM remote mode changed to %s. The current reference was retained."
+                % state_text,
+                5000,
+            )
         self._update_hardware_readiness_controls()
 
     def _update_hardware_readiness_controls(self):
@@ -1435,6 +1485,20 @@ class MainWindow(QMainWindow):
         self._refresh_reference_controls()
         self._set_run_purpose_editable(self._run_purpose_editable)
         self._set_station_editable(self._station_editable)
+        measurement_snapshot = self.hardware_connection_manager.snapshot(
+            HardwareCapability.MEASUREMENT
+        )
+        ilm_remote_mode_blocked = (
+            measurement_snapshot.connected
+            and measurement_snapshot.remote_control_supported
+            and not measurement_snapshot.remote_ready
+        )
+        for action in (
+            getattr(self, "live_il_action", None),
+            getattr(self, "power_diagnostics_action", None),
+        ):
+            if action is not None:
+                action.setEnabled(not ilm_remote_mode_blocked)
         self.retest_button.setEnabled(
             bool(self.run_data and self.run_data.measurements)
             and run_available
@@ -1674,17 +1738,17 @@ class MainWindow(QMainWindow):
         red_light_action = QAction("Red Light Test...", self)
         red_light_action.triggered.connect(self.show_red_light_test)
         tools_menu.addAction(red_light_action)
-        live_il_action = QAction("Live IL Reading...", self)
-        live_il_action.triggered.connect(self.show_live_il_reading)
-        tools_menu.addAction(live_il_action)
-        power_diagnostics_action = QAction(
+        self.live_il_action = QAction("Live IL Reading...", self)
+        self.live_il_action.triggered.connect(self.show_live_il_reading)
+        tools_menu.addAction(self.live_il_action)
+        self.power_diagnostics_action = QAction(
             "Power Measurement Diagnostics...",
             self,
         )
-        power_diagnostics_action.triggered.connect(
+        self.power_diagnostics_action.triggered.connect(
             self.show_power_measurement_diagnostics
         )
-        tools_menu.addAction(power_diagnostics_action)
+        tools_menu.addAction(self.power_diagnostics_action)
         self.live_write_mode_action = QAction("Live Write Mode", self)
         self.live_write_mode_action.setCheckable(True)
         self.live_write_mode_action.setChecked(self.live_write_mode_enabled)

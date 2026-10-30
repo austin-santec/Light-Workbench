@@ -8,6 +8,7 @@ from hardware.interfaces import (
     PowerMeter,
     validate_wavelength_readings,
 )
+from domain.hardware_connection import RemoteControlState
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
 from domain.measurement_timing import MeasurementTimingProfile
 from domain.wavelengths import (
@@ -69,6 +70,25 @@ class SantecPowerMeter:
 
     def source_capability_profile(self):
         return self._source_profile
+
+    @property
+    def remote_control_supported(self) -> bool:
+        """Return whether the wrapped driver exposes local/remote control."""
+        return callable(getattr(self._driver, "set_remote_control", None))
+
+    @property
+    def remote_control_state(self) -> RemoteControlState | None:
+        """Return the driver's last confirmed local/remote state."""
+        if not self.remote_control_supported:
+            return None
+        return getattr(self._driver, "remote_control_state", None)
+
+    def set_remote_control(self, enabled: bool) -> RemoteControlState:
+        """Change OP815 local/remote control without closing the session."""
+        setter = getattr(self._driver, "set_remote_control", None)
+        if setter is None:
+            raise RuntimeError("This measurement adapter does not support remote mode.")
+        return setter(bool(enabled))
 
     def configure_measurement(self, configuration: MeasurementConfiguration):
         if not isinstance(configuration, MeasurementConfiguration):

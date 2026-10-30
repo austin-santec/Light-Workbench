@@ -11,6 +11,8 @@ from domain.hardware_connection import (
     HardwareCapability,
     HardwareConnectionSnapshot,
     HardwareNotReadyError,
+    RemoteControlState,
+    RemoteModeTransitionResult,
     disconnected_device_info,
 )
 from domain.models import ConnectionState, DeviceCategory, DeviceInfo
@@ -31,6 +33,7 @@ class HardwareConnectionManager(QObject):
     snapshot_changed = pyqtSignal(object)
     operation_finished = pyqtSignal(str, object)
     switch_ip_query_finished = pyqtSignal(str, object, object)
+    measurement_remote_mode_finished = pyqtSignal(object)
 
     def __init__(self, hardware_factory: HardwareFactory, parent=None, support_logger=None):
         super().__init__(parent)
@@ -48,6 +51,9 @@ class HardwareConnectionManager(QObject):
         self._infos = {
             capability: disconnected_device_info(capability)
             for capability in HardwareCapability
+        }
+        self._remote_control_states = {
+            capability: None for capability in HardwareCapability
         }
         self._shutdown = False
 
@@ -72,12 +78,14 @@ class HardwareConnectionManager(QObject):
                 capability=capability,
                 device_info=self._infos[capability],
                 owner=self._owner_labels.get(capability, ""),
+                remote_control_state=self._remote_control_states.get(capability),
             )
 
     @property
     def measurement_ready(self) -> bool:
         return all(
             self.snapshot(capability).available
+            and self.snapshot(capability).remote_ready
             for capability in self.required_measurement_capabilities()
         )
 
@@ -121,6 +129,22 @@ class HardwareConnectionManager(QObject):
                 self.switch_ip_query_finished.emit(operation_id, "", error)
             else:
                 self.switch_ip_query_finished.emit(operation_id, address, None)
+
+        future.add_done_callback(notify)
+        return future
+
+    def set_measurement_remote_mode(self, enabled: bool) -> Future:
+        """Change ILM local/remote control without closing its session."""
+        future = self._submit(self._set_measurement_remote_mode, bool(enabled))
+
+        def notify(completed):
+            try:
+                result = completed.result()
+            except Exception as error:
+                result = RemoteModeTransitionResult(
+                    bool(enabled), RemoteControlState.UNKNOWN, str(error)
+                )
+            self.measurement_remote_mode_finished.emit(result)
 
         future.add_done_callback(notify)
         return future
@@ -286,6 +310,7 @@ class HardwareConnectionManager(QObject):
                 self._category_for(capability),
                 state=ConnectionState.CONNECTED,
             )
+            remote_state = self._remote_control_state_for_device(capability, device)
         except Exception as error:
             try:
                 device.close()
@@ -299,6 +324,7 @@ class HardwareConnectionManager(QObject):
             )
             with self._lock:
                 self._devices.pop(capability, None)
+                self._remote_control_states[capability] = None
                 self._set_info_locked(capability, info)
             self._record(
                 SupportEventCategory.CONNECTION,
@@ -313,6 +339,7 @@ class HardwareConnectionManager(QObject):
 
         with self._lock:
             self._devices[capability] = device
+            self._remote_control_states[capability] = remote_state
             self._set_info_locked(capability, info)
         self._record_device("connection.connected", capability, info)
         return device
@@ -338,6 +365,7 @@ class HardwareConnectionManager(QObject):
         except Exception as error:
             with self._lock:
                 self._devices.pop(capability, None)
+                self._remote_control_states[capability] = None
                 self._set_info_locked(
                     capability,
                     previous.with_state(ConnectionState.ERROR, str(error)),
@@ -345,6 +373,7 @@ class HardwareConnectionManager(QObject):
             raise
         with self._lock:
             self._devices.pop(capability, None)
+            self._remote_control_states[capability] = None
             self._set_info_locked(
                 capability,
                 previous.with_state(ConnectionState.DISCONNECTED),
@@ -387,6 +416,17 @@ class HardwareConnectionManager(QObject):
                     "%s is not connected. Use Connect Hardware before continuing."
                     % self._capability_label(capability)
                 )
+            if capability == HardwareCapability.MEASUREMENT:
+                remote_state = self._remote_control_states.get(capability)
+                if remote_state in {
+                    RemoteControlState.LOCAL,
+                    RemoteControlState.CHANGING,
+                    RemoteControlState.UNKNOWN,
+                }:
+                    raise HardwareNotReadyError(
+                        "Measurement hardware is connected but not in confirmed "
+                        "remote mode. Enable ILM Remote Mode before continuing."
+                    )
             current_owner = self._owners.get(capability)
             if current_owner is not None and current_owner is not owner_token:
                 self._record(
@@ -530,6 +570,7 @@ class HardwareConnectionManager(QObject):
         )
         with self._lock:
             self._devices.pop(capability, None)
+            self._remote_control_states[capability] = None
             self._owners.pop(capability, None)
             self._owner_labels.pop(capability, None)
             self._set_info_locked(capability, info)
@@ -544,6 +585,106 @@ class HardwareConnectionManager(QObject):
         if threading.get_ident() == self._executor_thread_id:
             return function(*args)
         return self._submit(function, *args).result()
+
+    def _set_measurement_remote_mode(self, enabled: bool):
+        capability = HardwareCapability.MEASUREMENT
+        requested_remote = bool(enabled)
+        with self._lock:
+            device = self._devices.get(capability)
+            owner = self._owner_labels.get(capability, "")
+            current_state = self._remote_control_states.get(capability)
+
+        if device is None:
+            return RemoteModeTransitionResult(
+                requested_remote,
+                RemoteControlState.UNKNOWN,
+                "Measurement hardware is not connected.",
+            )
+        if owner:
+            return RemoteModeTransitionResult(
+                requested_remote,
+                current_state or RemoteControlState.UNKNOWN,
+                "Measurement hardware is currently in use by %s." % owner,
+            )
+
+        setter = getattr(device, "set_remote_control", None)
+        supported = getattr(device, "remote_control_supported", setter is not None)
+        if not supported or setter is None:
+            return RemoteModeTransitionResult(
+                requested_remote,
+                RemoteControlState.UNKNOWN,
+                "The connected measurement hardware does not support remote mode.",
+            )
+
+        desired_state = (
+            RemoteControlState.REMOTE
+            if requested_remote
+            else RemoteControlState.LOCAL
+        )
+        if current_state == desired_state:
+            return RemoteModeTransitionResult(requested_remote, desired_state)
+
+        self._set_remote_control_state(RemoteControlState.CHANGING)
+        try:
+            resulting_state = setter(requested_remote)
+            try:
+                resulting_state = RemoteControlState(resulting_state)
+            except (TypeError, ValueError):
+                resulting_state = desired_state
+        except Exception as error:
+            # A rejected mode command does not by itself prove that the
+            # session was lost. Keep the session open and block measurement
+            # until the operator retries or explicitly disconnects.
+            self._set_remote_control_state(RemoteControlState.UNKNOWN)
+            self._record(
+                SupportEventCategory.CONNECTION,
+                "connection.measurement_remote_mode_failed",
+                level=SupportLogLevel.WARNING,
+                requested_remote=requested_remote,
+                resulting_state=RemoteControlState.UNKNOWN.value,
+                error_message=str(error),
+                status="error",
+            )
+            return RemoteModeTransitionResult(
+                requested_remote,
+                RemoteControlState.UNKNOWN,
+                str(error),
+            )
+
+        self._set_remote_control_state(resulting_state)
+        self._record(
+            SupportEventCategory.CONNECTION,
+            "connection.measurement_remote_mode_changed",
+            requested_remote=requested_remote,
+            resulting_state=resulting_state.value,
+            status="success",
+        )
+        return RemoteModeTransitionResult(requested_remote, resulting_state)
+
+    def _set_remote_control_state(self, state: RemoteControlState | None):
+        with self._lock:
+            self._remote_control_states[HardwareCapability.MEASUREMENT] = state
+            snapshot = HardwareConnectionSnapshot(
+                capability=HardwareCapability.MEASUREMENT,
+                device_info=self._infos[HardwareCapability.MEASUREMENT],
+                owner=self._owner_labels.get(HardwareCapability.MEASUREMENT, ""),
+                remote_control_state=state,
+            )
+        self.snapshot_changed.emit(snapshot)
+
+    @staticmethod
+    def _remote_control_state_for_device(capability, device):
+        if capability != HardwareCapability.MEASUREMENT:
+            return None
+        setter = getattr(device, "set_remote_control", None)
+        supported = getattr(device, "remote_control_supported", setter is not None)
+        if not supported or setter is None:
+            return None
+        state = getattr(device, "remote_control_state", None)
+        try:
+            return RemoteControlState(state)
+        except (TypeError, ValueError):
+            return RemoteControlState.UNKNOWN
 
     def create_power_meter_proxy(
         self,
@@ -658,6 +799,7 @@ class HardwareConnectionManager(QObject):
             capability=capability,
             device_info=info,
             owner=self._owner_labels.get(capability, ""),
+            remote_control_state=self._remote_control_states.get(capability),
         )
         self.device_status_changed.emit(info)
         self.snapshot_changed.emit(snapshot)

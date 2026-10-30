@@ -2,10 +2,37 @@ import unittest
 from unittest.mock import patch
 
 from domain.models import ConnectionState, DeviceCategory
+from domain.hardware_connection import RemoteControlState
 from op815_driver import OP815
 
 
 class OP815CleanupTests(unittest.TestCase):
+    def test_set_remote_control_returns_local_without_closing_driver(self):
+        driver = OP815.__new__(OP815)
+        driver.driver_open = True
+        driver.remote_enabled = True
+        driver.source_on = lambda _source_id, _state: 1
+        calls = []
+        driver.remote_mode = lambda state: calls.append(state) or 1
+
+        state = driver.set_remote_control(False)
+
+        self.assertEqual(state, RemoteControlState.LOCAL)
+        self.assertFalse(driver.remote_enabled)
+        self.assertEqual(calls, [0])
+
+    def test_set_remote_control_failure_preserves_previous_state(self):
+        driver = OP815.__new__(OP815)
+        driver.driver_open = True
+        driver.remote_enabled = True
+        driver.source_on = lambda _source_id, _state: 1
+        driver.remote_mode = lambda _state: -1
+
+        with self.assertRaisesRegex(RuntimeError, "RemoteMode\(0\) failed"):
+            driver.set_remote_control(False)
+
+        self.assertTrue(driver.remote_enabled)
+
     def test_trace_callback_and_subscriber_receive_same_event_independently(self):
         driver = OP815.__new__(OP815)
         diagnostic_events = []

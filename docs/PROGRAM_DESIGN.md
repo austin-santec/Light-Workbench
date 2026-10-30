@@ -346,6 +346,12 @@ identities through the optional `DeviceIdentifiable` capability, the run
 controller relays lifecycle updates, and `ui/hardware_status.py` renders them
 in the compact Connected hardware panel in the main window header, keeping the
 hardware-controls layout focused on operator actions.
+The optional `RemoteControllable` capability separates an ILM's connected
+state from its remote-control readiness. The OP815 connects in remote mode by
+default, while the `ILM Remote Mode` checkbox can temporarily return control to
+the front panel without closing the managed session. Local or unknown remote
+state blocks automated measurement commands but does not invalidate the active
+session reference; only the existing confirmed-disconnect rules do that.
 Switch recognition uses adapter-owned capability profiles: only a model with a
 verified command profile is accepted, while unknown and recognized-but-
 unsupported models fail explicitly.
