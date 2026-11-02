@@ -127,6 +127,16 @@ Workers provide absolute measurements and reference powers to this service,
 which keeps calculation logic reusable for an integrated ILM or separate OPM
 and laser source.
 
+`domain/measurement_timing.py` defines the administrator-controlled timing
+profile, including one to three strictly increasing absolute power-sample
+offsets after source settling. The OP815 driver reads every scheduled sample
+for each wavelength and returns the arithmetic mean while preserving raw
+sample and timing diagnostics in the hardware trace. The same profile is
+passed to normal runs, retests, Live IL, diagnostics, repeatability, and
+reference calculation. A new run stores the full profile snapshot; a
+continuation or retest uses the original snapshot, and a legacy run without
+one uses the Standard profile.
+
 `domain/diagnostic_analysis.py` owns the in-memory diagnostic sample model and
 variation statistics. Manual samples and automatic monitoring samples carry
 different acquisition methods so repeatability and stability analysis cannot

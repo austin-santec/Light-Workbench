@@ -47,8 +47,10 @@ class TimingProfilesDialog(QDialog):
 
         layout = QVBoxLayout(self)
         intro = QLabel(
-            "These settings affect future normal measurements only. Reference "
-            "calculation and source-off safety timing remain unchanged."
+            "These settings affect future hardware, live, repeatability, and "
+            "reference measurements. Each enabled power sample is scheduled at "
+            "its absolute offset after source settling; source-off safety timing "
+            "remains unchanged."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -91,6 +93,30 @@ class TimingProfilesDialog(QDialog):
             "Delay between completed automatic live readings."
         )
         form.addRow("Live update pause:", self.live_pause_spin)
+
+        self.sample_count_combo = QComboBox()
+        for count in (1, 2, 3):
+            self.sample_count_combo.addItem(str(count), count)
+        self.sample_count_combo.currentIndexChanged.connect(
+            self._sample_count_changed
+        )
+        self.sample_count_combo.setToolTip(
+            "Number of power samples taken for each wavelength and averaged."
+        )
+        form.addRow("Samples per wavelength:", self.sample_count_combo)
+
+        self.sample_offset_spins = []
+        for index in range(3):
+            spin = self._timing_spin()
+            spin.setToolTip(
+                "Absolute offset after source settling completes; not a delay "
+                "from the previous sample."
+            )
+            spin.valueChanged.connect(self._mark_dirty)
+            self.sample_offset_spins.append(spin)
+            form.addRow(
+                "Sample %d offset after source settling:" % (index + 1), spin
+            )
         layout.addLayout(form)
 
         profile_buttons = QHBoxLayout()
@@ -155,7 +181,21 @@ class TimingProfilesDialog(QDialog):
         self.wavelength_spin.setValue(profile.wavelength_settling_ms)
         self.source_spin.setValue(profile.source_settling_ms)
         self.live_pause_spin.setValue(profile.live_update_pause_ms)
+        offsets = profile.power_sample_offsets_ms
+        self.sample_count_combo.setCurrentIndex(len(offsets) - 1)
+        for index, spin in enumerate(self.sample_offset_spins):
+            spin.setValue(offsets[index] if index < len(offsets) else 0)
+        self._update_sample_offset_enabled()
         self._loading = False
+
+    def _sample_count_changed(self, *_args):
+        self._update_sample_offset_enabled()
+        self._mark_dirty()
+
+    def _update_sample_offset_enabled(self):
+        count = int(self.sample_count_combo.currentData() or 1)
+        for index, spin in enumerate(self.sample_offset_spins):
+            spin.setEnabled(index < count)
 
     def _mark_dirty(self, *_args):
         if not self._loading:
@@ -169,6 +209,12 @@ class TimingProfilesDialog(QDialog):
             wavelength_settling_ms=self.wavelength_spin.value(),
             source_settling_ms=self.source_spin.value(),
             live_update_pause_ms=self.live_pause_spin.value(),
+            power_sample_offsets_ms=tuple(
+                spin.value()
+                for spin in self.sample_offset_spins[
+                    : int(self.sample_count_combo.currentData() or 1)
+                ]
+            ),
         ).validate()
 
     def _confirm_fast_values(self, profile):
@@ -255,6 +301,7 @@ class TimingProfilesDialog(QDialog):
             wavelength_settling_ms=source.wavelength_settling_ms,
             source_settling_ms=source.source_settling_ms,
             live_update_pause_ms=source.live_update_pause_ms,
+            power_sample_offsets_ms=source.power_sample_offsets_ms,
         ).validate()
         self.active_profile_id = profile_id
         self._dirty = True

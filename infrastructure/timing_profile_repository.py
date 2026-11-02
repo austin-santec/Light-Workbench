@@ -50,6 +50,9 @@ class TimingProfileRepository:
                     live_update_pause_ms=parser.getint(
                         section, "live_update_pause_ms"
                     ),
+                    power_sample_offsets_ms=parser.get(
+                        section, "power_sample_offsets_ms", fallback="0"
+                    ),
                 ).validate()
             except (configparser.Error, TypeError, ValueError):
                 continue
@@ -82,6 +85,9 @@ class TimingProfileRepository:
                 "opm_wavelength_settling_ms": str(profile.wavelength_settling_ms),
                 "laser_source_settling_ms": str(profile.source_settling_ms),
                 "live_update_pause_ms": str(profile.live_update_pause_ms),
+                "power_sample_offsets_ms": ",".join(
+                    str(value) for value in profile.power_sample_offsets_ms
+                ),
             }
 
         temporary_path = None

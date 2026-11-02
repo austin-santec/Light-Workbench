@@ -9,6 +9,7 @@ constructs :class:`OP815` must also be 32-bit.
 """
 
 import ctypes
+import math
 import struct
 import time
 from datetime import datetime, timezone
@@ -51,6 +52,11 @@ WAVELENGTH_TRACE_CONTEXT_FIELDS = (
     "wavelength_count",
     "source_id",
     "source_enabled",
+    "sample_index",
+    "sample_count",
+    "requested_sample_offset_ms",
+    "actual_sample_offset_ms",
+    "sample_target_late",
 )
 
 # Reference calibration is intentionally slower than production measurements.
@@ -127,7 +133,7 @@ class OP815:
         self._bind_functions()
 
     def configure_measurement_timing(self, timing: MeasurementTimingProfile):
-        """Set production measurement delays without changing reference timing."""
+        """Set production delays and the power-sample schedule."""
         if not isinstance(timing, MeasurementTimingProfile):
             raise TypeError("A MeasurementTimingProfile is required.")
         self.measurement_timing = timing.validate()
@@ -854,17 +860,70 @@ class OP815:
         self.set_trace_context(source_id=source_id, source_enabled=True)
         try:
             time.sleep(source_settling_seconds)
-            # The source-settling interval can expose a stale or changed
-            # OPM setting on some instrument/DLL combinations. Never call
-            # ReadPower until the final OPM wavelength check has passed.
-            if verify_before_read:
-                self._verify_wavelength_before_read(wavelength_nm, source_id)
-            power = self._read_power(wavelength_nm)
+            sample_offsets_ms = tuple(
+                getattr(
+                    getattr(self, "measurement_timing", None),
+                    "power_sample_offsets_ms",
+                    (0,),
+                )
+            )
+            sample_count = len(sample_offsets_ms)
+            sample_started = time.perf_counter()
+            samples = []
+            actual_offsets_ms = []
+            for sample_index, requested_offset_ms in enumerate(sample_offsets_ms, 1):
+                target = sample_started + requested_offset_ms / 1000.0
+                remaining = target - time.perf_counter()
+                if remaining > 0:
+                    time.sleep(remaining)
+                actual_offset_ms = (time.perf_counter() - sample_started) * 1000.0
+                self.clear_trace_context(
+                    "sample_index",
+                    "sample_count",
+                    "requested_sample_offset_ms",
+                    "actual_sample_offset_ms",
+                    "sample_target_late",
+                )
+                self.set_trace_context(
+                    sample_index=sample_index,
+                    sample_count=sample_count,
+                    requested_sample_offset_ms=requested_offset_ms,
+                    actual_sample_offset_ms=actual_offset_ms,
+                    sample_target_late=(
+                        actual_offset_ms > float(requested_offset_ms) + 1.0
+                    ),
+                )
+                # The source-settling interval can expose a stale or changed
+                # OPM setting on some instrument/DLL combinations. Never call
+                # ReadPower until the final OPM wavelength check has passed.
+                if sample_index == 1 and verify_before_read:
+                    self._verify_wavelength_before_read(wavelength_nm, source_id)
+                power_sample = float(self._read_power(wavelength_nm))
+                if not math.isfinite(power_sample):
+                    raise RuntimeError(
+                        "ReadPower returned a non-finite value for %d nm sample %d."
+                        % (wavelength_nm, sample_index)
+                    )
+                samples.append(power_sample)
+                actual_offsets_ms.append(actual_offset_ms)
+
+            power = math.fsum(samples) / len(samples)
+            minimum_sample_dbm = min(samples)
+            maximum_sample_dbm = max(samples)
+            sample_spread_db = maximum_sample_dbm - minimum_sample_dbm
             self._trace(
                 "wavelength_measurement_completed",
                 operation="measure_wavelength",
                 requested_wavelength_nm=wavelength_nm,
                 raw_power_dbm=power,
+                power_samples_dbm=list(samples),
+                power_sample_offsets_ms=list(sample_offsets_ms),
+                power_sample_count=sample_count,
+                power_sample_average_dbm=power,
+                minimum_sample_dbm=minimum_sample_dbm,
+                maximum_sample_dbm=maximum_sample_dbm,
+                sample_spread_db=sample_spread_db,
+                actual_sample_offsets_ms=actual_offsets_ms,
                 status="success",
                 elapsed_ms=(time.perf_counter() - started) * 1000.0,
             )

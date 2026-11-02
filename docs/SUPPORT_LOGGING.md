@@ -110,8 +110,10 @@ Depending on the event, logs may contain:
   disconnection is confirmed, suspected, or unknown.
 - Requested and reported logical channel, documented effective physical port,
   raw optical power, reference power, calculated insertion loss, and whether
-  both wavelengths completed. A `CLOSe?` response is never logged as a physical
-  mapping result.
+  both wavelengths completed. When scheduled averaging is enabled, the trace
+  also records each raw power sample, its requested/actual offset, sample
+  count, average, minimum, maximum, and spread. A `CLOSe?` response is never
+  logged as a physical mapping result.
 - Whether a reading was temporary, repeated, accepted, written, overwritten,
   diagnostic-only, or failed.
 - Measurement commit lifecycle events, including commit start/success/failure,

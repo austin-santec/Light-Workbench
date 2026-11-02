@@ -290,6 +290,16 @@ Normal production runs use the same OPM-setting safety check but do not
 fail solely on an index/count convention difference. The production
 wavelength order and settling constants are unchanged.
 
+Administrator timing profiles may also schedule one to three absolute power
+sample offsets after source settling (for example, `0`, `200`, and `350` ms).
+Each wavelength is read at those offsets and the arithmetic mean is used as the
+measurement value. The trace keeps the individual raw samples, requested and
+actual offsets, sample count, minimum, maximum, and spread so averaging does
+not hide repeatability problems. The schedule is used consistently by normal
+runs, retests, Live IL, repeatability reads, diagnostics, and reference
+calculation; fixed source-off safety timing is not changed. New runs snapshot
+the complete profile, and continuations/retests reuse that snapshot.
+
 The legacy trace field `actual_wavelength_nm` is retained for compatibility;
 it means the wavelength reported by the OPM readback, not a measurement of the
 physical source's emitted wavelength. New trace context also records

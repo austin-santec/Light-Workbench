@@ -183,6 +183,14 @@ Required before a release that changes driver behavior, worker lifecycle, or
 measurement timing. Verify the ILM, switch, driver, VISA resource ownership,
 reference calculation, start/stop, and clean close behavior.
 
+For scheduled averaging, verify one-, two-, and three-sample profiles at
+distinct absolute offsets. Confirm that every wavelength takes the configured
+number of samples, the displayed/calculated value is their arithmetic mean,
+and the hardware trace retains raw samples and actual offsets. Confirm that
+reference calculation and Live IL use the same schedule, while a continuation
+or retest uses the saved run profile even if the active administrator profile
+has changed.
+
 For SCPI-mapped extras, verify the configured range on representative OSX-150
 firmware, including `CLOSe?` logical-channel confirmation and mismatch failure
 handling. Confirm that no test treats its response as a physical port. For

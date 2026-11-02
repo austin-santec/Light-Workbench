@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from domain.models import ConnectionState, DeviceCategory
 from domain.hardware_connection import RemoteControlState
+from domain.measurement_timing import MeasurementTimingProfile
 from op815_driver import OP815
 
 
@@ -177,6 +178,60 @@ class OP815CleanupTests(unittest.TestCase):
         )
         self.assertNotIn("actual_wavelength_nm", first_sample_start)
         self.assertNotIn("source_enabled", first_sample_start)
+
+    def test_scheduled_power_samples_are_averaged_and_traced(self):
+        driver = OP815.__new__(OP815)
+        events = []
+        state = {"wavelength": 1310}
+        samples = iter((-1.0, -0.8, -1.2))
+        driver._trace_callback = events.append
+        driver._trace_context = {}
+        driver._trace_metadata = {}
+        driver._diagnostic_verification_enabled = False
+        driver.measurement_timing = MeasurementTimingProfile(
+            "custom", "Custom", power_sample_offsets_ms=(0, 50, 100)
+        ).validate()
+
+        driver.get_wavelength = lambda wavelength, index, count: (
+            setattr(wavelength._obj, "value", state["wavelength"]),
+            setattr(index._obj, "value", 0),
+            setattr(count._obj, "value", 2),
+            1,
+        )[-1]
+        driver.set_wavelength = lambda wavelength: state.update(
+            wavelength=wavelength
+        ) or 1
+        driver.source_on = lambda _source_id, _state: 1
+
+        def read_power(power):
+            power._obj.value = next(samples)
+            return 1
+
+        driver.read_power = read_power
+
+        with patch("op815_driver.time.sleep"):
+            power = driver.measure_wavelength(
+                1310,
+                wavelength_settling_seconds=0,
+                source_settling_seconds=0,
+                source_off_settling_seconds=0,
+            )
+
+        self.assertAlmostEqual(power, -1.0)
+        read_events = [event for event in events if event["event"] == "read_power"]
+        self.assertEqual(len(read_events), 3)
+        self.assertEqual(
+            [event["sample_index"] for event in read_events], [1, 2, 3]
+        )
+        completed = [
+            event
+            for event in events
+            if event["event"] == "wavelength_measurement_completed"
+        ]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0]["power_sample_count"], 3)
+        self.assertEqual(completed[0]["power_samples_dbm"], [-1.0, -0.8, -1.2])
+        self.assertAlmostEqual(completed[0]["sample_spread_db"], 0.4)
 
     def test_normal_measurement_tolerates_vendor_index_convention(self):
         driver = OP815.__new__(OP815)

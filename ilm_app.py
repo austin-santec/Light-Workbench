@@ -223,7 +223,10 @@ from ui.database_status import DatabaseStatusIndicator
 from ui.collapsible_group_box import CollapsibleGroupBox
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
-from domain.measurement_timing import default_measurement_timing_profiles
+from domain.measurement_timing import (
+    MeasurementTimingProfile,
+    default_measurement_timing_profiles,
+)
 
 
 ACCENT = "#e60013"
@@ -3940,6 +3943,7 @@ class MainWindow(QMainWindow):
             self.reference_controller.start(
                 lambda meter=meter: meter,
                 self.measurement_configuration,
+                measurement_timing=self.active_timing_profile,
             )
         except Exception as error:
             self._record_support(
@@ -5179,6 +5183,7 @@ class MainWindow(QMainWindow):
         preparation,
         front_panel_channel_count=None,
         extra_channel_routing_method=None,
+        measurement_timing=None,
     ):
         meter = self.hardware_connection_manager.snapshot(
             HardwareCapability.MEASUREMENT
@@ -5231,7 +5236,9 @@ class MainWindow(QMainWindow):
                 self.measurement_configuration.source_profile.origin
             ),
             "mode_selection_method": self._wavelength_mode_selection_method,
-            "timing_profile": self.active_timing_profile.as_dict(),
+            "timing_profile": (
+                measurement_timing or self.active_timing_profile
+            ).as_dict(),
             "extra_channel_routing": {
                 "method": routing_method.value,
                 "front_panel_channel_count": front_panel_channel_count,
@@ -5242,6 +5249,50 @@ class MainWindow(QMainWindow):
     def _measurement_timing_snapshot(self):
         """Return the immutable timing values selected for a new run."""
         return self.active_timing_profile.as_dict()
+
+    def _measurement_timing_for_run(self, run_mode):
+        """Resolve the timing snapshot that governs this hardware operation.
+
+        New runs use the administrator's current profile. Continuations and
+        retests keep the profile captured by the original run so changing the
+        active administrator setting cannot silently change an existing run.
+        Legacy runs without a snapshot use the shipped Standard profile.
+        """
+        if run_mode == "new":
+            return self.active_timing_profile
+
+        fallback = self.timing_profiles.get("standard")
+        if fallback is None:
+            fallback = MeasurementTimingProfile("standard", "Standard").validate()
+        snapshot = None
+        if self.database_run_context is not None:
+            hardware = self.database_run_context.run.measurement_hardware
+            if hasattr(hardware, "get"):
+                snapshot = hardware.get("timing_profile")
+        if snapshot is None and self.run_data is not None:
+            snapshot = self.run_data.metadata.get("timing_profile")
+        if snapshot is None:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "timing_profile.snapshot_missing",
+                run_mode=run_mode,
+                fallback_profile=fallback.profile_id,
+                status="warning",
+            )
+            return fallback
+        try:
+            return MeasurementTimingProfile.from_dict(snapshot, fallback=fallback)
+        except (TypeError, ValueError) as error:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "timing_profile.snapshot_invalid",
+                run_mode=run_mode,
+                fallback_profile=fallback.profile_id,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="warning",
+            )
+            return fallback
 
     def _extra_channel_routing_method_for_run(self, run_mode):
         """Return immutable saved provenance for continuations when available."""
@@ -6106,6 +6157,9 @@ class MainWindow(QMainWindow):
                 return
 
         extra_routing_method = confirmation_routing_method
+        measurement_timing = self._measurement_timing_for_run(
+            "continue" if retest else run_mode
+        )
 
         self._active_extra_only = preparation.extra_only
         if retest:
@@ -6209,6 +6263,7 @@ class MainWindow(QMainWindow):
                             preparation,
                             part_details.front_panel_channel_count,
                             extra_routing_method,
+                            measurement_timing,
                         )
                     ),
                     "limit_snapshot": profile.as_dict(),
@@ -6455,7 +6510,7 @@ class MainWindow(QMainWindow):
             run_purpose=purpose,
             retest=retest,
             live_write_mode=self.live_write_mode_enabled,
-            timing_profile=self.active_timing_profile.as_dict(),
+            timing_profile=measurement_timing.as_dict(),
             status="started",
         )
 
@@ -6515,8 +6570,8 @@ class MainWindow(QMainWindow):
                     "Source profile origin": (
                         self.measurement_configuration.source_profile.origin
                     ),
-                    "Timing profile": self.active_timing_profile.name,
-                    "timing_profile": self.active_timing_profile.as_dict(),
+                    "Timing profile": measurement_timing.name,
+                    "timing_profile": measurement_timing.as_dict(),
                     "Mode selection method": self._wavelength_mode_selection_method,
                     "Measurement classification": (
                         self.measurement_configuration.classification.value
@@ -6638,8 +6693,8 @@ class MainWindow(QMainWindow):
             ),
             resume_existing=continuing_existing,
             live_write_mode=self.live_write_mode_enabled,
-            live_write_interval=self.active_timing_profile.live_update_pause_seconds,
-            measurement_timing=self.active_timing_profile,
+            live_write_interval=measurement_timing.live_update_pause_seconds,
+            measurement_timing=measurement_timing,
             support_logger=self.support_logger,
             workflow_id=workflow_id,
             reference_snapshot=self.active_run_reference_snapshot,

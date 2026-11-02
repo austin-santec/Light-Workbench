@@ -45,6 +45,7 @@ from infrastructure.database.preflight import DatabasePreflightResult
 from domain.hardware_connection import RemoteControlState
 from hardware.interfaces import LogicalChannelRouteResult
 from domain.measurement_attempts import new_measurement_attempt
+from domain.measurement_timing import MeasurementTimingProfile
 from ilm_app import (
     AboutDialog,
     CompletedReplacementDialog,
@@ -2326,6 +2327,28 @@ class MainWindowTests(unittest.TestCase):
             self.assertEqual(
                 window._extra_channel_routing_method_for_run("continue"),
                 ExtraChannelRoutingMethod.SCPI_MAPPED,
+            )
+        finally:
+            window.close()
+
+    def test_continued_or_retest_run_uses_saved_timing_profile(self):
+        window = MainWindow()
+        try:
+            saved = MeasurementTimingProfile(
+                "saved", "Saved", power_sample_offsets_ms=(0, 200, 350)
+            ).as_dict()
+            context = MagicMock()
+            context.run.measurement_hardware = {"timing_profile": saved}
+            window.database_run_context = context
+            window.active_timing_profile = window.timing_profiles["standard"]
+
+            self.assertEqual(
+                window._measurement_timing_for_run("continue").power_sample_offsets_ms,
+                (0, 200, 350),
+            )
+            self.assertEqual(
+                window._measurement_timing_for_run("new").profile_id,
+                window.active_timing_profile.profile_id,
             )
         finally:
             window.close()
