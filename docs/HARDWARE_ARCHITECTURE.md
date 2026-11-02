@@ -98,9 +98,10 @@ measurement. The documented physical port comes from the assignment's
 effective channel map, not from switch readback. A larger `CFG:SWT:END?` result
 does not expand the normal pass beyond `N`.
 
-The administrator-selected extra-channel method is fixed for a run. The
-default `scpi_mapped` method treats `CFG:SWT:END?` as the known configured
-logical endpoint `M`. If `M > N`, it offers exactly `N + 1..M`, routes each
+The administrator-selected extra-channel method is fixed for a run. The OSX-150
+default is `cli_direct`; an administrator may explicitly select `scpi_mapped`
+when extras are registered in the module map. SCPI mode treats
+`CFG:SWT:END?` as the known configured logical endpoint `M`. If `M > N`, it offers exactly `N + 1..M`, routes each
 candidate through the same verified `set_channel()` SCPI path, and completes
 automatically at `M`. The requested configured extra channel is retained as the
 physical candidate identity, while `CLOSe?` confirms only the same logical
@@ -117,8 +118,8 @@ Admin Config routing method; continuations use the saved method in run metadata.
 The mode is available only for OSX-150 and is stored as the stable metadata
 value `extra_channels_only`.
 
-The administrator-only `cli_direct` method is explicitly experimental and uses
-the separate `set_physical_port()` capability. The adapter first obtains the
+The administrator-only `cli_direct` method uses the separate
+`set_physical_port()` capability. The adapter first obtains the
 already-connected switch's configured IP through the existing LAN query, then
 `hardware/santec_cli.py` opens only that address
 on named TCP port 2323 and sends exactly:
@@ -148,6 +149,14 @@ no command has been guessed. USB/VISA and TCP routes share the connection
 manager's single hardware executor and the adapter's routing lock, so they
 cannot overlap.
 
+Before CLI extra-channel testing begins, the worker performs a readiness query
+through that same connected switch lease. The exact vendor sentinel
+`192.168.99.10` means that the operator must assign the switch IP and choose
+`Recheck IP`; a LAN-query failure uses the same retry/stop prompt. A valid
+different IP continues without an additional network probe. The readiness
+check never caches an address, and `set_physical_port()` still queries the
+current IP immediately before every actual CLI route.
+
 Replacement recording is not a routing operation. The SQL-backed replacement
 editor reads the current effective assignment map from the database and records
 operator-supplied documentation only after explicit physical-completion
@@ -155,7 +164,7 @@ confirmation. It does not call `CLOSe`, `CLOSe?`, the CLI tunnel, VISA, or any
 other switch command, and it does not claim that the external mapping was
 verified.
 
-Unknown physical capacity applies only to experimental CLI mode and is handled
+Unknown physical capacity applies only to CLI mode and is handled
 by operator-confirmed sequential discovery. The worker begins at `N + 1`; a
 command or provisional reading alone
 does not prove that a port exists. Write IL and Continue confirms and stores a

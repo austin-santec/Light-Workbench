@@ -278,6 +278,7 @@
 
     <h2>8. Optional extra physical-port testing</h2>
     <p>After a successful automatic full pass covers every required front-panel channel, Light Workbench asks whether to finish or test additional physical ports through the switch's engineering interface. This applies to both a new full pass and a continued full pass that completes its remaining front-panel channels.</p>
+    <p>For OSX-150, <strong>CLI tunneling</strong> is the Admin Config default for extra physical ports. An administrator may select <strong>SCPI mapped channels</strong> when those extras are registered in the switch module map. The selected method is saved with the run and does not change during continuation.</p>
     <ol class="steps">
       <li>Choose <strong>Finish Run</strong> unless extra spare-port measurements are intentionally required.</li>
       <li>If you choose <strong>Test Extra Ports</strong>, the program begins at front-panel count + 1 and routes each candidate sequentially using the fixed engineering command. When continuing a run, previously accepted extra-port readings are skipped and testing resumes at the first missing candidate.</li>

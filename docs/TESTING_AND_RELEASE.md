@@ -153,7 +153,8 @@ session prevention, exclusive lease conflicts, release without disconnect,
 single-thread native calls, laser-safe shutdown, and application-close cleanup.
 
 Extra-channel coverage must remain hardware-free. Verify that missing admin
-configuration defaults to SCPI; SCPI extras use the exact finite configured
+configuration defaults OSX-150 to CLI tunneling while preserving an explicitly
+saved SCPI selection. SCPI extras use the exact finite configured
 range, call only `set_channel()`, treat the requested configured channel as the
 physical candidate identity, confirm the same logical value through `CLOSe?`,
 skip accepted continuation rows, hide No More Physical Ports, and never save a

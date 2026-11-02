@@ -902,7 +902,7 @@ class MainWindow(QMainWindow):
         self._syncing_reference_widgets = False
         self.limit_profile_repository = LimitProfileRepository()
         self.limit_profiles = default_limit_profiles()
-        self.extra_channel_routing_method = ExtraChannelRoutingMethod.SCPI_MAPPED
+        self.extra_channel_routing_method = ExtraChannelRoutingMethod.CLI_DIRECT
         self.limit_profile_error = None
         try:
             self.limit_profiles = self.limit_profile_repository.load_profiles()
@@ -7235,6 +7235,58 @@ class MainWindow(QMainWindow):
             details.get("routing_method")
         )
         configured_count = details.get("configured_channel_count")
+        if details.get("decision_kind") == "cli_ip_readiness":
+            extra_only = bool(details.get("extra_only"))
+            readiness = details.get("ip_readiness_state")
+            address = details.get("network_address") or "unavailable"
+            message = QMessageBox(self)
+            message.setIcon(QMessageBox.Warning)
+            if readiness == "unassigned":
+                message.setWindowTitle("Switch IP address is not configured")
+                message.setText(
+                    "The switch is still using the unassigned address %s." % address
+                )
+                message.setInformativeText(
+                    "Set the switch IP address with the switch's front-panel control, "
+                    "then choose Recheck IP before starting CLI extra-channel testing."
+                )
+            else:
+                message.setWindowTitle("Could not read switch IP address")
+                message.setText("The switch IP address could not be read.")
+                detail = details.get("error_message") or (
+                    "No additional error details were provided."
+                )
+                message.setInformativeText(
+                    "%s\n\nCorrect the switch connection or IP configuration, "
+                    "then choose Recheck IP." % detail
+                )
+            recheck = message.addButton("Recheck IP", QMessageBox.ActionRole)
+            stop_text = "Stop Extra Testing" if extra_only else "Finish Run"
+            stop = message.addButton(stop_text, QMessageBox.RejectRole)
+            message.setDefaultButton(recheck)
+            message.setEscapeButton(stop)
+            message.exec_()
+            retry = message.clickedButton() == recheck
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "extra_ports.cli_ip_readiness_decision",
+                extra_only=extra_only,
+                ip_readiness_state=readiness,
+                network_address=address,
+                choice=(
+                    "recheck_ip"
+                    if retry
+                    else "stop_extra_testing"
+                    if extra_only
+                    else "finish_run"
+                ),
+                routing_method=routing_method.value,
+                status="retry_requested" if retry else "stopped",
+            )
+            self._hardware_command(
+                "extra_port_action", "retry_ip_check" if retry else "stop"
+            )
+            return
         message = QMessageBox(self)
         message.setIcon(QMessageBox.Question)
         message.setWindowTitle("Front-panel testing complete")

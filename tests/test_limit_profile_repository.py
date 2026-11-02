@@ -13,11 +13,25 @@ class LimitProfileRepositoryTests(unittest.TestCase):
             profiles = LimitProfileRepository(Path(directory) / "limits.ini").load_profiles()
             self.assertEqual(profiles["OSX-100"].fail_above_db, 0.8)
 
-    def test_missing_routing_setting_defaults_to_scpi_mapped(self):
+    def test_missing_routing_setting_defaults_to_cli_direct(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = LimitProfileRepository(Path(directory) / "limits.ini")
             self.assertEqual(
                 repository.load_extra_channel_routing_method(),
+                ExtraChannelRoutingMethod.CLI_DIRECT,
+            )
+
+    def test_explicit_scpi_routing_choice_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "limits.ini"
+            path.write_text(
+                "[hardware-routing]\n"
+                "osx_150_extra_channel_method=scpi_mapped\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                LimitProfileRepository(path).load_extra_channel_routing_method(),
                 ExtraChannelRoutingMethod.SCPI_MAPPED,
             )
 

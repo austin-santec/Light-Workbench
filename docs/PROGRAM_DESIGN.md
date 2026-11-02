@@ -69,10 +69,11 @@ the validated three-digit front-panel count in the part number. The switch's
 the required count blocks the run, while a larger value does not add channels
 to the required pass. After all required channels are explicitly written, the
 worker can offer one optional extra-channel phase. The administrator-selected
-method is captured in run hardware metadata and remains fixed: default
-`scpi_mapped` tests the finite configured range `N + 1..M` with `set_channel()`,
-while experimental `cli_direct` probes unknown physical capacity sequentially
-with `set_physical_port()`. Declining finishes the run. Partial,
+method is captured in run hardware metadata and remains fixed. OSX-150 defaults
+to `cli_direct`, which probes unknown physical capacity sequentially with
+`set_physical_port()`. An administrator can select `scpi_mapped` to test the
+finite configured range `N + 1..M` with `set_channel()` when those extras are
+registered in the module map. Declining finishes the run. Partial,
 manual-order, retest-only, loaded-only, failed, and canceled runs do not make
 this offer; a continued full pass can offer it after completing all missing
 front-panel channels.
@@ -101,6 +102,13 @@ it is never physical-mapping evidence. The worker resolves the documented
 physical port independently from the assignment's effective channel map. The
 distinct `set_physical_port()` capability cannot change or reinterpret this
 contract. Both paths are serialized by the persistent hardware manager.
+
+CLI extra-channel testing has a worker-owned IP-readiness gate before the
+first extra route. The exact sentinel `192.168.99.10` means the switch still
+needs an operator-assigned IP; a LAN-query failure is also actionable through
+the `Recheck IP` prompt. The gate does not cache or independently probe the
+address, and the route adapter continues to query the current address before
+every `writereg` operation.
 
 An extra candidate remains provisional after routing and measurement. Retry,
 Stop Extra Testing, rejected readings, and route failures discard it; CLI mode

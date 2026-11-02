@@ -15,6 +15,7 @@ from domain.extra_ports import (
     ExtraChannelRoutingMethod,
     PhysicalPortRouteResult,
     PhysicalPortRouteStatus,
+    UNASSIGNED_SWITCH_IP,
 )
 from hardware.session import OpticalTestSession
 from hardware.interfaces import LogicalChannelRouteResult
@@ -89,6 +90,9 @@ class ExtraPortSwitch(FakeSwitch):
         self.physical_routes = []
         self.route_results = list(route_results or [])
 
+    def get_ip_address(self):
+        return "192.0.2.15"
+
     def configured_channel_count(self):
         return 8
 
@@ -136,6 +140,105 @@ class CapturingSupportLogger:
 
 
 class MeasurementWorkerTests(unittest.TestCase):
+    def test_cli_full_pass_blocks_on_unassigned_ip_until_recheck_succeeds(self):
+        switch = ExtraPortSwitch([
+            PhysicalPortRouteResult(
+                3,
+                PhysicalPortRouteStatus.ACKNOWLEDGED,
+                network_address="192.0.2.15",
+            ),
+            PhysicalPortRouteResult(4, PhysicalPortRouteStatus.FAILED, detail="absent"),
+        ])
+        addresses = iter([UNASSIGNED_SWITCH_IP, "192.0.2.15", "192.0.2.15"])
+        switch.get_ip_address = lambda: next(addresses)
+        worker = ApplicationMeasurementWorker(
+            FakePowerMeter(),
+            switch,
+            None,
+            {1310: 0.72, 1550: 0.28},
+            front_panel_channel_count=2,
+            offer_extra_ports=True,
+            extra_channel_routing_method=ExtraChannelRoutingMethod.CLI_DIRECT,
+            extra_port_safety_limit=4,
+        )
+        readiness_prompts = []
+        normal_offers = []
+        worker.extra_port_offer_required.connect(
+            lambda _count, details: (
+                readiness_prompts.append(details)
+                if details.get("decision_kind") == "cli_ip_readiness"
+                else normal_offers.append(details),
+                worker.extra_port_action("retry_ip_check")
+                if details.get("decision_kind") == "cli_ip_readiness"
+                else worker.choose_extra_port_testing(True),
+            )
+        )
+        worker.operator_required.connect(lambda *_args: worker.continue_current())
+        worker.reading_ready.connect(lambda *_args: worker.write_current())
+        worker.extra_port_issue.connect(
+            lambda *_args: worker.extra_port_action("no_more")
+        )
+
+        worker.run()
+
+        self.assertEqual(len(readiness_prompts), 1)
+        self.assertEqual(readiness_prompts[0]["ip_readiness_state"], "unassigned")
+        self.assertEqual(len(normal_offers), 1)
+        self.assertEqual(switch.physical_routes, [(3, 4), (4, 4)])
+
+    def test_cli_extra_only_blocks_on_ip_query_failure_until_recheck(self):
+        switch = ExtraPortSwitch([
+            PhysicalPortRouteResult(
+                3,
+                PhysicalPortRouteStatus.ACKNOWLEDGED,
+                network_address="192.0.2.15",
+            ),
+            PhysicalPortRouteResult(4, PhysicalPortRouteStatus.FAILED, detail="absent"),
+        ])
+        outcomes = iter([RuntimeError("IP query timed out"), "192.0.2.15", "192.0.2.15"])
+
+        def get_ip_address():
+            outcome = next(outcomes)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        switch.get_ip_address = get_ip_address
+        worker = ApplicationMeasurementWorker(
+            FakePowerMeter(),
+            switch,
+            [],
+            {1310: 0.72, 1550: 0.28},
+            front_panel_channel_count=2,
+            extra_only=True,
+            extra_channel_routing_method=ExtraChannelRoutingMethod.CLI_DIRECT,
+            extra_port_safety_limit=4,
+        )
+        prompts = []
+        failures = []
+        stopped = []
+        worker.failed.connect(failures.append)
+        worker.stopped.connect(lambda: stopped.append(True))
+        worker.extra_port_offer_required.connect(
+            lambda _count, details: (
+                prompts.append(details),
+                worker.extra_port_action("retry_ip_check"),
+            )
+        )
+        worker.operator_required.connect(lambda *_args: worker.continue_current())
+        worker.reading_ready.connect(lambda *_args: worker.write_current())
+        worker.extra_port_issue.connect(
+            lambda *_args: worker.extra_port_action("no_more")
+        )
+
+        worker.run()
+
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(failures, [], failures)
+        self.assertEqual(stopped, [], (failures, stopped))
+        self.assertEqual(prompts[0]["ip_readiness_state"], "query_failed")
+        self.assertEqual(switch.physical_routes, [(3, 4), (4, 4)])
+
     def test_live_database_write_locks_the_exact_provisional_measurement(self):
         worker = ApplicationMeasurementWorker(
             FakePowerMeter(),
