@@ -1,149 +1,135 @@
 # Light Workbench Project Documentation
 
-This folder is the design and contribution guide for Light Workbench. It is
-intended for developers and AI assistants making changes to the project.
+This is the documentation index and authority guide for developers and AI
+assistants. The root [`AGENTS.md`](../AGENTS.md) defines the repository-wide
+Codex workflow and uses this index to route tasks to their owning documents.
 
-The root [`README.md`](../README.md) is the user-facing project overview. It
-covers the current application workflow, deployment requirements, and operator
-features. This file focuses on architecture, coding practices, testing, and
-how to choose the other documents in this folder.
+## Authority and evidence
 
-The database development branch is SQL Server-primary for new recorded hardware
-runs of every purpose.
-Existing CSV/JSON runs can still be opened for review, but they are not
-uploaded or silently treated as writable database runs.
+Use each record for the question it can answer:
 
-The root [`Requirements.md`](../Requirements.md) maps the draft OSX insertion-loss
-requirements workbook to the current implementation, known gaps, decisions,
-and proposed delivery milestones.
-For a shorter personal task list, use
-[`REQUIREMENTS_CHECKLIST.md`](REQUIREMENTS_CHECKLIST.md), which groups every
-requirement into completed, partial, and not-yet-implemented work.
+| Question | Owning record and limits of authority |
+| --- | --- |
+| What change is approved? | The current approved task and explicitly recorded decisions in the relevant design document or task handoff. A proposal or roadmap entry alone does not establish approval. |
+| What was originally requested? | The original [RevB workbook](../temp%20docs/OSX_IL_Test_Software_Requirements_RevB.xlsx), when available, and its traceability in [Requirements.md](../Requirements.md). RevB is original intent, not a description of the current application or automatic approval of every original requirement. |
+| How should the system be organized? | [PROGRAM_DESIGN](PROGRAM_DESIGN.md), [PROJECT_LAYOUT](PROJECT_LAYOUT.md), and the specialist architecture documents below. Separate their current-state descriptions from intended architecture and future work. |
+| What is implemented? | Relevant source, SQL migrations, and tests establish the implementation at the inspected revision. Specialist documents explain that implementation; an old status label does not override the code or prove acceptance. |
+| What has actually been verified? | Recorded automated-test results and manual, hardware, SQL integration, or deployment observations, with their revision, environment, and scope. [TESTING_AND_RELEASE](TESTING_AND_RELEASE.md) defines procedures, not proof that they have been performed. |
+| What happened in a task, and what remains? | Task-specific results, test evidence, pending manual checks, known bugs, and open questions in the existing [codex_handoff.md](../codex_handoff.md), cross-referenced to the owning document and source/tests. Older entries require rechecking. |
+
+`Requirements.md` contains outdated statuses and mixed-age implementation
+assessments. `REQUIREMENTS_CHECKLIST.md` is a dated derivative checklist, not an
+independent current acceptance record. Neither should be interpreted wholesale
+as current approved behavior. Their reconciliation is deferred; this index does
+not change their requirements or completion claims.
+The RevB workbook is currently Git-ignored: it exists in this workspace but
+may be unavailable in a fresh checkout.
+
+If records disagree, report the conflict with file references and distinguish
+observed implementation from intended behavior. Do not silently select a policy
+or rewrite requirements to match code. Seek clarification before work that
+depends on an unresolved decision. Treat untested behavior as unverified, even
+when its code exists or a milestone says complete.
+
+## Documentation responsibilities
+
+The developer or agent making an approved change maintains the document that
+owns the affected subject, and records implementation and verification results
+in the existing handoff unless the task limits edits. The user/project owner
+approves changes to requirements or design decisions; documentation edits and
+passing tests do not supply that approval. Each verification record must say
+who or what performed the check and what remains pending.
+
+Use the owning records below instead of copying their behavior descriptions
+into this index. Keep this file responsible for navigation, authority, and
+documentation responsibilities; keep `AGENTS.md` responsible for agent workflow.
 
 ## Documentation map
 
-- [`PROGRAM_DESIGN.md`](PROGRAM_DESIGN.md) — application purpose, boundaries,
-  layers, and workflow ownership.
-- [`CODING_STANDARDS.md`](CODING_STANDARDS.md) — Python, Qt, threading,
+- [`PROGRAM_DESIGN.md`](PROGRAM_DESIGN.md) — owns application purpose,
+  boundaries, layers, workflow rules, and intended architecture.
+- [`CODING_STANDARDS.md`](CODING_STANDARDS.md) — owns Python, Qt, threading,
   compatibility, and error-handling conventions.
-- [`PROJECT_LAYOUT.md`](PROJECT_LAYOUT.md) — source-package responsibilities
+- [`PROJECT_LAYOUT.md`](PROJECT_LAYOUT.md) — owns source-package responsibilities
   and generated-content locations.
-- [`HARDWARE_ARCHITECTURE.md`](HARDWARE_ARCHITECTURE.md) — ILM, OPM, laser,
-  switch, session, and shutdown boundaries.
-- [`DATA_ARCHITECTURE.md`](DATA_ARCHITECTURE.md) — units, runs, persistence,
-  exports, and compatibility rules.
-- [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md) — implemented SQL
+- [`HARDWARE_ARCHITECTURE.md`](HARDWARE_ARCHITECTURE.md) — owns ILM, OPM, laser,
+  switch, session, routing, measurement timing, and shutdown boundaries.
+- [`DATA_ARCHITECTURE.md`](DATA_ARCHITECTURE.md) — owns units, runs, references,
+  replacement/COC rules, persistence, exports, and legacy-file compatibility.
+- [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md) — owns the SQL
   Server-primary schema for new runs, including unit/switch
   assignments, accepted attempts, replacements, spares, and analysis
   eligibility.
-- [`DATABASE_ROADMAP.md`](DATABASE_ROADMAP.md) — completed local database
-  milestones, SQL Server Express development setup, tests, and the deferred
-  network-pilot exit criteria. Historical bulk import is intentionally out of
-  scope.
-- [`SAMPLE_DATABASE_DATA.md`](SAMPLE_DATABASE_DATA.md) — guarded synthetic
+- [`DATABASE_ROADMAP.md`](DATABASE_ROADMAP.md) — owns database milestone
+  planning/history, local setup, and rollout exit criteria. Read completed
+  milestones as historical records, not fresh verification of a deployment.
+  Historical bulk import is intentionally out of scope.
+- [`SAMPLE_DATABASE_DATA.md`](SAMPLE_DATABASE_DATA.md) — owns guarded synthetic
   database scenarios, seeding commands, and safety rules.
-- [`TESTING_AND_RELEASE.md`](TESTING_AND_RELEASE.md) — test commands, build,
+- [`TESTING_AND_RELEASE.md`](TESTING_AND_RELEASE.md) — owns verification
+  procedures, test commands, build,
   packaging, and release checks.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — change workflow and review questions.
-- [`REFACTOR_ROADMAP.md`](REFACTOR_ROADMAP.md) — incremental refactor history
-  and remaining architecture work.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — owns contribution workflow and review
+  questions, alongside the agent-specific policy in `AGENTS.md`.
+- [`REFACTOR_ROADMAP.md`](REFACTOR_ROADMAP.md) — owns incremental refactor
+  history and remaining architecture work. Completed phases are historical;
+  remaining phases are plans, not automatically authorized tasks.
 
-- [`SUPPORT_LOGGING.md`](SUPPORT_LOGGING.md) documents always-on local
+- [`SUPPORT_LOGGING.md`](SUPPORT_LOGGING.md) owns always-on local
   engineering logs, redaction, rotation, support bundles, and audit-trail
   limitations.
 
-- [`ILM_DLL_FUNCTION_REFERENCE.md`](ILM_DLL_FUNCTION_REFERENCE.md) documents
+- [`ILM_DLL_FUNCTION_REFERENCE.md`](ILM_DLL_FUNCTION_REFERENCE.md) owns
   OP815M.dll exports, verified diagnostics, and commands prohibited in
   production measurements.
 
-Model-specific quality criteria are defined in `domain/limit_profiles.py`,
-stored through `infrastructure/limit_profile_repository.py`, and edited from
-the session-only `Edit > Admin Mode...` / `Edit > Admin Config...` workflow.
-New database runs snapshot the criteria so historical analysis does not change
-when an administrator updates a future profile. Legacy JSON runs retain their
-existing criteria-snapshot compatibility behavior.
+## Current application and legacy navigation
 
-The current release version is maintained in `config/app_info.py`; do not
-duplicate it in this index. The current desktop entry point is `ilm_app.py`,
-while `ILMReadLoss.py` remains a supported legacy console workflow.
+The desktop entry point is [`ilm_app.py`](../ilm_app.py); release identity is
+maintained in [`config/app_info.py`](../config/app_info.py). The database branch
+stores new runs in SQL Server; existing CSV/JSON files remain legacy review
+inputs. See DATABASE_ARCHITECTURE and DATA_ARCHITECTURE for storage ownership.
 
-SM/MM wavelength behavior is defined in `domain/wavelengths.py` and documented
-in `HARDWARE_ARCHITECTURE.md` and `DATA_ARCHITECTURE.md`. The operator selects
-the mode; the application does not infer it from hardware identity or cache.
-SM and MM use independent model/mode limit profiles. Historical compatibility
-classifications remain readable, but new MM runs use the selected MM mode.
+- Application layout, connected-hardware controls, Clear Workspace, and
+  workflow ownership: [PROGRAM_DESIGN](PROGRAM_DESIGN.md).
+- SM/MM selection, session references, remote/local control, diagnostics,
+  timing profiles, and extra-channel routing: [HARDWARE_ARCHITECTURE](HARDWARE_ARCHITECTURE.md)
+  and [DATA_ARCHITECTURE](DATA_ARCHITECTURE.md).
+- Model/mode criteria, latest-measurement selection, replacement analysis, and
+  model/mode/capacity-specific COC export: [DATA_ARCHITECTURE](DATA_ARCHITECTURE.md)
+  and [DATABASE_ARCHITECTURE](DATABASE_ARCHITECTURE.md).
+- Local engineering logs, diagnostic evidence, and support bundles:
+  [SUPPORT_LOGGING](SUPPORT_LOGGING.md); measurement diagnostics are also
+  described in HARDWARE_ARCHITECTURE.
+- Hardware development guidance:
+  [.github/agents/santec-test-developer.agent.md](../.github/agents/santec-test-developer.agent.md).
 
-Production references are session-only and are shown in the Reference panel
-beside Hardware Controls below Current readings. Hardware Test Setup can be
-collapsed without clearing its values so the readings table can use more
-vertical space. Separate SM and MM references may coexist for one connected
-measurement configuration. Loading historical runs does not overwrite them; a
-confirmed ILM/power-meter disconnect clears them and requires a new reference.
+The root [README.md](../README.md) owns the user-facing overview, but currently
+mixes desktop, legacy console, and older local-file workflows. Use its section
+scope carefully and check current specialist documents/source when it
+conflicts with the database workflow. [ILM_READING_GUIDE.html](../ILM_READING_GUIDE.html)
+is the operator guide; [README_INSTALL.txt](../README_INSTALL.txt) covers
+installation. [`ILMReadLoss.py`](../ILMReadLoss.py) is the legacy console entry
+point; its CSV workflow does not define current desktop persistence. These
+operator documents are separate from developer policy and are unchanged by
+this governance phase.
 
-The non-recording `Tools > Power Measurement Diagnostics...` workflow follows
-the hardware and lifecycle boundaries described here while displaying
-absolute power and exact insertion-loss math. Its manual and monitoring
-samples are analyzed separately for temporary repeatability and stability
-statistics. Diagnostic history can be explicitly exported as CSV or JSON with
-an optional in-memory OP815 hardware trace; this trace is never part of normal
-run persistence.
-
-Diagnostic history exports use local-time names in the form
-`diagnostic-history-YYYYMMDD-HHMMSS.csv` or `.json`, with deterministic numeric
-collision suffixes for automatically suggested names. The OP815 adapter also
-performs a final wavelength verification immediately before `ReadPower`; an
-unsupported or reported OPM-wavelength mismatch blocks the diagnostic sample.
-Raw index/count convention differences are retained as trace warnings.
-
-Final COC output is prepared from persisted run data rather than the visible
-table. The application derives the front-panel count from the selected context
-run's part number and automatically considers all compatible run history. The
-newest valid measurement for each logical channel wins, so an older passing
-value cannot be selected over a newer failure. Export is blocked for missing,
-invalid, or formally failing values; the generated workbook uses the appropriate bundled
-model/mode-specific 45- or 48-channel template and removes rows beyond the
-selected count. OSX-100 supports SM and MM templates; OSX-150 supports SM
-templates only.
-
-The normal window includes a compact Connected hardware panel and a
-`Connect Hardware...` split/menu button in the top header. The main action
-connects everything required for a run; menu actions connect or disconnect
-measurement hardware and the optical switch independently. Connections persist
-between workflows and exclusive leases prevent simultaneous control. The panel
-displays each device's transient connection state, manufacturer/model, and serial
-when available. Hardware
-identity is represented by vendor-neutral `DeviceInfo` models and selected by
-an adapter-owned capability registry; an unverified or unknown switch model is
-reported clearly and is not treated as an OSX-100/OSX-150-compatible device.
-
-The OP815 also exposes an `ILM Remote Mode` control. Local mode leaves the
-connection open for front-panel operation, pauses automated ILM commands, and
-retains the current session reference until the ILM is explicitly
-disconnected.
-
-`Help > Support Logs` exposes the always-on local engineering log folder,
-status, path copy, and explicit support-bundle export. Support logging uses a
-bounded background queue and is isolated from measurement and persistence
-behavior. Read `SUPPORT_LOGGING.md` before changing event fields or retention.
+DATABASE_ROADMAP and REFACTOR_ROADMAP own their respective planning histories,
+not a universal current task list. `codex_handoff.md` remains the existing
+implementation/issue handoff, with some older claims requiring rechecking.
+No new tracker or decision directory is required.
 
 ## Required reading before code changes
 
-Before modifying code, review:
+Follow the startup and specialist routing in [AGENTS.md](../AGENTS.md):
 
-1. `PROGRAM_DESIGN.md` for the application purpose, boundaries, and target
-   architecture.
-2. `CODING_STANDARDS.md` for implementation and naming conventions.
-3. The most relevant specialist document:
-   - `HARDWARE_ARCHITECTURE.md` for ILM, OPM, laser, or switch work.
-   - `DATA_ARCHITECTURE.md` for runs, units, CSV, JSON, or COC work.
-   - `TESTING_AND_RELEASE.md` for tests, packaging, or executable changes.
-4. `REFACTOR_ROADMAP.md` before moving or reorganizing modules.
-5. `PROJECT_LAYOUT.md` when adding files or deciding where a responsibility
-   belongs.
-
-The current source files and automated tests remain the final authority when
-these documents do not yet describe an existing behavior. Update the relevant
-document when a design decision changes.
+1. Start with this index; before editing, read PROGRAM_DESIGN,
+   CODING_STANDARDS, and CONTRIBUTING.
+2. Read the specialist documents for the affected area and relevant existing
+   handoff entries. Check PROJECT_LAYOUT for file placement and REFACTOR_ROADMAP
+   before reorganizing modules.
+3. Inspect the relevant source, tests, and worktree. Use the authority rules
+   above to report conflicting intent, implementation, or evidence.
 
 ## Project principles
 
@@ -165,10 +151,15 @@ Before submitting a change:
   persistence, hardware, or packaging.
 - Add or update tests at the lowest practical layer.
 - Preserve backward compatibility for existing run files when possible.
-- Run `python -m unittest discover -s tests`.
-- Run `python -m py_compile` for changed Python modules.
-- Run `git diff --check`.
+- Follow TESTING_AND_RELEASE for code tests, compilation, SQL integration, and
+  applicable manual/release checks. For documentation-only edits, validate
+  references, consistency, and `git diff --check`; report application tests as
+  not run because application behavior was unchanged.
 - Update README or the relevant document when user behavior or architecture
   changes.
 - Rebuild the executable only after source tests pass and the user requests a
   distributable build.
+- Record implementation results, exact test outcomes, pending manual/hardware/
+  deployment checks, and unresolved issues in the existing handoff unless the
+  task restricts edits. Distinguish implemented, inferred, and unverified work;
+  do not call a feature fully verified or close it while required checks remain.
