@@ -1,709 +1,269 @@
-# Light Workbench — AI Handoff
+# Light Workbench - Project Status and Handoff
 
-This document is a working orientation guide for another AI or developer
-continuing this project. It was last reviewed on 2026-10-13. The files on disk
-and the Git worktree are the source of truth.
+Reviewed: 2026-11-03 on `cleanup`, against source revision `11a0068`.
+This Phase 2 documentation update is uncommitted. Start with [AGENTS.md](AGENTS.md)
+and the [documentation authority guide](docs/README.md).
+Source inspection confirms implementation; it does not establish runtime acceptance.
 
-## Mission
+## Current Baseline
 
-This project automates optical insertion-loss testing for an ILM-100/OP815
-meter and a Santec OSX-100/OSX-150 optical switch. The operator selects logical switch
-channels, moves the output cable when prompted, and obtains insertion loss in
-SM 1310/1550 nm or MM 850/1300 nm mode.
+- **Application:** Light Workbench **1.36.0**, from
+  [config/app_info.py](config/app_info.py). Record the Git revision as well as
+  the version when reporting results.
+- **Architecture:** PyQt desktop composition remains in [ilm_app.py](ilm_app.py),
+  with application controllers/workers, domain rules, hardware adapters, and
+  infrastructure repositories. Root facades and the console entry point remain
+  compatibility surfaces. See [PROGRAM_DESIGN](docs/PROGRAM_DESIGN.md) and
+  [PROJECT_LAYOUT](docs/PROJECT_LAYOUT.md); do not duplicate their module inventory here.
+- **Persistence:** SQL Server is authoritative for new recorded runs of every
+  purpose. Run creation precedes acquisition; accepted two-wavelength attempts
+  commit atomically and remain append-only. The worker advances after a matching
+  persistence acknowledgement, and completion reconciles saved coverage.
+  See [database workflow](application/database_primary_workflow.py),
+  [measurement workflow](application/measurement_persistence_workflow.py), and
+  [DATA_ARCHITECTURE](docs/DATA_ARCHITECTURE.md).
+- **Schema in source:** six forward-only migrations, `0001` through
+  [0006_authoritative_channel_roles.sql](infrastructure/database/sql_migrations/0006_authoritative_channel_roles.sql),
+  define **ten tables and four views**, including persisted analyses,
+  recommendations, and confirmed extras. SQL migration version 6 is distinct
+  from legacy run JSON version 6/unit JSON version 3.
+  [DATABASE_ARCHITECTURE](docs/DATABASE_ARCHITECTURE.md) owns the schema;
+  [migration scripts](infrastructure/database/sql_migrations/) and the
+  [preflight](infrastructure/database/preflight.py) establish the source contract.
+  No live database/schema inspection was performed in this task.
+- **Configuration and compatibility:** default development target is
+  `localhost\SQLExpress / LWBTestDB`. Windows Authentication is the default;
+  explicit SQL-password authentication uses the per-user `database.ini`.
+  These defaults are not evidence of any station's actual endpoint or credentials.
+  Historical CSV/JSON runs remain review inputs, not automatic imports or a second
+  write path. Logs, explicit diagnostic/report exports, COC workbooks, and
+  per-user configuration remain local. See
+  [database configuration](docs/DATABASE_ARCHITECTURE.md#approved-deployment-direction)
+  and [data formats](docs/DATA_ARCHITECTURE.md#format-responsibilities).
+- **Measurements and routing:** SM/MM is operator-selected, with independent
+  model/mode criteria and session-scoped references. Loading runs preserves
+  session references; a confirmed meter disconnect clears them. Part number
+  determines front-panel count; SCPI-configured count is not physical capacity.
+  `CLOSe?` confirms the logical channel only; assignment records supply the
+  documented physical map. OSX-150 extras default to CLI for new settings,
+  with explicit SCPI selection retained and the method fixed per run.
+  Extra-only runs, CLI IP-readiness checking, and configurable timing/scheduled
+  averaging are implemented. See [HARDWARE_ARCHITECTURE](docs/HARDWARE_ARCHITECTURE.md)
+  and [timing profiles](domain/measurement_timing.py).
+- **Analysis and COC:** replacement analysis uses assignment-wide effective
+  evidence, persists immutable snapshots/recommendations, and detects staleness.
+  Replacements document external reroutes; post-replacement readings verify
+  their measured result. New hardware pairings start fresh assignment history.
+  Compatible runs can contribute to COC without a two-run limit; the latest
+  eligible whole wavelength pair wins, including newer failures. Purpose alone
+  does not block technical analysis/COC. COC supports OSX-100 SM/MM and OSX-150
+  SM, with all front-panel channels required; OSX-150 MM COC remains unsupported.
+  See [effective analysis](domain/effective_replacement_analysis.py),
+  [COC preparation](domain/coc_preparation.py), and DATA_ARCHITECTURE.
+- **Other implemented surfaces:** database reports, purpose/station capture,
+  accepted-reading history, managed persistent hardware leases, Live IL/Red Light/
+  diagnostics, database health monitoring, and Clear Workspace. Clear Workspace
+  unloads UI data while retaining connections and session references.
+  [PROGRAM_DESIGN](docs/PROGRAM_DESIGN.md) owns workflow boundaries;
+  [SUPPORT_LOGGING](docs/SUPPORT_LOGGING.md) owns local diagnostic evidence.
+- **Milestones:** [DATABASE_ROADMAP](docs/DATABASE_ROADMAP.md) records 0-10A
+  implemented and managed network Milestone 11 deferred.
+  [REFACTOR_ROADMAP](docs/REFACTOR_ROADMAP.md) records the current refactor through
+  Phase 6 complete. Those are implementation/history claims, not blanket manual
+  acceptance. Separate real OPM/laser support remains future expansion.
 
-For each wavelength:
+Evidence labels used below:
 
-    insertion loss (dB) = reference power (dBm) - measured absolute power (dBm)
+- **Implemented:** located in current source/migrations; execution not implied.
+- **Automated Verified:** an identified automated check passed at its stated
+  revision/environment; test code alone does not earn this label.
+- **Manual Verification Pending:** required physical, operator, SQL, or target
+  environment checks have no sufficient completion record for this baseline.
+- **Manually Verified:** a scoped, dated observation is recorded; it does not
+  qualify other devices, firmware, stations, or later revisions.
+- **Blocked:** a stated dependency prevents progress; include the dependency.
+- **Superseded:** an older claim/workflow has been replaced, with its successor
+  identified. Unknown issues remain open rather than being silently closed.
 
-The application does not modify the ILM's saved reference values or the
-OSX-150 replacement-channel configuration. A logical channel can therefore
-report a different physical port when the switch has a replacement mapping.
+## Active Work
 
-## Current architecture
+- Documentation governance Phases 1 and 2 are implemented (records below).
+  No additional feature implementation or priority order is established by this
+  review; Phase 3 needs a separate task.
+- Supported pending work consists of the unresolved items and required manual
+  verification below. The old generic contribution order is superseded by the
+  completed refactor and SQL-primary cutover; it is not an approved backlog.
+- Managed network rollout remains deferred under DATABASE_ROADMAP Milestone 11.
+  Implemented temporary workgroup authentication does not establish production
+  readiness or authorize that rollout.
 
-The current source release is **Light Workbench 1.36.0**. The single
-source of truth for the displayed name, version, tagline, and About text is
-`config/app_info.py`; bump the patch version for small fixes, the minor version for
-backward-compatible features, and the major version for incompatible changes.
-The main window exposes this through `Help > About`.
+## Open Bugs and Decisions
 
-Diagnostic history exports default to local-time filenames in the form
-`diagnostic-history-YYYYMMDD-HHMMSS.csv` or `.json`; automatically suggested
-names receive deterministic numeric collision suffixes. The OP815 diagnostic
-sequence performs a final `GetWavelength` verification after source settling
-and immediately before `ReadPower`. A mismatch or invalid wavelength report
-blocks the sample and leaves no history row.
+### LWB-DOC-001 - Conflicting requirements and workflow descriptions
 
-Calculated production references are rejected when a measured wavelength is
-strictly below -40.0 dBm; exactly -40.0 dBm is allowed. Insertion-loss samples
-are rejected when either wavelength is negative after four-decimal rounding.
-The negative values remain visible for troubleshooting, but cannot be written
-to a run. Live Write Mode keeps monitoring without repeated modal dialogs, and
-support logs coalesce consecutive invalid samples into start/end episodes.
+- **Status/evidence:** Open documentation discrepancy; confirmed by text/source inspection.
+- **Observed/expected:** [Requirements.md](Requirements.md) and the
+  [checklist](docs/REQUIREMENTS_CHECKLIST.md) contain mixed-age statuses;
+  [README.md](README.md) still describes desktop CSV storage. HARDWARE_ARCHITECTURE
+  still calls live pacing a fixed 250 ms and mentions external-completion
+  confirmation, while [timing profiles](domain/measurement_timing.py),
+  [Live IL dialog](ui/live_il_reading.py), and the
+  [replacement dialog](ui/database_replacements.py) implement configurable pacing
+  and no bottom confirmation gate. Documents should describe their actual scope.
+- **Next:** reconcile owning documents in separately approved work; preserve RevB
+  as original intent, not current acceptance. No requirement statuses changed here.
 
-The current integrated ILM uses source ID 0 for 1310 nm and source ID 1 for
-1550 nm. SM/MM is selected manually by the operator; hardware identity,
-product options, power readings, and cached history are not used to infer the
-mode. Run schema version 6 stores wavelength-keyed losses plus OPM/source
-pairs, selected mode, selection method, profile origin, and classification
-metadata; legacy files remain readable. SM and MM have independent model/mode
-limit profiles. Loaded runs restore their saved model/mode criteria for both SM
-and MM; older runs infer the model from persisted metadata. Contradictory or
-unresolved MM criteria leave limits unavailable instead of assuming OSX-150.
-MM supports normal analysis and replacement analysis. OSX-100
-SM and MM use matching COC workflows; OSX-150 MM remains blocked from COC
-export. Historical compatibility classifications are preserved when loading
-older records.
+### LWB-UI-001 - Unreachable legacy simulation UI
 
-The database-focused branch has completed its SQL Server-primary cutover
-through Milestone 10. Development targets
-`localhost\SQLExpress`, database `LWBTestDB`, with Windows Authentication by
-default. Approved workgroup deployments may use SQL Server Authentication with
-the explicit `sql_password` mode and the dedicated least-privilege runtime
-login. The per-user endpoint/authentication file is
-`%LOCALAPPDATA%\LightWorkbench\config\database.ini`.
-The application creates it with documented local defaults on first database
-initialization when missing, never replaces an existing file, and blocks
-database use with actionable feedback if an existing file is malformed or
-invalid. The tracked `config/database.ini.example` file contains no
-credentials; SQL-password credentials are entered only in the per-user file
-and are excluded from logs, support bundles, and source control.
-The forward-only migration runner and initial eight-table/two-view schema are in
-`infrastructure/database/`; migration 0003 adds the nullable positive
-`IL_RUNS.station_number` field. Guarded reset and backup/restore tools operate only
-on `LWBTestDB_Integration`. Backup verification restores to a temporary
-database, runs `DBCC CHECKDB`, validates the schema, and cleans up. The
-clean-start schema is
-future-data-only: it does not include historical run import, SQLite, or a local
-synchronization outbox. Its core tables are `UNITS`, `SWITCHES`,
-`UNIT_SWITCH_ASSIGNMENTS`, `IL_RUNS`, `IL_MEASUREMENTS`,
-`CHANNEL_REPLACEMENTS`, `DESIGNATED_SPARES`, and `SCHEMA_MIGRATIONS`, with
-read-only current-measurement and current-channel-map views. New production
-runs and accepted measurements use SQL Server as their authority. Existing
-CSV/JSON runs remain viewable but are not uploaded or writable database runs.
-Support logs, diagnostic exports, and generated COC files remain local. See
-`docs/DATABASE_ARCHITECTURE.md` and `docs/DATABASE_ROADMAP.md` before database
-work.
+- **Status/evidence:** Needs decision; static issue remains present, not UI-reproduced.
+- **Observed/expected:** `start_demo()`, `measure_demo()`, and `accept_demo()` in
+  [ilm_app.py](ilm_app.py) reference demo widgets absent from `_build_ui()`;
+  no current action wiring for `start_demo()` was found. A supported entry point
+  should be usable or explicitly retired; this does not show a production-run failure.
+- **Next:** decide whether to restore or remove the stale UI path, then verify
+  that choice. Retain simulated adapters needed by tests.
 
-New hardware runs require a recorded purpose: Production (the default),
-Engineering, Training, or Calibration. Non-production runs are retained for
-support/review but are excluded from normal production analysis. Completion and
-analysis status are finalized together for database runs; completed production
-runs become included, while stopped/failed production runs remain pending and
-non-production runs remain excluded. Loaded purposes are displayed in Run
-information and beside the table status, and continuation/retest operations
-retain the original purpose. COC preparation is purpose-neutral: explicitly
-production, engineering, training, and calibration database sources are all
-eligible when they satisfy the technical COC requirements, while legacy files
-with no purpose metadata remain compatible.
+### LWB-RET-001 - Historical opened-run retest concern
 
-New database runs also require a simple positive station number. It is stored
-directly on `IL_RUNS`, shown in Run information and database reports, included
-in relevant local support events and COC provenance, and preserved for
-continuations/retests. Older runs may display `Not recorded`; loading them does
-not change the session's station default.
+- **Status/evidence:** Needs investigation; inherited recommendation lacks a
+  reproducible failure or a documented closure.
+- **Observed/expected:** the old handoff recommended fixing persistence when
+  retesting an opened run. Current [SQL workflow](application/database_primary_workflow.py)
+  and [lifecycle](application/run_lifecycle_workflow.py) reopen retained runs;
+  [lifecycle tests](tests/test_run_lifecycle_workflow.py) and
+  [UI tests](tests/test_database_primary_ui.py) cover related behavior.
+  Their existence does not resolve the unidentified historical case.
+- **Next:** determine whether the report concerned legacy-file or SQL continuation,
+  reproduce that case, and record persistence/attempt identity before closing.
 
-`Tools > Database Reports...` is the read-only reporting surface. It includes
-assignment and run history, selected-run channel/retest attempts, replacement
-outcomes, saved-limit result derivation, and CSV export. Its normal production
-scope includes only production runs marked `included`; the operator must
-explicitly enable troubleshooting scope to include pending, excluded,
-superseded, or non-production data.
+### LWB-ENV-001 - Historical launcher and packaging warnings
 
-Database-backed `Manage Port Replacements...` is logical-channel centered and
-uses the assignment routing snapshot as its source of truth. It shows the real
-SQL audit history, derives the current effective port and database context,
-and keeps recommendations advisory until explicitly queued. The operator must
-confirm reason, operator, optional details, and that the physical reroute was
-completed outside Light Workbench. Replacements plus approved spare changes
-commit atomically; corrections and reversals append records, and the UI reloads
-all routing projections from SQL Server. The workflow issues no hardware
-mapping or verification command. Legacy file-backed replacement editing keeps
-its compatible event model.
+- **Status/evidence:** Needs investigation; historical environment observations only.
+- **Observed/expected:** the old handoff reports `py -3.11-32` could not find
+  Python, a direct 32-bit interpreter worked, and a non-fatal `sip` hidden-import
+  warning accompanied a successful build. Those observations do not describe
+  today's interpreter registration or package readiness.
+  [ilm_app.spec](ilm_app.spec) now names `PyQt5.sip`; the inspected local
+  `build/ilm_app/warn-ilm_app.txt` did not contain that old warning.
+- **Next:** when a build is requested, check interpreter bitness/registration and
+  perform the documented clean-target smoke test. No build was run here.
 
-SQL migration scripts are required packaged runtime resources. `ilm_app.spec`
-discovers every `.sql` file under
-`infrastructure/database/sql_migrations/` and places it at the same package-
-relative path under PyInstaller's `_internal` directory. `verify_release.ps1`
-uses `tools/release_resources.py` to require an exact filename and SHA-256
-match between source and package. Runtime resolution remains
-`Path(__file__).with_name("sql_migrations")`; missing resources fail database
-preflight rather than falling back to a developer checkout.
+### LWB-OPS-001 - Production operations and stale-run policy
 
-| File | Responsibility |
+- **Status/evidence:** Open decision; deployment acceptance remains pending.
+- **Observed/expected:** DATABASE_ARCHITECTURE's remaining decisions include host/
+  ownership, authentication/groups, backup/retention, and stale `in_progress`
+  policy. [Run lifecycle](application/run_lifecycle_workflow.py) implements stale
+  lookup/resume/close decisions, but no automatic startup stale-run prompt was
+  located in [ilm_app.py](ilm_app.py). Service support is not proof of that UI.
+- **Next:** agree production operations and recovery behavior; verify UI wiring
+  and outage recovery before accepting Milestone 11. Do not assume the temporary
+  workgroup setup resolves every production decision.
+
+### LWB-HW-001 - Firmware coverage and diagnostic identity ambiguity
+
+- **Status/evidence:** Open vendor/validation question; no new hardware testing.
+- **Observed/expected:** [DLL reference](docs/ILM_DLL_FUNCTION_REFERENCE.md)
+  records USB description OP815 but module ID 14 mapped to OP930 by vendor HTML.
+  HARDWARE_ARCHITECTURE also leaves CLI response/readback qualification firmware-
+  dependent; no default physical-port readback is approved.
+- **Next:** retain the diagnostic evidence, seek vendor clarification, and test
+  supported firmware before expanding capability claims. Do not infer model,
+  mode, physical mapping, or command success from ambiguous fields.
+
+## Pending Manual Verification
+
+All rows are **Manual Verification Pending for this reviewed baseline** unless
+a later scoped record supplies results. This does not erase earlier limited
+observations. [TESTING_AND_RELEASE](docs/TESTING_AND_RELEASE.md) owns procedures.
+
+| Area | Required evidence still to record |
 | --- | --- |
-| ilm_app.py | Current PyQt5 desktop viewer and real-hardware UI. Loads database or legacy CSV runs, analyzes limits, starts hardware runs, displays readings, and commits accepted production results through the database workflow. The header includes the bundled Lulu - CandC logo; the UI uses a light-grey shell and `#e60013` primary accent. |
-| application/measurement_worker.py | Qt worker/orchestrator. Connects instruments, routes channels, waits for operator cable placement, supports repeated reads, emits readings/progress, and always closes instruments. |
-| measurement_worker.py | Compatibility facade for the application measurement worker. |
-| application/live_controller.py | Shared meter worker lifecycle used by Live IL and the main-window reference calculation. |
-| application/hardware_connection.py | Persistent single-thread hardware ownership, capability proxies, and exclusive workflow leases. |
-| application/part_number_lookup.py | Background part-number lookup with request IDs and categorized failures; it never uses the hardware executor. |
-| domain/hardware_connection.py | Vendor-neutral connection capabilities, readiness snapshots, and ownership errors. |
-| application/power_diagnostics_controller.py | Non-recording raw-power meter worker lifecycle for Power Measurement Diagnostics. |
-| application/hardware_planning.py | Normalizes channel-mode selections before a hardware run starts. |
-| application/run_start.py | Prepares normalized hardware-run plans and controller requests without UI or hardware access. |
-| application/run_preflight.py | Pure role-aware Start Run validation for setup metadata, channel selection, hardware readiness, and reference authorization. |
-| application/run_controller.py | Owns hardware-run worker lifecycle, requests, commands, and terminal cleanup. |
-| hardware/power_meter.py | Application-facing meter adapter. SantecPowerMeter wraps the OP815 driver; SimulatedPowerMeter is deterministic and hardware-free. |
-| power_meter.py | Compatibility facade for the hardware power-meter adapters and PowerMeter contract. |
-| hardware/interfaces.py | Vendor-neutral PowerMeter, LaserSource, and OpticalSwitch protocols. This is the starting boundary for future OPM plus separate laser support. |
-| domain/wavelengths.py | Operator-selected SM/MM OPM/source profiles and legacy classification support. |
-| application/ | Workflow controllers, measurement worker, planning, and transient hardware-run state. |
-| domain/ | Vendor-neutral models, calculations, replacement rules, timing, and reporting. |
-| domain/raw_export.py | Pure Excel-compatible TSV formatting for accepted run measurements; it does not persist data. |
-| domain/run_purpose.py | Stable purpose choices, labels, normalization, and production-analysis policy. |
-| domain/coc_preparation.py | Pure COC source compatibility, merge, completeness, threshold, physical-port, and optimization validation. |
-| application/coc_workflow.py | Discovers persisted unit runs, hydrates report source data, and delegates COC preparation without reading UI widgets. |
-| domain/diagnostic_analysis.py | In-memory diagnostic samples and separate repeatability/stability statistics. |
-| domain/diagnostic_trace.py | Typed in-memory diagnostic hardware trace event model. |
-| application/diagnostic_trace.py | Thread-safe recorder for optional diagnostic trace events. |
-| domain/support_events.py | Typed, allowlisted support-event schema and correlation fields. |
-| application/support_logging.py | Bounded background queue, workflow/operation IDs, exception hooks, and hardware trace fan-out. |
-| infrastructure/support_log_writer.py | Daily JSONL writing, redaction, rotation, compression, retention, and degraded fallback. |
-| infrastructure/support_bundle.py | Explicit date-ranged local ZIP export with manifest and SHA-256 hashes. |
-| ui/support_logs.py | Logging status and support-bundle date-range dialogs. |
-| infrastructure/diagnostic_export.py | Explicit CSV/JSON export for diagnostic history and optional companion OP815 hardware trace; no automatic persistence. |
-| hardware/ | Hardware contracts, factories, simulated adapters, and composed sessions. |
-| infrastructure/ | File repositories, schema migration, run queries, reports, and COC adapters. |
-| infrastructure/run_persistence.py | Atomic CSV/JSON recorder and run filename rules; root `run_persistence.py` is a compatibility facade. |
-| infrastructure/unit_persistence.py | Atomic unit JSON records and numbered-run paths; root `unit_persistence.py` is a compatibility facade. |
-| infrastructure/coc_export.py | COC template lookup, XLSX writing, and drawing preservation; root `coc_export.py` is a compatibility facade. |
-| op815_driver.py | ctypes wrapper around the 32-bit OP815M.dll. Owns DLL discovery, function signatures, device selection, source control, wavelength selection, measurements, and cleanup. |
-| docs/ILM_DLL_FUNCTION_REFERENCE.md | OP815M.dll export inventory, verified hardware observations, approved diagnostic candidates, and prohibited production functions. |
-| hardware/optical_switch.py | Extensible Santec switch identity registry and verified OSX-100/OSX-150 PyVISA/SCPI adapter. |
-| hardware/device_identity.py | Compatibility-safe identity reporting for hardware adapters. |
-| ui/hardware_status.py | Compact Connected hardware status panel presented in the main header. |
-| osx150_driver.py | Compatibility facade for the Santec optical-switch adapter. |
-| ui/red_light_test.py | Separate VFL pre-test dialog. Tools > Red Light Test opens it without connecting; its Start button connects and routes channels without creating readings or run/COC data. |
-| red_light_test.py | Compatibility facade for the Red Light presentation module. |
-| ui/live_il_reading.py | Meter-only Live IL Reading dialog. It connects only to the OP815, calculates both wavelength losses from editable references, supports non-persistent reconnect repeatability testing and timed live updates, and never controls the switch or persists data. |
-| ui/power_measurement_diagnostics.py | Non-recording raw-power diagnostic dialog showing absolute readings and exact IL math, with optional independent switch routing and opt-in trace export. |
-| ui/coc_export_dialog.py | Prepare COC modal for front-panel count, automatic compatible-history aggregation, validation summary, and blocked-export guidance. |
-| ui/database_replacements.py | SQL-aware logical-channel replacement editor with recommendation review, physical-completion confirmation, designated-spare approval, and real append-only audit history. |
-| live_il_reading.py | Compatibility facade for the Live IL presentation module. |
-| config/app_info.py | User-facing Light Workbench name, version, tagline, and About text. |
-| app_info.py | Compatibility facade for application release metadata. |
-| tools/dependency_check.py | Non-destructive prerequisite and connection diagnostics. |
-| tools/release_resources.py | Deterministic SQL migration discovery and source-to-package integrity verification used by release tooling. |
-| dependency_check.py | Compatibility facade for dependency diagnostics. |
-| domain/run_data.py | RunData and over-limit analysis rules; the root `run_data.py` remains a compatibility facade. |
-| infrastructure/csv_run_loader.py | Current and legacy CSV parsing for RunData. |
-| run_persistence.py | Compatibility facade for the infrastructure CSV/JSON persistence implementation. |
-| unit_persistence.py | Compatibility facade for infrastructure unit records, numbered runs, replacements, and spares. |
-| switch_timing.py | Real switch-test session timing; accumulates across continuation sessions and excludes Live IL/Red Light Test. |
-| replacement_analysis.py | Hardware-independent selection of worthwhile replacements and best remaining designated spares, including displaced production ports, plus completed-replacement record validation and metadata formatting. |
-| coc_export.py | Compatibility facade for the infrastructure COC exporter. |
-| ILMReadLoss.py | Older, still functional console workflow. Owns prompts, validation, calculations, legacy CSV naming/output, retests, and legacy replacement-port metadata. |
-| ilm_app.spec | PyInstaller one-folder build for ilm_app.py, including OP815M.dll. |
-| assets/C&C lulu.png | Normal title-bar/taskbar and capped header icon. |
-| assets/C&C lulu white eyes.png | White-eyes icon displayed while Admin Mode is active. |
-| assets/Lulu - C&C-white_square.ico | Windows application and taskbar icon generated from the square logo. |
-| README_INSTALL.txt | Plain-text deployment guide intended to ship beside the packaged executable in the ZIP. |
-| Check Dependencies.cmd | Optional launcher for `LightWorkbench.exe --check-dependencies`. |
-| build_windows.ps1 | Repeatable 32-bit PyInstaller build command. |
-| tests/ | Hardware-free unit tests for the viewer, worker, meter adapters, CSV model, and persistence. |
-
-The normal direction for new desktop behavior is ilm_app.py; keep raw
-instrument protocol code in the hardware adapter modules. Treat ILMReadLoss.py
-as a legacy/console path unless a change explicitly needs to preserve or
-improve it.
-
-## Engineering support logging
-
-Version 1.16.1 initializes an always-on support logger before the main window.
-It writes daily JSONL under `%LOCALAPPDATA%\LightWorkbench\logs`, rolls files at
-25 MB and local midnight, compresses inactive files older than seven days,
-retains them indefinitely, and warns the operator when managed logs exceed
-500 MB. A temporary folder and then a
-bounded memory buffer provide degraded fallback. Producers use a bounded
-non-blocking queue so logging cannot change UI or hardware timing.
-
-The persistent hardware manager, OP815 subscriber trace, OSX switch trace,
-measurement worker, reference/tool workflows, run/unit persistence, COC, raw
-copy, and diagnostic export emit allowlisted events. Power Diagnostics keeps
-its independent in-memory callback while the global subscriber remains active.
-`Help > Support Logs` exposes folder, path, status, and explicit support-bundle
-actions. See `docs/SUPPORT_LOGGING.md` for schema, redaction, privacy, and
-limitations. These editable local files are support evidence, not the future
-immutable FUN-048 audit history.
-
-## Architecture refactor status
-
-The incremental refactor has progressed without changing the current
-operator workflow. `hardware/interfaces.py` now defines the application-facing
-contracts for a power meter, separate laser source, and optical switch. The
-existing OP815 meter and OSX-100/OSX-150 switch profiles continue to use the
-same command and timing behavior.
-Their application-facing adapters now live in `hardware/power_meter.py` and
-`hardware/optical_switch.py`; the root modules remain compatibility facades so
-existing imports remain compatible.
-`HardwareFactory` imports those concrete adapters lazily, keeping contract-only
-imports and hardware-free tests independent of active VISA or DLL sessions.
-The contracts are covered by hardware-free tests in
-`tests/test_hardware_interfaces.py`.
-
-The lifecycle, domain, repository, hardware-composition, reporting, and
-release-tooling refactors are now in progress through incremental phases.
-Review `docs/REFACTOR_ROADMAP.md` and `docs/PROJECT_LAYOUT.md` before starting
-the next extraction. Do not move or rename compatibility modules without
-regression tests and a documented migration path.
-
-## Runtime and hardware requirements
-
-- Windows.
-- 32-bit Python 3.11. The vendor DLL is 32-bit and cannot be loaded by a
-  64-bit Python process.
-- PyQt5==5.15.11, PyVISA==1.16.2, and PyInstaller==6.22.2 from
-  requirements-win32.txt, plus openpyxl==3.1.5 for XLSX COC export.
-- OP815M.dll beside op815_driver.py for source runs, or beside the built
-  executable in the PyInstaller distribution.
-- The ILM/OP815 USB driver and a VISA implementation such as NI-VISA for the
-  supported OSX-100/OSX-150.
-- The approved OptoTest OP-USB driver package is available at
-  `https://santec-inst.files.svdcdn.com/production/USB-Driver-for-Santec-CA-Optotest.zip?dm=1768835182`.
-- Santec Terminal must release the Santec OSX VISA resource before this program
-  connects.
-
-In the inspected environment, python resolved to
-C:\Users\Austin\AppData\Local\Programs\Python\Python311-32\python.exe
-and reported Python 3.11.9. The py -3.11-32 launcher form reported “No
-installed Python found,” so use the working 32-bit interpreter directly until
-the Python launcher registration is repaired.
-
-Useful commands from the project directory:
-
-    python -m pip install -r requirements-win32.txt
-    python -m unittest discover -s tests -v
-    python -m compileall -q -f .
-    python ILMReadLoss.py
-    python ilm_app.py
-    python -m PyInstaller --noconfirm --clean ilm_app.spec
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\verify_release.ps1
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\smoke_test_release.ps1
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\package_release.ps1
-
-The last two application commands can connect to or move real hardware. Use
-the GUI's explicit hardware confirmation and begin with one channel or a
-short range.
-
-## Desktop application workflow
-
-1. Start ilm_app.py or LightWorkbench.exe.
-2. Configure full configured pass, one channel, or specific channels/ranges.
-   The GUI parser accepts entries such as 1, 9, 10-15, 27, removes duplicate
-   channels while preserving first-entered order, and rejects malformed or
-   non-positive values.
-3. Enter the required main-board serial, unrestricted full switch serial, part
-   number, operating band, operator initials, and the numbered run. First use the
-   header `Connect Hardware...`
-   menu; references default to 0.00 dBm until calculated or entered. The
-   The Reference panel is beside Hardware Controls below Current readings
-   because the value belongs to the connected measurement session, not the
-   loaded run. Hardware Test Setup can be collapsed without clearing its
-   fields. `Calculate Reference` is
-   enabled when measurement hardware is connected; it borrows that connection,
-   reads both wavelengths with a zero software reference, releases its lease, and applies the
-   resulting two-decimal offsets back to the Reference panel without opening the Live IL
-   window. Reference calibration uses a dedicated stabilized timing profile
-   and does not slow normal production measurements.
-   When a supported OSX connects and no run is loaded or active, the serial
-   already returned by `*IDN?` fills Main board serial and starts a background
-   part-number lookup. Lookup failure leaves the hardware connected and allows
-   manual entry; Switch serial is not changed.
-4. Calculate the authorized reference, then choose `Start Run`. The preflight
-   validates all setup fields, channel selection, connected hardware, and
-   reference authorization before the confirmation dialog. Normal operators
-   cannot bypass an unresolved item. Admin Mode can explicitly continue without
-   descriptive metadata, but cannot bypass hardware or reference safeguards.
-5. The worker leases the already-connected supported switch and OP815, reports
-   their identity and lifecycle state, routes a logical channel, and
-   emits operator_required(channel, physical_port).
-6. The operator moves the cable and chooses Read IL Values. The worker
-   measures both wavelengths and emits reading_ready(channel, physical_port,
-   loss_1310, loss_1550).
-7. The operator can read again or choose Write IL Values. The accepted value
-    replaces any existing row for that channel and is saved immediately.
-    `RunRecorder` defers creating the run folder and output files until the
-    first accepted measurement, so a zero-written run leaves no empty artifact.
-    `Change Channel...` can replace the current uncommitted step without
-    disconnecting the instruments. Manual-order runs reopen the channel picker;
-    ordered full passes ask whether to continue sequentially from the selected
-    channel or resume the interrupted channel. Existing saved data is preserved
-    until a replacement is written.
-7. `Tools > Live Write Mode` is an optional hardware-run workflow. After the
-    worker routes each channel, it automatically emits complete IL readings
-    after a 250 ms software pacing delay; the operator moves the cable to the
-    shown channel while the values update. The UI keeps the newest value pending
-    until `Write IL` is pressed; only then is it committed and the worker advances.
-    The mode has a red `LIVE` indicator, is disabled while a run is active, and
-    defaults on each application session.
-8. On completion or stop, the workflow releases its leases and healthy
-   instruments remain connected. A failed device is closed and marked Error. Rows
-   accepted before interruption remain persisted.
-8a. A new automatic full pass uses the part-number-derived front-panel count,
-not a larger temporary `CFG:SWT:END?` value, as its required logical plan. Once
-all required readings are written, the worker offers one safe-default Finish
-Run choice or an optional Test Extra Ports phase. The extra phase starts at
-`front_panel_count + 1` and routes through TCP/2323 with the fixed command
-`b0 writereg mems.ch <port>\r\n`. Each candidate remains provisional until Write IL;
-Retry, No More Physical Ports, Stop Extra Testing, invalid readings, and route
-failures create no database measurement. No More records an operator-reported
-endpoint, while Stop makes no capacity inference. Accepted extras remain
-replacement-analysis candidates and never become direct COC rows. The default
-administrator safety ceiling is 64.
-The `Extra channels only` channel mode starts that supplemental phase directly
-in an independent database run, without requiring front-panel readings in the
-same run. It can continue a stopped/incomplete extra-only run using its saved
-routing method; it cannot turn a front-panel run into an extra-only continuation,
-and it is blocked for OSX-100. Its stable hardware metadata value is
-`extra_channels_only`, and its result status is supplemental rather than a
-standalone COC result.
-9. Existing CSVs can be opened for analysis. The table highlights either
-wavelength over the warning limit and Select Over-Limit selects rows for
-retest.
-10. `Analyze Replacements` uses the three-digit front-panel channel count
-derived from the active run's OSX part number. Measured rows whose channel is
-above that count are extra physical-port candidates. It
-selects worthwhile replacements, adds displaced production ports back into the
-spare pool, then ranks the best remaining readings as designated spares. The
-spares do not need to be within the warning limit because they are emergency-
-use backups. Recommendations for current channels over the warning limit are
-classified as required; improvements to channels already within the limit are
-classified as optional. The result is stored on `RunData` and displayed on
-screen only; it is not stored as permanent run data. A run with no extra
-measured rows reports the analysis as not applicable. `Manage Port
-Replacements...` documents physical swaps completed outside the application
-using Current Port, Replacement Port, reason, operator, and timestamp.
-Append-only history preserves repeated chains such as `14 -> 41 -> 43`, while
-the effective projection remains compatible with COC and replacement analysis.
-The workflow does not change, identify, or verify switch mappings and does not
-use `CLOSe?`; older two-field records remain loadable.
-`Copy Replacement Notes` copies the completed Current Port -> Replacement Port
-pairs in a plain-text format for the Unit Editor notes.
-`Copy Raw Data...` copies accepted measurements from the active run as
-headerless tab-separated logical-channel, 1310 nm IL, and 1550 nm IL values
-for direct pasting into an existing Excel table. It ignores the table filter,
-excludes pending/live readings and metadata, and does not create or modify run
-files.
-11. COC export uses a validated preparation workflow over persisted run data.
-The selected context run's OSX part number supplies the read-only front-panel
-channel count; all compatible persisted runs are evaluated automatically. The
-newest valid complete pair for each logical channel is used, and a retest
-replaces an older value only when any changed physical port is
-supported by a completed unit replacement record. Every required channel must
-be present, finite, nonnegative, and below the selected model's fail limit after
-display rounding; there is no incomplete or failing override. OSX-100 uses a
-0.8000 dB fail limit and no optimization-warning band. OSX-150 uses a 2.5000
-dB fail limit and a 2.25 dB optimization warning, only when a viable measured
-spare recommendation exists. `infrastructure/coc_export.py` selects the bundled model/mode-specific 45- or
-48-channel XLSX template, writes the `OSX Template` sheet's split rows and
-metadata, deletes unused report rows in the output copy, repairs merged ranges,
-and updates the print area. It uses `openpyxl`, so Excel is not required. The
-default part lookup is
-`U:\Product Log\Units-COCs-Param Files\OSX-150`. `File > Part Number Lookup
-Folder` opens that fixed location in Windows File Explorer; it is not editable
-from the application.
-COC preparation is never offered automatically after a run completes, is
-stopped, fails, or is cleaned up. The operator must explicitly click the
-Hardware Controls Write COC... button or select File > Write COC...; saved
-readings remain available for that later export.
-
-13. `Tools > Red Light Test...` opens a non-recording VFL pre-test dialog. The
-menu item only opens the dialog; `Start Red Light Test` performs the connection
-and selects channel 1. The operator can type a channel number, use the Up/Down
-keys, or use Previous/Next. The dialog displays the selected logical channel,
-configured total, and physical port, and releases its shared switch lease when stopped or closed.
-
-14. `Tools > Live IL Reading...` opens a meter-only dialog. It does not connect
-to the OSX-150. `Start Meter` borrows or connects the OP815, `Read IL` can be pressed
-repeatedly, and `Calculate Reference` derives both shared reference offsets
-from a zero-reference meter reading. Manual reference edits stay synchronized
-with the main setup. It never creates run files, changes the table, or writes
-COC data. `Start Live Updates` automatically refreshes both values sequentially
-with a 250 ms pause between completed readings; `Stop Live Updates` ends the
-refresh cycle and hides its red indicator. `Repeatability Test` opens a
-right-side in-memory table for an
-initial reading followed by any number of manually triggered readings after
-unplugging and reconnecting the cable. It reports high, low, and range for
-each wavelength, without saving the results.
-
-The worker runs in a QThread, but its actual wait/measurement loop is based on
-threading events. continue_current() releases the cable-placement wait;
-read_current() asks for another sample; write_current() accepts the current
-sample; stop() releases waits and causes the run to stop at the next safe
-check.
-
-## Legacy console workflow
-
-ILMReadLoss.py prompts for a full pass, one channel, or custom channels and
-ranges. It connects the switch first so it can query CFG:SWT:END? and validate
-the configured logical-channel range. It then collects metadata and reference
-powers, prompts for cable movement, prints both losses, and accepts Enter or
-rejects with - for a same-channel retest. A final optional retest pass can
-replace previously accepted rows.
-
-The legacy path tracks logical-to-physical replacements in the Swapped ports
-metadata row and writes that metadata immediately when a mapping is detected.
-It handles Ctrl+C and preserves accepted rows in its partial CSV.
-
-## Instrument behavior that must not be guessed
-
-### OP815 / ILM
-
-op815_driver.py binds the vendor functions with ctypes, checks process bitness
-before loading the DLL, discovers devices described as OP815, and prompts for
-an index if multiple devices are present. DLL source IDs are zero-based:
-
-Read `docs/ILM_DLL_FUNCTION_REFERENCE.md` before adding a DLL binding. The
-application deliberately does not use the DLL's internal reference/loss
-functions, source-power/gain controls, unvalidated module-selection functions,
-or OP831/OP925-specific measurement functions in the normal IL workflow.
-
-    source 0 -> 1310 nm
-    source 1 -> 1550 nm
-
-Profile-aware application validation passes the active operator-selected OPM
-pair explicitly. This is required for MM readings (850/1300); no new record is
-classified by comparing the selected mode with a detected hardware profile.
-
-measure_both_wavelengths() remembers the detector wavelength, turns sources
-off, measures the selected pair in order (1310/1550 for SM or 850/1300 for MM),
-turns each source off in a finally block, and restores the original detector
-wavelength. Current settling constants are 0.1 s wavelength, 0.5 s source-on,
-and 0.1 s source-off. Do not change source IDs, DLL signatures, or timing
-assumptions without a hardware validation plan.
-The actual wavelength returned by `GetWavelength` is safety-critical. A correct
-actual wavelength is not rejected solely because the DLL's index/count
-convention differs from the assumed zero-based mapping; diagnostics retain that
-discrepancy as a trace warning with the raw values. A wrong or unsupported
-actual wavelength still blocks `ReadPower`.
-
-### Santec OSX-100 / OSX-150
-
-`hardware/optical_switch.py` tries the operator's manual address, a separately
-remembered automatic address, then a targeted `USB?*::INSTR` enumeration
-filtered by Santec VID 0x2428 and either OSX-100 PID 0xD003 or OSX-150 PID
-0xD00D. The VISA fields are parsed individually, so a serial number cannot
-create a false product-ID match. Each candidate gets a fresh LF and,
-if needed, CRLF `*IDN?` probe. A supported identity is followed by channel-count
-validation; zero or invalid channel counts retain detailed transient diagnostic
-information but block routing and close the session safely. It uses:
-
-- CFG:SWT:END? for the configured logical-channel count;
-- CLOSe <logical channel> to route a test channel;
-- CLOSe? to confirm the active logical channel after routing.
-
-OSX-150 extra-channel routing is administrator-selected and fixed for the run.
-The default `scpi_mapped` path offers the finite configured range above the
-part-number-derived front-panel count and routes it with the same verified
-`CLOSe`/logical-`CLOSe?` behavior. The requested configured extra channel is
-the physical candidate identity; the query is not physical readback. Operators
-must temporarily add those mappings to the
-module configuration outside Light Workbench; the application never edits the
-map. A configured count below the front-panel count blocks a full pass.
-
-The optional `cli_direct` engineering path is deliberately separate and marked
-experimental. It queries
-the connected switch IP over VISA, opens only that address on raw TCP port 2323,
-and sends `b0 writereg mems.ch <physical port>\r\n` using raw TCP, not Telnet. It does
-not use `CLOSe?`, alter permanent mapping, scan the network, or accept arbitrary
-CLI input. The initial response timeout is separate from a short post-byte idle
-timeout, so binary frames such as `03 00 00 04` are captured instead of being
-misclassified as timeouts. Responses are bounded and classified as verified,
-acknowledged, unverified, or failed; unverified routing requires explicit operator
-confirmation and failed routing cannot be accepted. The current timeout,
-framing, acknowledgement patterns, and absence of a default readback command
-still require physical firmware validation.
-
-No automatic fallback mixes SCPI and CLI methods. The run's
-`measurement_hardware_json` records the method and known channel counts, while
-support events retain route commands, outcomes, returned ports, and failures.
-Both paths feed the same accepted-reading and replacement-analysis workflows;
-extra rows remain excluded from required front-panel COC rows.
-
-`CLOSe?` must not be used as a connection probe. It is valid only after
-`CLOSe <logical channel>` has routed a channel.
-
-Both explicit `OSX-100`/`OSX-150` identities are supported. Older OSX-100
-firmware may report `SANTEC,OSX,<serial>,<firmware>`; when the identity is
-complete, this is resolved to OSX-100 with a visible legacy-generic warning.
-The raw identity, resolved model, detection method, serial, firmware, VISA
-address, discovery method, SCPI line ending, and configured channel count are
-retained in transient status and support traces. Unsupported or malformed
-identities are rejected before any channel command is sent.
-
-Normal VISA failures during switch communication are classified by
-`hardware/visa_errors.py` before reaching the workflow UI. The classification
-preserves the VISA status name/code, failed operation and command, and a
-confirmed/suspected/unknown disconnection assessment. A generic
-`VI_ERROR_SYSTEM_ERROR` therefore tells the operator that disconnection is
-possible rather than asserting it. The connection manager still marks the
-switch as Error and requires an explicit reconnect; it never resumes a failed
-route automatically.
-
-The switch applies its own replacement mapping. Python requests and confirms
-the logical test channel, while the assignment's effective map supplies the
-documented physical port persisted with the reading. `CLOSe?` must never be
-used to infer replacement mapping.
-
-## Output formats and locations
-
-There are currently two persistence implementations.
-
-### Legacy CSV (ILMReadLoss.py)
-
-The default root is project-local IL-Reads\. Folder and CSV names include
-serials and a local MM-DD_HH-MM timestamp, with a numeric suffix on a folder
-collision. The CSV has measurement columns A-C, a blank D separator, and
-metadata in E-F:
-
-    channel,1310 IL,1550 IL,,Metadata,Value
-    1,2.2290,1.4990,,Main board serial,MB123
-    2,2.1840,1.4720,,Switch serial,12345678901
-    ,,,,Swapped ports,2->49
-    ,,,,Operating band,O band
-
-### Modern desktop CSV/JSON (`infrastructure/run_persistence.py`)
-
-RunRecorder defaults to `Documents\ILM-Reads`. New hardware runs are grouped
-under `Unit-[main board serial]\Run-N-[switch serial]\`, with a same-named CSV
-and JSON file in each numbered run folder. The unit folder also contains
-`unit.json`, which stores main-board/part identity, append-only replacement
-history, its effective completed-replacement projection, designated spares,
-and the index of available runs. Switch serial, operating band, and tested-by
-initials are run-specific. Legacy timestamped runs and
-older unsuffixed `Run-N` folders remain supported and can still be opened
-directly.
-
-`Load Run` prefers the validated directory of the currently loaded numbered
-run. This keeps navigation working for nested or renamed sample-unit folders.
-Main-board serial is the authoritative unit identity; part number is only a
-fallback when both persisted and current serials are absent, and switch serial
-is deliberately ignored because a switch can be replaced. If the loaded
-context cannot be validated, the canonical unit folder is used and a missing
-run message reports the exact searched folder and available runs.
-
-Both run files and unit records are written through temporary files and
-`os.replace()` so an accepted row is not lost to a partial write. Real switch
-runs add readable timing metadata for first start, latest stop, continuation
-times, session count, and accumulated duration; Live IL and Red Light Test do
-not affect these fields. The CSV remains compatible with `load_run_csv`, and
-the JSON stores the warning limit, metadata, current measurements, physical
-ports, and timing sessions. Calculated replacement recommendations are
-intentionally not persisted. Run JSON schema version 6 also stores an
-append-only `measurement_attempts` history for every accepted Write IL result;
-the CSV and current-reading projection continue to show only the latest value
-per channel. `View Reading History...` in Run information displays current and
-superseded attempts. Temporary, rejected, and diagnostic readings remain
-outside this authoritative run history.
-
-`domain/run_status.py` provides the derived completion/result assessment shown
-beside the table comparison control. Completion uses the saved channel plan;
-result quality uses the existing limit, replacement, and validated COC
-preparation rules. JSON adds an additive `run_status` object for the future
-database `completion_status` field. Legacy runs with no reconstructable plan
-remain loadable and show unknown completion rather than an unsafe guess.
-
-The difference between project-local legacy output and Documents-based desktop
-output is intentional in the current code but should be resolved or clearly
-versioned before broad deployment.
-
-Replacement analysis is calculated from the selected run and displayed in the
-UI only. Manually completed replacements and designated spare ports are stored
-in the shared `unit.json`, so they carry across numbered runs without changing
-the measurement table. Replacement history is append-only and does not use
-`CLOSe?`, send mapping commands, or verify the external hardware change. The
-CSV measurement rows retain their first three columns so they stay compatible
-with Excel. New desktop CSVs add a run-local `Reference used` key and one
-reference catalog containing each complete immutable reference once; legacy
-per-row reference columns remain loadable.
-
-The UI table has an optional `Compare with` selector populated from the active
-unit's numbered-run index. Selecting a previous run adds two read-only columns
-for that run's 1310 nm and 1550 nm values, matched by logical channel. Selecting
-`No comparison` removes them. Comparison data is never included in the active
-run's analysis, filtering, or saved output.
-
-COC export metadata includes `Part number`, `COC output file`, `COC output
-path`, `COC exported at`, `COC template`, front-panel channel count, context
-run number, all contributing source runs, and retest/replacement channel and
-physical-port overrides. The current XLSX mapping is
-`OSX Template!D11:D55` and `E11:E55` for channels 1-45,
-`D67:D69` and `E67:E69` for channels 46-48, `B4` for the merged part-number
-cell, `D4` for the merged Main Board serial cell, `F4` for the date, and `G4`
-for the Tested by initials. COC filenames use the local-time pattern
-`COC <OSX-100 or OSX-150> <Main Board serial>_YYMMDD-HHMMSS.xlsx`, with a
-numeric suffix when a same-second export collides. OSX-100 SM and MM use
-their matching templates; OSX-150 MM remains unsupported for COC export.
-
-## Known issues and inconsistencies
-
-These are observations from source inspection, not assumed fixes:
-
-1. The documented simulation UI is disconnected. SimulatedPowerMeter and
-   start_demo(), measure_demo(), and related methods remain in ilm_app.py, but
-   _build_ui() creates no demo_channel_count, measure_demo_button, or
-   accept_demo_button, and no UI action calls start_demo(). Calling the stale
-   method would hit undefined widget attributes. Either wire simulation back
-   into the GUI and test it, or remove the dead workflow and update the README.
-   Keep SimulatedPowerMeter if it remains useful for worker/UI tests.
-
-2. Modern desktop runs preserve the physical port in `run.json` and use it for
-   replacement analysis, but the CSV measurement table intentionally remains
-   logical-channel-only. If a human-readable mapping of every observed logical
-   channel is needed in CSV metadata, add it without changing the CSV's first
-   three measurement columns.
-
-3. The README describes one unified output convention, but the code has two.
-   ILMReadLoss.py uses serial/timestamp names in project-local IL-Reads, while
-   RunRecorder uses generic output.csv/run.json in a Documents folder.
-   run_data.py can read both layouts, but users and future tooling need an
-   explicit compatibility policy.
-
-4. The build log reports a non-fatal missing hidden import warning for `sip`.
-   PyInstaller nevertheless completes successfully; validate the packaged
-   executable on a clean 32-bit Windows machine.
-
-5. No hardware integration tests are present. Unit tests use fakes and do not
-   validate actual DLL return codes, VISA resource discovery, SCPI syntax,
-   optical settling, replacement mappings, or cleanup on a real device.
-   Hardware tests should be opt-in, visibly destructive, and never part of the
-   normal unit-test command.
-
-6. COC export has hardware-free XLSX tests and a real-template round-trip
-smoke check, but its final printed appearance should still be reviewed once
-on the target printer. The network U: lookup path is environment-dependent;
-the application provides a configurable folder and manual part-number fallback.
-
-## Validation status at handoff
-
-Completed in the inspected environment:
-
-- python -m unittest discover -s tests: 342 tests passed, including support-log
-  rotation, retention, redaction, fallback, trace fan-out, support bundles,
-  hardware connection safety, persistence, COC preparation/merge validation,
-  XLSX row trimming, and UI coverage.
-- python -m compileall -q -f .: passed.
-- py -3.11-32 -m unittest discover -v: could not start because the Python
-  launcher did not recognize the installed interpreter, despite the direct
-  python command being the required 32-bit Python 3.11.9.
-- PyInstaller rebuilt successfully after confirming LightWorkbench.exe was
-  not running. The current one-folder output is
-  dist\LightWorkbench\LightWorkbench.exe; PyInstaller 6 places bundled
-  support files, including OP815M.dll, under its `_internal` subfolder.
-
-## Recommended contribution order
-
-1. Add a focused test and fix persistence for retesting an opened run.
-2. Choose a supported simulation story: wire the existing deterministic demo
-   controls, or remove stale demo methods/documentation.
-3. Unify or explicitly document output roots and schema versions.
-4. Add GUI/worker tests for swap metadata, failed hardware startup, pending
-   readings, stop behavior, and partial-run persistence.
-5. Rebuild after closing any executable, then perform a one-channel physical
-   validation of both instruments and cleanup behavior.
-
-When changing hardware code, preserve the driver/application boundary, record
-units in names and output headers, and prefer fakes for all automated tests.
-Before any operation that can move the switch or enable an optical source,
-confirm whether the path is simulated or real hardware.
+| ILM/switch/firmware | Representative OSX-100/150 discovery, logical routing/mismatch handling, SCPI versus CLI extras, binary/unknown/error responses, unverified-route confirmation, IP recheck, return to normal routing, source-off cleanup, and stop/close/reconnect behavior. |
+| Timing and references | One-, two-, and three-sample schedules, actual offsets/raw samples/mean, shared reference and Live IL behavior, saved-profile continuation/retest, manual SM/MM selection, dark/negative-reading gates, local/remote transitions, and disconnect invalidation. |
+| Writes and iterative replacement | Rapid Live Write acceptance and channel advancement, retry after a failed commit, saved coverage, assignment isolation, replacement retest state, analysis reload/staleness/adoption history, and multi-run COC consistency using an actual run. |
+| SQL network/deployment | Correct live schema, both approved authentication modes on target stations, permissions, concurrent creation/writes, cold-start/outage recovery, and measured remote load timings. DATABASE_ROADMAP records historical local integration backup/restore/`DBCC CHECKDB` success; it is not a current deployment result. Production backup/restore, retention, and stale-run recovery remain to qualify. |
+| Packaging/target environment | Supported Windows/32-bit runtime, installed x86 VISA/ODBC/Visual C++ dependencies, packaged migration integrity, no private stale runtime DLLs, responsive startup/health indicator, and clean close. Follow the release verifier and packaged smoke test; no rebuild was requested here. |
+| COC workbook and print | OSX-100 SM/MM and OSX-150 SM, 1-45/46-48 capacities, replacement/composite provenance, graphics, merges, print area, and actual target-printer appearance. Check the environment-dependent part lookup/manual fallback. Workbook round-trip coverage is not printer qualification. |
+| Operator presentation | Clear Workspace retaining hardware/reference, light/dark dialogs, and layouts on target monitors/DPI. Follow the applicable workflow checks rather than treating source/UI test inspection as operator acceptance. |
+
+## Recent Implementation Records
+
+Entries identify implementation and coverage, not fresh test runs.
+Unless explicitly stated, verification here was source/test inspection only;
+application tests, SQL connections, builds, hardware, and printer checks were
+not performed during Phase 2.
+
+| Date / revision | Change and verification boundary |
+| --- | --- |
+| 2026-11-03 / `11a0068` | **Implemented:** governance Phase 1 added AGENTS.md and updated docs/README.md. Guidance and links inspected during this review; application behavior was outside its scope. |
+| 2026-11-02 / `de87dda` | **Implemented; Manual Verification Pending:** scheduled 1-3 power samples and arithmetic mean, timing configuration, raw trace evidence, and saved-profile use. Coverage exists in [timing tests](tests/test_measurement_timing.py), [OP815 tests](tests/test_op815_driver.py), and [UI tests](tests/test_ilm_app.py); not rerun here. |
+| 2026-11-02 / `4c80fac` | **Implemented; Manual Verification Pending:** CLI unassigned-IP warning/recheck and OSX-150 CLI default. [Worker tests](tests/test_measurement_worker.py) and [settings tests](tests/test_limit_profile_repository.py) cover seams; actual firmware/network behavior still needs qualification. |
+| 2026-10-30 / `509b811`, `983481f` | **Implemented; Manual Verification Pending:** background database health/Clear Workspace and ILM remote/local control, respectively. See [health tests](tests/test_database_health_monitor.py) and [hardware-manager tests](tests/test_hardware_connection.py); target startup and device transitions not retested here. |
+| 2026-10-30 / `9d7f527` | **Implemented:** load-stage instrumentation, bounded read sessions/bulk retrieval, immutable loaded context, and query-free automatic UI publication. [Load tests](tests/test_database_primary_workflow.py) and [UI load tests](tests/test_database_primary_ui.py) exist; historical benchmark evidence is scoped below. No universal speedup or cold-start reliability claim is inferred. |
+| 2026-10-29/30 / `34ed981`, `87b6b41` | **Implemented; Manual Verification Pending:** explicit SQL-password runtime authentication, then packaging exclusion/rejection of private Visual C++ runtimes. See [connection tests](tests/test_database_connection.py), [build script](build_windows.ps1), [release verifier](verify_release.ps1), and TESTING_AND_RELEASE. |
+| 2026-10-28/29 / `18737d1`, `616e84c`, `e0fe5f6` | **Implemented; Manual Verification Pending:** assignment-wide iterative analysis/voiding, authoritative channel roles, and logical-only `CLOSe?` contract. Migrations 0005/0006, [analysis tests](tests/test_effective_replacement_analysis.py), and [switch tests](tests/test_optical_switch.py) support source inspection; representative hardware acceptance remains pending. |
+
+Historical evidence retained with its limits:
+
+- **Reported Automated Verified, historical:** `c985f34` (2026-10-06) introduced
+  the old handoff's `python -m unittest discover -s tests`: **342 tests passed**
+  statement. That handoff also reported `python -m compileall -q -f .` passed
+  and a successful PyInstaller build. These are inherited reports, not raw
+  execution logs or current-baseline results; the old header's 2026-10-13 review
+  date does not make the count current.
+  The old handoff also reports a real-template COC round-trip smoke check;
+  target-printer review remained pending, and no execution artifact is linked.
+- **Unverified historical audit report:** **748 passing tests and 10 skips**
+  was supplied as previous-audit context. No supporting result or introducing
+  change was found in the searched repository Markdown/text/log records or their
+  Git history. Do not cite it as current verification or infer why tests skipped;
+  rerun the appropriate suite when verification is requested.
+- **Historical benchmark observation:** the artifacts committed in `9d7f527`,
+  [baseline](build/database-run-load-baseline-99190-run1.json) and
+  [Phase 2](build/database-run-load-phase2-99190-run1.json), report 20 connections/
+  19 transactions versus 1/1 per load for unit 99190, run 1. Their workflow
+  durations are source-tree samples, not packaged remote-station UI latency.
+  Preserve these as historical evidence; use the documented benchmark and
+  station logs for new comparisons.
+- **Reported Manually Verified, limited historical scope:** the DLL reference
+  records one OP815-described device (USB serial 00016582, firmware 202) returning
+  diagnostics and closing cleanly, with the module-ID ambiguity in LWB-HW-001.
+  No date/revision-bound qualification of the present feature set follows.
+- **Superseded:** desktop CSV/JSON as the new-run write path, session-only database
+  analysis, the eight-table/two-view schema summary, SCPI as the new-settings
+  default, a configurable 64-port probe ceiling, and the unfinished-refactor
+  narrative. Current source uses SQL-primary persistence, ten tables/four views,
+  persisted analyses, a CLI default, and a fixed internal 512 guard. The guard
+  is not installed capacity. Legacy format details remain in DATA_ARCHITECTURE.
+
+Phase 2 implementation record (2026-11-03, uncommitted against `11a0068`):
+
+- **Implemented:** replaced the mixed-age handoff with these six sections,
+  source-backed baseline, stable unresolved-item IDs, verification boundaries,
+  compact implementation history, and the reusable template below.
+- **Verification:** all 55 local Markdown links resolve, including the two
+  section anchors; the six required sections and template fences were checked.
+  Claims were reviewed against source/migrations/Git; `git diff --check` passed
+  and Git status confirmed only this file changed. Application tests were not
+  run for this documentation-only task; no runtime acceptance is claimed.
+- **Remaining:** unresolved items/manual checks above. Phase 3 was not started.
+
+## Handoff Record Template
+
+Use this compact format for meaningful future tasks; link to owning documents
+instead of repeating architecture. Update existing issue IDs when applicable.
+
+```text
+Date / task / approval basis:
+Source revision / branch / application version:
+Status: Implemented | Automated Verified | Manual Verification Pending |
+        Manually Verified | Blocked | Superseded (combine when appropriate)
+Change and affected files:
+Evidence: exact commands/results, failures/skips, environment, artifact links;
+          distinguish source inspection, execution, and inference.
+Manual checks: performed (scope/result) / pending / not applicable, with reason.
+Issues/decisions: stable IDs, observed versus expected, unresolved assumptions.
+Remaining work / dependency / next authorized action:
+Commit: hash if committed; otherwise uncommitted.
+```
