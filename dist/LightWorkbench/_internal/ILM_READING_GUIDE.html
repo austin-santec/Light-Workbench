@@ -278,6 +278,7 @@
 
     <h2>8. Optional extra physical-port testing</h2>
     <p>After a successful automatic full pass covers every required front-panel channel, Light Workbench asks whether to finish or test additional physical ports through the switch's engineering interface. This applies to both a new full pass and a continued full pass that completes its remaining front-panel channels.</p>
+    <p>For OSX-150, <strong>CLI tunneling</strong> is the Admin Config default for extra physical ports. An administrator may select <strong>SCPI mapped channels</strong> when those extras are registered in the switch module map. The selected method is saved with the run and does not change during continuation.</p>
     <ol class="steps">
       <li>Choose <strong>Finish Run</strong> unless extra spare-port measurements are intentionally required.</li>
       <li>If you choose <strong>Test Extra Ports</strong>, the program begins at front-panel count + 1 and routes each candidate sequentially using the fixed engineering command. When continuing a run, previously accepted extra-port readings are skipped and testing resumes at the first missing candidate.</li>
@@ -334,6 +335,7 @@
       <li><strong>Load a database run later.</strong> Enter the unit's Main board serial and Run number, then use <strong>Load Run</strong>. Database Reports provides broader read-only searches across assignments, runs, measurements/retests, and replacements.</li>
       <li><strong>Review attempt history.</strong> Use <strong>View Reading History...</strong> to see the original accepted reading and every accepted retest for the loaded database run.</li>
       <li><strong>Open legacy data when needed.</strong> <strong>Open Existing CSV</strong> and <strong>File &gt; Open CSV Run...</strong> load older file-backed data for review and export. A legacy CSV is not converted into a writable database run.</li>
+      <li><strong>Clear the workspace between units when needed.</strong> <strong>File &gt; Clear Workspace...</strong> unloads the displayed run and resets setup fields, readings, analysis, comparison, and table content. It does not delete saved SQL/CSV data, disconnect hardware, change wavelength mode, or invalidate the current session reference. Finish any active acquisition, reference calculation, or database write first.</li>
       <li><strong>Copy values when needed.</strong> <span class="button">Copy Raw Data...</span> copies accepted channel/wavelength values as tab-separated text. It ignores the current table filter and does not create or modify run data.</li>
     </ol>
 

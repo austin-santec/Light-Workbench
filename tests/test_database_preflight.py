@@ -128,6 +128,31 @@ class DatabasePreflightTests(unittest.TestCase):
         self.assertNotIn("connection_string", fields)
         self.assertEqual(fields["status"], "ready")
 
+    def test_quiet_health_preflight_does_not_emit_standard_preflight_event(self):
+        migrations = discover_migrations()
+        connection = _Connection(
+            [
+                AppliedMigration(item.migration_id, item.name, item.checksum)
+                for item in migrations
+            ]
+        )
+        logger = _Logger()
+
+        class FactoryType:
+            def __init__(self, _settings):
+                self.settings = _settings
+
+            def connection(self):
+                return _Factory(connection).connection()
+
+        result = DatabaseDiagnosticsService(logger, FactoryType).check(
+            DatabaseSettings(enabled=True),
+            record_event=False,
+        )
+
+        self.assertTrue(result.ready)
+        self.assertEqual(logger.records, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,6 +28,7 @@ from domain.extra_ports import (
     ExtraChannelRoutingMethod,
     ExtraPortPhaseStatus,
     PhysicalPortRouteStatus,
+    UNASSIGNED_SWITCH_IP,
 )
 from domain.wavelengths import (
     MeasurementConfiguration,
@@ -1071,6 +1072,18 @@ class MeasurementWorker(QObject):
     def _offer_extra_phase(self, configured_count=None):
         """Ask once whether the selected extra-channel strategy should run."""
         count = self.front_panel_channel_count
+        if self.extra_channel_routing_method is ExtraChannelRoutingMethod.CLI_DIRECT:
+            if not self._ensure_cli_ip_ready(extra_only=False):
+                self._set_extra_phase(ExtraPortPhaseStatus.DECLINED, count)
+                self._record(
+                    SupportEventCategory.WORKFLOW,
+                    "extra_ports.phase_completed",
+                    phase_status=ExtraPortPhaseStatus.DECLINED.value,
+                    routing_method=self.extra_channel_routing_method.value,
+                    reason="cli_ip_not_ready",
+                    status="completed",
+                )
+                return False
         self._set_extra_phase(ExtraPortPhaseStatus.OFFERED, count)
         details = {
             "routing_method": self.extra_channel_routing_method.value,
@@ -1115,6 +1128,10 @@ class MeasurementWorker(QObject):
                 offer_phase=False,
             )
         else:
+            if not self._ensure_cli_ip_ready(extra_only=True):
+                if self._extra_phase_outcome == "stopped":
+                    raise InterruptedError()
+                return
             self._offer_and_run_cli_extra_ports(
                 self.existing_extra_physical_ports,
                 offer_phase=False,
@@ -1123,6 +1140,71 @@ class MeasurementWorker(QObject):
             raise InterruptedError()
         if self._extra_phase_outcome == "failed":
             raise RuntimeError("Extra-channel testing failed before completion.")
+
+    def _ensure_cli_ip_ready(self, *, extra_only):
+        """Gate CLI extras on the current configured address.
+
+        The query uses the worker-owned switch proxy. The route itself still
+        performs its own fresh query immediately before opening TCP, so this
+        method never caches or independently probes the address.
+        """
+        while True:
+            address = ""
+            readiness = "query_failed"
+            error_message = ""
+            error_type = ""
+            try:
+                address = str(self.switch.get_ip_address() or "").strip()
+                if not address:
+                    error_message = "The switch returned an empty IP address."
+                elif address == UNASSIGNED_SWITCH_IP:
+                    readiness = "unassigned"
+                else:
+                    readiness = "ready"
+            except Exception as error:
+                error_message = str(error)[:500]
+                error_type = type(error).__name__
+
+            self._record(
+                SupportEventCategory.HARDWARE,
+                "extra_ports.cli_ip_readiness",
+                network_address=address,
+                ip_readiness_state=readiness,
+                error_type=error_type,
+                error_message=error_message,
+                extra_only=bool(extra_only),
+                routing_method=self.extra_channel_routing_method.value,
+                status="ready" if readiness == "ready" else "blocked",
+            )
+            if readiness == "ready":
+                return True
+
+            details = {
+                "decision_kind": "cli_ip_readiness",
+                "extra_only": bool(extra_only),
+                "ip_readiness_state": readiness,
+                "network_address": address,
+                "error_message": error_message,
+                "routing_method": self.extra_channel_routing_method.value,
+                "configured_channel_count": self._configured_channel_count,
+            }
+            self.extra_port_offer_required.emit(
+                int(self.front_panel_channel_count or 0), details
+            )
+            action = self._wait_for_extra_action()
+            self._record(
+                SupportEventCategory.OPERATOR,
+                "extra_ports.cli_ip_readiness_action",
+                choice=action,
+                extra_only=bool(extra_only),
+                ip_readiness_state=readiness,
+                routing_method=self.extra_channel_routing_method.value,
+                status="retry_requested" if action == "retry_ip_check" else "stopped",
+            )
+            if action == "retry_ip_check":
+                continue
+            self._extra_phase_outcome = "stopped"
+            return False
 
     def _offer_and_run_scpi_extra_channels(
         self,
@@ -1668,7 +1750,14 @@ class MeasurementWorker(QObject):
 
     @pyqtSlot(str)
     def extra_port_action(self, action):
-        allowed = {"retry", "no_more", "stop", "stop_failed", "proceed_unverified"}
+        allowed = {
+            "retry",
+            "no_more",
+            "stop",
+            "stop_failed",
+            "proceed_unverified",
+            "retry_ip_check",
+        }
         if action not in allowed:
             return
         self._set_extra_action(action)

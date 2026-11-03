@@ -25,6 +25,69 @@ idempotency, atomic two-wavelength writes, attempt numbering, current-value
 views, and database-unavailable behavior. Historical bulk-import tests are not
 required by the approved clean-start design.
 
+Database run-load performance instrumentation is hardware-free and must be
+tested with fake repositories, factories, clocks, and support loggers. The
+read-only benchmark is `tools/benchmark_database_run_load.py`; it must never
+target a production database in automated tests or modify schema/run data.
+Phase 1 baseline measurements from the host laptop are retained under
+`build/database-run-load-baseline-99190-run1.json` and
+`build/database-run-load-cold-baseline-99190-run1.json`. Phase 2 uses a bounded
+rollback-only read session and bulk related-run measurement retrieval. Repeat
+the benchmark on both the host and remote workstation after connection-scope
+changes; do not infer remote Wi-Fi performance from host-local timing alone.
+Phase 3 enriches the loaded context with the unit run index and related-run
+snapshots. Tests must prove that automatic UI publication and repeated status
+refreshes issue no repository calls, while an explicit comparison selection
+still performs a fresh database load.
+
+Example read-only source-tree benchmark:
+
+```powershell
+& 'C:\Users\Austin\AppData\Local\Programs\Python\Python311-32\python.exe' `
+    tools\benchmark_database_run_load.py `
+    --main-board-serial 99190 `
+    --run-number 1 `
+    --warmups 1 `
+    --iterations 3 `
+    --output-json .\build\database-run-load-baseline.json
+```
+
+Replace the interpreter path and serial/run values for the workstation being
+tested. The command reads the existing per-user database configuration and
+does not write to the database. The application logs remain the authoritative
+place for packaged-application timing from a target computer.
+
+For a Phase 2 comparison, retain both warm and cold output:
+
+```powershell
+python tools\benchmark_database_run_load.py --main-board-serial 99190 --run-number 1 --warmups 2 --iterations 10 --output-json .\build\database-run-load-phase2.json
+python tools\benchmark_database_run_load.py --main-board-serial 99190 --run-number 1 --warmups 0 --iterations 5 --output-json .\build\database-run-load-phase2-cold.json
+```
+
+Confirm that `database_connection_count` and `database_transaction_count` are
+one, `projection_measurement_query_count` is one when related runs exist, and
+all measurement/routing/analysis row counts match the Phase 1 baseline. A load
+session always rolls back on exit, including successful reads, and must close
+before the context is published to the UI.
+
+For Phase 3, also inspect `connection_open` and `read_session_cleanup` in the
+workflow stage map and the context/publication stages in
+`database.run_load_ui_completed`. Preserve row counts and status/COC results
+from Phase 2. On a remote workstation, compare total workflow time with
+`connection_open`; a dominant connection stage is an endpoint, authentication,
+driver, or network concern rather than evidence that additional repository
+queries remain.
+
+Database-health-monitor tests use injected probes, task runners, and clocks;
+they must not wait for the real 60-second interval or contact SQL Server.
+Cover disabled/checking/ready/unavailable transitions, startup and manual
+requests, recovery, single-in-flight coalescing, periodic log suppression,
+credential-safe tooltips, and shutdown with a late result. UI checks must
+verify readable light/dark styling and that clicking queues a check without a
+modal dialog. Release smoke testing must confirm that startup remains
+responsive and the packaged monitor uses short-lived connections with the
+same settings as normal database operations.
+
 Database configuration tests must cover the default Windows Authentication
 mode and explicit SQL-password mode. Use synthetic credentials only. Assert
 that SQL-password connection strings contain UID/PWD without
@@ -90,7 +153,8 @@ session prevention, exclusive lease conflicts, release without disconnect,
 single-thread native calls, laser-safe shutdown, and application-close cleanup.
 
 Extra-channel coverage must remain hardware-free. Verify that missing admin
-configuration defaults to SCPI; SCPI extras use the exact finite configured
+configuration defaults OSX-150 to CLI tunneling while preserving an explicitly
+saved SCPI selection. SCPI extras use the exact finite configured
 range, call only `set_channel()`, treat the requested configured channel as the
 physical candidate identity, confirm the same logical value through `CLOSe?`,
 skip accepted continuation rows, hide No More Physical Ports, and never save a
@@ -118,6 +182,14 @@ be shown for an explicitly selected extra-only run.
 Required before a release that changes driver behavior, worker lifecycle, or
 measurement timing. Verify the ILM, switch, driver, VISA resource ownership,
 reference calculation, start/stop, and clean close behavior.
+
+For scheduled averaging, verify one-, two-, and three-sample profiles at
+distinct absolute offsets. Confirm that every wavelength takes the configured
+number of samples, the displayed/calculated value is their arithmetic mean,
+and the hardware trace retains raw samples and actual offsets. Confirm that
+reference calculation and Live IL use the same schedule, while a continuation
+or retest uses the saved run profile even if the active administrator profile
+has changed.
 
 For SCPI-mapped extras, verify the configured range on representative OSX-150
 firmware, including `CLOSe?` logical-channel confirmation and mismatch failure

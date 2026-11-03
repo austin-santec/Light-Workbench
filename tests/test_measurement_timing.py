@@ -46,6 +46,29 @@ class MeasurementTimingProfileTests(unittest.TestCase):
         self.assertEqual(profile.profile_id, "fast_experimental")
         with self.assertRaises(ValueError):
             MeasurementTimingProfile("bad", "Bad", source_settling_ms=10001).validate()
+        with self.assertRaises(ValueError):
+            MeasurementTimingProfile(
+                "bad", "Bad", power_sample_offsets_ms=(0, 1.5)
+            ).validate()
+        with self.assertRaises(ValueError):
+            MeasurementTimingProfile(
+                "bad", "Bad", power_sample_offsets_ms=(100, 50)
+            ).validate()
+
+    def test_power_sample_offsets_round_trip_and_legacy_default(self):
+        profile = MeasurementTimingProfile(
+            "custom", "Custom", power_sample_offsets_ms=(0, 200, 350)
+        ).validate()
+
+        self.assertEqual(
+            profile.as_dict()["power_sample_offsets_ms"], [0, 200, 350]
+        )
+        restored = MeasurementTimingProfile.from_dict(profile.as_dict())
+        self.assertEqual(restored.power_sample_offsets_ms, (0, 200, 350))
+        legacy = MeasurementTimingProfile.from_dict(
+            {"profile_id": "legacy", "profile_name": "Legacy"}
+        )
+        self.assertEqual(legacy.power_sample_offsets_ms, (0,))
 
     def test_repository_round_trip_preserves_custom_profile_and_active_id(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -55,6 +78,7 @@ class MeasurementTimingProfileTests(unittest.TestCase):
             profiles["custom"] = MeasurementTimingProfile(
                 "custom", "Custom", revision=2, wavelength_settling_ms=125,
                 source_settling_ms=625, live_update_pause_ms=300,
+                power_sample_offsets_ms=(0, 200, 350),
             )
 
             repository.save(profiles, "custom")
@@ -63,6 +87,7 @@ class MeasurementTimingProfileTests(unittest.TestCase):
             self.assertEqual(active_id, "custom")
             self.assertEqual(loaded["custom"].revision, 2)
             self.assertEqual(loaded["custom"].source_settling_ms, 625)
+            self.assertEqual(loaded["custom"].power_sample_offsets_ms, (0, 200, 350))
 
     def test_malformed_profile_is_ignored_and_standard_remains_active(self):
         with tempfile.TemporaryDirectory() as directory:

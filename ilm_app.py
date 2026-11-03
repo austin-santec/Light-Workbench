@@ -1,6 +1,7 @@
 """PyQt5 desktop viewer for insertion-loss run data."""
 
 import sys
+import time
 import traceback
 import uuid
 from datetime import datetime
@@ -82,6 +83,7 @@ from application.part_number_lookup import (
 )
 from application.coc_workflow import CocRunOption, CocWorkflow
 from application.database_primary_workflow import DatabaseRunContext
+from application.database_health_monitor import DatabaseHealthMonitor
 from application.replacement_persistence_workflow import (
     ReplacementBatchValidationError,
 )
@@ -217,10 +219,14 @@ from ui.coc_export_dialog import CocExportDialog, format_optimization_warning
 from ui.switch_ip import SwitchIpAddressDialog
 from ui.database_reports import DatabaseReportsDialog
 from ui.database_replacements import DatabaseReplacementDialog
+from ui.database_status import DatabaseStatusIndicator
 from ui.collapsible_group_box import CollapsibleGroupBox
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
-from domain.measurement_timing import default_measurement_timing_profiles
+from domain.measurement_timing import (
+    MeasurementTimingProfile,
+    default_measurement_timing_profiles,
+)
 
 
 ACCENT = "#e60013"
@@ -849,6 +855,9 @@ class MainWindow(QMainWindow):
         support_logger=None,
         part_lookup_controller=None,
         database_workflow=None,
+        database_settings=None,
+        database_health_probe=None,
+        database_health_task_runner=None,
     ):
         super().__init__()
         self.support_logger = support_logger or get_support_logging_service()
@@ -870,6 +879,18 @@ class MainWindow(QMainWindow):
         self._support_log_size_warning_shown = False
         self.run_data: RunData | None = None
         self.database_workflow = database_workflow
+        self.database_settings = database_settings
+        self.database_health_monitor = DatabaseHealthMonitor(
+            enabled=bool(
+                database_settings is not None
+                and getattr(database_settings, "enabled", False)
+                and database_health_probe is not None
+            ),
+            probe=database_health_probe,
+            support_logger=self.support_logger,
+            task_runner=database_health_task_runner,
+            parent=self,
+        )
         self.database_run_context: DatabaseRunContext | None = None
         self.database_pending_measurement = None
         self.hardware_pending_token = None
@@ -884,7 +905,7 @@ class MainWindow(QMainWindow):
         self._syncing_reference_widgets = False
         self.limit_profile_repository = LimitProfileRepository()
         self.limit_profiles = default_limit_profiles()
-        self.extra_channel_routing_method = ExtraChannelRoutingMethod.SCPI_MAPPED
+        self.extra_channel_routing_method = ExtraChannelRoutingMethod.CLI_DIRECT
         self.limit_profile_error = None
         try:
             self.limit_profiles = self.limit_profile_repository.load_profiles()
@@ -1016,6 +1037,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1120, 720)
         self._build_ui()
+        self.database_health_monitor.state_changed.connect(
+            self._database_health_state_changed
+        )
+        self._database_health_state_changed(self.database_health_monitor.snapshot)
+        QTimer.singleShot(0, self.database_health_monitor.start)
         self.hardware_status_panel.remote_mode_requested.connect(
             self._request_ilm_remote_mode
         )
@@ -1503,6 +1529,13 @@ class MainWindow(QMainWindow):
             bool(self.run_data and self.run_data.measurements)
             and run_available
         )
+        if hasattr(self, "clear_workspace_action"):
+            self.clear_workspace_action.setEnabled(
+                not self.hardware_run_active
+                and self.reference_thread is None
+                and not self._database_write_request_in_flight
+                and self.database_pending_measurement is None
+            )
         self._refresh_void_run_control()
 
     def _set_run_purpose_editable(self, editable: bool):
@@ -1697,6 +1730,15 @@ class MainWindow(QMainWindow):
         self.open_csv_action.triggered.connect(self.open_csv)
         file_menu = self.menuBar().addMenu("File")
         file_menu.addAction(self.open_csv_action)
+        self.clear_workspace_action = QAction("Clear Workspace...", self)
+        self.clear_workspace_action.setToolTip(
+            "Clear loaded run data and setup fields without disconnecting hardware "
+            "or invalidating the session reference."
+        )
+        self.clear_workspace_action.triggered.connect(
+            lambda _checked=False: self.clear_workspace()
+        )
+        file_menu.addAction(self.clear_workspace_action)
         data_output_action = QAction("Data Output Folder", self)
         data_output_action.triggered.connect(self.open_data_output_folder)
         file_menu.addAction(data_output_action)
@@ -1831,6 +1873,16 @@ class MainWindow(QMainWindow):
         self.sm_mode_radio.toggled.connect(self._wavelength_mode_changed)
         self.mm_mode_radio.toggled.connect(self._wavelength_mode_changed)
         header.addWidget(wavelength_mode_widget)
+        self.database_status_indicator = DatabaseStatusIndicator(
+            server=getattr(self.database_settings, "server", ""),
+            database=getattr(self.database_settings, "database", ""),
+            parent=central,
+        )
+        self.database_status_indicator.apply_theme(self.dark_mode_enabled)
+        self.database_status_indicator.clicked.connect(
+            self._request_database_health_check
+        )
+        header.addWidget(self.database_status_indicator)
         self.hardware_status_panel = HardwareStatusPanel(central)
         self.hardware_status_panel.set_laser_visible(
             self.hardware_connection_manager.has_separate_laser
@@ -3180,6 +3232,27 @@ class MainWindow(QMainWindow):
             % self.active_timing_profile.name
         )
 
+    def _database_health_state_changed(self, snapshot):
+        """Render one main-thread health snapshot without opening a connection."""
+
+        if hasattr(self, "database_status_indicator"):
+            self.database_status_indicator.set_snapshot(snapshot)
+
+    def _request_database_health_check(self):
+        """Queue an operator-requested probe without blocking the GUI thread."""
+
+        self.database_health_monitor.request_check("manual")
+
+    def _database_preflight_observed(self, result):
+        """Let a real readiness check update the advisory health indicator."""
+
+        self.database_health_monitor.report_operation_result(result)
+
+    def _database_operation_succeeded(self):
+        """Let a completed SQL workflow refresh the advisory health indicator."""
+
+        self.database_health_monitor.report_operation_ready()
+
     def toggle_dark_mode(self, enabled):
         """Apply and persist the operator's light/dark appearance choice."""
         self.dark_mode_enabled = bool(enabled)
@@ -3187,6 +3260,8 @@ class MainWindow(QMainWindow):
             self.dark_mode_action.setChecked(self.dark_mode_enabled)
         self.settings.setValue("dark_mode", self.dark_mode_enabled)
         self.setStyleSheet(self._theme_stylesheet(self.dark_mode_enabled))
+        if hasattr(self, "database_status_indicator"):
+            self.database_status_indicator.apply_theme(self.dark_mode_enabled)
         self._refresh_reading_status_color()
         self.statusBar().showMessage(
             "Dark mode enabled." if self.dark_mode_enabled else "Light mode enabled."
@@ -3250,6 +3325,189 @@ class MainWindow(QMainWindow):
         )
         if path:
             self.load_path(Path(path))
+
+    def clear_workspace(self, *, confirm=True):
+        """Return run-specific UI state to startup defaults without side effects.
+
+        This is deliberately an unload operation, not a persistence operation.
+        Connected hardware, the database-health monitor, application settings,
+        wavelength mode, and the session reference bank remain untouched.
+        """
+
+        reference_active = (
+            self.reference_controller.thread is not None
+            or self.reference_controller.worker is not None
+        )
+        persistence_active = bool(
+            self._database_write_request_in_flight
+            or self.database_pending_measurement is not None
+        )
+        if self.hardware_run_active or reference_active or persistence_active:
+            QMessageBox.information(
+                self,
+                "Workspace is busy",
+                "Stop the active run, reference calculation, or database write "
+                "before clearing the workspace.",
+            )
+            return False
+
+        if confirm:
+            choice = QMessageBox.question(
+                self,
+                "Clear workspace?",
+                "Clear the loaded run, setup fields, readings, analysis, and "
+                "table from this window?\n\n"
+                "Saved database and CSV data will not be deleted. Connected "
+                "hardware and the current session reference will be retained.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if choice != QMessageBox.Yes:
+                return False
+
+        unloaded_run_id = (
+            self.database_run_context.run.run_id
+            if self.database_run_context is not None
+            else None
+        )
+        self._active_part_lookup_request = None
+        self.current_run_workflow = None
+        self._post_run_recommendation_prompt_workflow_id = None
+        self._post_run_recommendation_prompted = False
+        self._last_run_status_key = None
+        self._active_planned_channels = None
+        self._active_extra_only = False
+        self._run_terminal_status = None
+        self._run_completion_reason = ""
+        self._run_completed_at_utc = ""
+        self._loaded_run_profile_unavailable = False
+        self._loaded_run_profile_reason = ""
+        self.active_run_reference_snapshot = None
+
+        self.database_run_context = None
+        self.database_pending_measurement = None
+        self.hardware_pending_token = None
+        self._last_measurement_acknowledgement = None
+        self._database_persistence_payload = None
+        self._database_write_request_in_flight = False
+        self._database_persistence_waiting_for_ack = False
+
+        self.run_data = None
+        self.run_recorder = None
+        self.unit_directory = None
+        self.unit_record = {}
+        self.replacement_analysis = None
+        self.replacement_analysis_history = ()
+        self.replacement_analysis_stale = False
+        self.replacement_history = []
+        self.completed_replacements = []
+        self.designated_spares = []
+        self.switch_test_timer = None
+        self.displayed_records = []
+        self.comparison_run_data = None
+        self.comparison_run_number = None
+        self.demo_measurement = None
+        self.hardware_session = HardwareRunSession()
+
+        self.hardware_channel_mode.setCurrentText(
+            ChannelMode.FULL_CONFIGURED_PASS.value
+        )
+        self.hardware_single_channel.setValue(1)
+        self.hardware_channel_ranges.clear()
+        self.manual_channel_order_checkbox.setChecked(False)
+        self.hardware_main_board_serial.clear()
+        self.hardware_switch_serial.clear()
+        self.hardware_part_number.setCurrentIndex(-1)
+        self.hardware_operating_band.setCurrentText("O band")
+        self.hardware_tested_by.clear()
+        self._station_session_default = None
+        self._set_station_number(None, editable=True)
+        self.hardware_run_number.setValue(1)
+        self._set_run_purpose("production", editable=True)
+        self.update_channel_mode_controls(self.hardware_channel_mode.currentIndex())
+        self._refresh_front_panel_channel_count_label()
+
+        self.comparison_run_combo.blockSignals(True)
+        try:
+            self.comparison_run_combo.clear()
+            self.comparison_run_combo.addItem("No comparison", None)
+            self.comparison_run_combo.setEnabled(False)
+        finally:
+            self.comparison_run_combo.blockSignals(False)
+        self.reading_filter.blockSignals(True)
+        try:
+            self.reading_filter.setCurrentIndex(FILTER_ALL)
+        finally:
+            self.reading_filter.blockSignals(False)
+
+        wavelengths = self.measurement_configuration.opm_wavelengths_nm
+        self.table.clearContents()
+        self.table.setRowCount(0)
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(
+            [
+                "Channel",
+                "%d nm IL (dB)" % wavelengths[0],
+                "%d nm IL (dB)" % wavelengths[1],
+                "Status",
+            ]
+        )
+        self.file_label.setText("No run loaded")
+        for label in self.metadata_labels.values():
+            label.setText("-")
+        for label in self.metric_labels.values():
+            label.setText("-")
+        self.completion_status_label.setText("Run: Not started")
+        self.result_status_label.setText("Result: Not evaluated")
+        self.run_purpose_status_label.setText("Purpose: Production")
+        for label in (
+            self.completion_status_label,
+            self.result_status_label,
+            self.run_purpose_status_label,
+        ):
+            label.setToolTip("No run is loaded.")
+            label.setStyleSheet("")
+
+        self.clear_current_reading()
+        self.hardware_live_indicator.setVisible(False)
+        self.demo_channel_label.setText("No hardware run active")
+        self._finish_extra_port_ui()
+        self.stop_hardware_button.setEnabled(False)
+        self.continue_hardware_button.setEnabled(False)
+        self.write_hardware_button.setEnabled(False)
+        self.change_hardware_channel_button.setEnabled(False)
+        self.retest_button.setEnabled(False)
+        self.replacement_summary_label.setText("Not run")
+        self.completed_replacements_label.setText(
+            "No completed replacements recorded"
+        )
+        self.replacement_analysis_button.setEnabled(False)
+        self.replacement_analysis_history_button.setEnabled(False)
+        self.record_replacements_button.setEnabled(False)
+        self.start_verification_run_button.setEnabled(False)
+        self.copy_replacement_notes_button.setEnabled(False)
+        self.view_history_button.setEnabled(False)
+        self.void_run_button.setEnabled(False)
+        self.refresh_coc_controls()
+        self._refresh_wavelength_mode_ui()
+        self.set_open_csv_available(True)
+        self._update_hardware_readiness_controls()
+
+        self._record_support(
+            SupportEventCategory.OPERATOR,
+            "workspace.cleared",
+            run_id=unloaded_run_id,
+            details=(
+                "Run-specific UI state cleared; hardware connections and session "
+                "reference retained."
+            ),
+            status="success",
+        )
+        self.statusBar().showMessage(
+            "Workspace cleared. Hardware connections and reference retained.",
+            7000,
+        )
+        return True
 
     def open_data_output_folder(self):
         """Open the directory containing saved measurement-run folders."""
@@ -3478,6 +3736,7 @@ class MainWindow(QMainWindow):
         except Exception as error:
             QMessageBox.warning(self, "Database Reports", str(error))
             return
+        self._database_preflight_observed(readiness)
         if not getattr(readiness, "ready", False):
             QMessageBox.warning(
                 self,
@@ -3684,6 +3943,7 @@ class MainWindow(QMainWindow):
             self.reference_controller.start(
                 lambda meter=meter: meter,
                 self.measurement_configuration,
+                measurement_timing=self.active_timing_profile,
             )
         except Exception as error:
             self._record_support(
@@ -4068,7 +4328,7 @@ class MainWindow(QMainWindow):
             self.run_data.completed_replacements = list(self.completed_replacements)
         self.refresh_comparison_runs()
 
-    def refresh_comparison_runs(self):
+    def refresh_comparison_runs(self, *, refresh_table=True):
         """Refresh the optional previous-run selector for the active unit."""
         if not hasattr(self, "comparison_run_combo"):
             return
@@ -4085,27 +4345,13 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 current_run_number = None
 
-        if self.database_run_context is not None and self.database_workflow is not None:
-            try:
-                contexts = self.database_workflow.list_for_unit(
-                    self.database_run_context.unit.unit_id
-                )
-            except Exception as error:
-                contexts = ()
-                self._record_support(
-                    SupportEventCategory.CONNECTION,
-                    "database.comparison_query_failed",
-                    level=SupportLogLevel.ERROR,
-                    error_type=type(error).__name__,
-                    error_message=str(error),
-                    status="error",
-                )
-            for context in contexts:
-                if current_run_number == context.run.run_number:
+        if self.database_run_context is not None:
+            for entry in self.database_run_context.unit_run_index:
+                if current_run_number == entry.run_number:
                     continue
                 self.comparison_run_combo.addItem(
-                    "Run %d" % context.run.run_number,
-                    "database:%d" % context.run.run_id,
+                    "Run %d" % entry.run_number,
+                    "database:%d" % entry.run_id,
                 )
 
         run_entries = [
@@ -4153,7 +4399,8 @@ class MainWindow(QMainWindow):
             self.comparison_run_data = None
             self.comparison_run_number = None
         self.comparison_run_combo.blockSignals(False)
-        self.refresh_table()
+        if refresh_table:
+            self.refresh_table()
 
     def load_comparison_run(self, _index):
         """Load or clear the read-only comparison run selected by the user."""
@@ -4169,7 +4416,8 @@ class MainWindow(QMainWindow):
                 if self.database_workflow is None:
                     raise ValueError("Database workflow is unavailable")
                 context = self.database_workflow.load_run(
-                    int(str(selected_path).split(":", 1)[1])
+                    int(str(selected_path).split(":", 1)[1]),
+                    load_source="comparison",
                 )
                 metadata = self._database_metadata(context)
                 comparison_data = RunData(
@@ -4329,12 +4577,14 @@ class MainWindow(QMainWindow):
             return
         metadata = self._current_hardware_identity()
         if self.database_workflow is not None:
+            ui_load_started = time.perf_counter()
             try:
                 context = self.database_workflow.load_for_unit(
                     metadata.get("Main board serial", ""),
                     self.hardware_run_number.value(),
                 )
             except DatabaseRunUnavailableError as error:
+                self._database_preflight_observed(error.preflight_result)
                 QMessageBox.critical(
                     self,
                     "Database unavailable",
@@ -4344,7 +4594,16 @@ class MainWindow(QMainWindow):
             except (ValueError, OSError, RuntimeError) as error:
                 QMessageBox.information(self, "Run not found", str(error))
                 return
-            self._apply_database_run_context(context)
+            ui_stage_timings = self._apply_database_run_context(context)
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "database.run_load_ui_completed",
+                operation_id=context.load_operation_id,
+                status="success",
+                load_source="unit_run_number",
+                elapsed_ms=max(0, int((time.perf_counter() - ui_load_started) * 1000)),
+                stage_timings_ms=ui_stage_timings,
+            )
             self.statusBar().showMessage("Database run loaded.")
             return
         unit_directory = self._run_lookup_unit_directory(metadata)
@@ -4924,6 +5183,7 @@ class MainWindow(QMainWindow):
         preparation,
         front_panel_channel_count=None,
         extra_channel_routing_method=None,
+        measurement_timing=None,
     ):
         meter = self.hardware_connection_manager.snapshot(
             HardwareCapability.MEASUREMENT
@@ -4976,7 +5236,9 @@ class MainWindow(QMainWindow):
                 self.measurement_configuration.source_profile.origin
             ),
             "mode_selection_method": self._wavelength_mode_selection_method,
-            "timing_profile": self.active_timing_profile.as_dict(),
+            "timing_profile": (
+                measurement_timing or self.active_timing_profile
+            ).as_dict(),
             "extra_channel_routing": {
                 "method": routing_method.value,
                 "front_panel_channel_count": front_panel_channel_count,
@@ -4987,6 +5249,50 @@ class MainWindow(QMainWindow):
     def _measurement_timing_snapshot(self):
         """Return the immutable timing values selected for a new run."""
         return self.active_timing_profile.as_dict()
+
+    def _measurement_timing_for_run(self, run_mode):
+        """Resolve the timing snapshot that governs this hardware operation.
+
+        New runs use the administrator's current profile. Continuations and
+        retests keep the profile captured by the original run so changing the
+        active administrator setting cannot silently change an existing run.
+        Legacy runs without a snapshot use the shipped Standard profile.
+        """
+        if run_mode == "new":
+            return self.active_timing_profile
+
+        fallback = self.timing_profiles.get("standard")
+        if fallback is None:
+            fallback = MeasurementTimingProfile("standard", "Standard").validate()
+        snapshot = None
+        if self.database_run_context is not None:
+            hardware = self.database_run_context.run.measurement_hardware
+            if hasattr(hardware, "get"):
+                snapshot = hardware.get("timing_profile")
+        if snapshot is None and self.run_data is not None:
+            snapshot = self.run_data.metadata.get("timing_profile")
+        if snapshot is None:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "timing_profile.snapshot_missing",
+                run_mode=run_mode,
+                fallback_profile=fallback.profile_id,
+                status="warning",
+            )
+            return fallback
+        try:
+            return MeasurementTimingProfile.from_dict(snapshot, fallback=fallback)
+        except (TypeError, ValueError) as error:
+            self._record_support(
+                SupportEventCategory.WORKFLOW,
+                "timing_profile.snapshot_invalid",
+                run_mode=run_mode,
+                fallback_profile=fallback.profile_id,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                status="warning",
+            )
+            return fallback
 
     def _extra_channel_routing_method_for_run(self, run_mode):
         """Return immutable saved provenance for continuations when available."""
@@ -5014,29 +5320,31 @@ class MainWindow(QMainWindow):
                 )
         return ExtraChannelRoutingMethod.SCPI_MAPPED
 
-    def _database_metadata(self, context):
-        hardware = context.run.measurement_hardware
+    def _database_metadata(self, context, snapshot=None):
+        snapshot = snapshot or context.snapshot
+        run = snapshot.run
+        hardware = run.measurement_hardware
         routing = hardware.get("extra_channel_routing", {})
         if not hasattr(routing, "get"):
             routing = {}
-        metadata = dict(context.snapshot.metadata)
+        metadata = dict(snapshot.metadata)
         metadata.update(
             {
                 "Mode": "Real hardware",
                 "Main board serial": context.unit.main_board_serial,
                 "Switch serial": context.switch.switch_serial,
-                "Part number": context.run.part_number_snapshot
+                "Part number": run.part_number_snapshot
                 or context.unit.part_number
                 or "",
                 "Switch model": context.switch.switch_model,
-                "Run number": str(context.run.run_number),
-                "Run purpose": run_purpose_label(context.run.run_purpose),
-                "run_purpose": context.run.run_purpose,
+                "Run number": str(run.run_number),
+                "Run purpose": run_purpose_label(run.run_purpose),
+                "run_purpose": run.run_purpose,
                 "OPM wavelengths nm": ",".join(
                     str(value)
                     for value in hardware.get(
                         "opm_wavelengths_nm",
-                        (1310, 1550) if context.run.wavelength_mode == "SM" else (850, 1300),
+                        (1310, 1550) if run.wavelength_mode == "SM" else (850, 1300),
                     )
                 ),
                 "Source wavelengths nm": ",".join(
@@ -5075,28 +5383,32 @@ class MainWindow(QMainWindow):
         )
         return metadata
 
-    def _database_coc_source(self, context):
-        front_panel_count = context.run.front_panel_channel_count
+    def _database_coc_source(self, context, snapshot=None):
+        snapshot = snapshot or context.snapshot
+        run = snapshot.run
+        front_panel_count = run.front_panel_channel_count
         logical_measurements = tuple(
             record
-            for record in context.snapshot.measurements
+            for record in snapshot.measurements
             if front_panel_count is None
             or int(record.channel) <= int(front_panel_count)
         )
         return CocSourceRun(
-            run_number=context.run.run_number,
+            run_number=run.run_number,
             source_path=None,
-            source_identifier="database-run:%d" % context.run.run_id,
+            source_identifier="database-run:%d" % run.run_id,
             measurements=logical_measurements,
-            metadata=self._database_metadata(context),
-            criteria=dict(context.run.limit_snapshot),
-            run_purpose=context.run.run_purpose,
-            run_id=context.run.run_id,
-            assignment_id=context.run.assignment_id,
+            metadata=self._database_metadata(context, snapshot),
+            criteria=dict(run.limit_snapshot),
+            run_purpose=run.run_purpose,
+            run_id=run.run_id,
+            assignment_id=run.assignment_id,
         )
 
     def _apply_database_run_context(self, context, *, update_setup=True):
         """Publish one committed database snapshot to existing UI consumers."""
+        publication_started = time.perf_counter()
+        ui_stage_timings = {}
         previous_analysis_id = (
             self.database_run_context.replacement_analysis.record.analysis_id
             if self.database_run_context is not None
@@ -5274,9 +5586,24 @@ class MainWindow(QMainWindow):
             )
         self.run_data.replacement_analysis = self.replacement_analysis
         self.clear_current_reading()
-        self.refresh_comparison_runs()
-        self.refresh_analysis()
+        ui_stage_timings["context_state_publication"] = max(
+            0,
+            int((time.perf_counter() - publication_started) * 1000),
+        )
+        comparison_started = time.perf_counter()
+        self.refresh_comparison_runs(refresh_table=False)
+        ui_stage_timings["comparison_selector"] = max(
+            0,
+            int((time.perf_counter() - comparison_started) * 1000),
+        )
+        self.refresh_analysis(stage_timings=ui_stage_timings)
         self._refresh_void_run_control()
+        self._database_operation_succeeded()
+        ui_stage_timings["context_publication"] = max(
+            0,
+            int((time.perf_counter() - publication_started) * 1000),
+        )
+        return ui_stage_timings
 
     def _refresh_void_run_control(self):
         if not hasattr(self, "void_run_button"):
@@ -5830,6 +6157,9 @@ class MainWindow(QMainWindow):
                 return
 
         extra_routing_method = confirmation_routing_method
+        measurement_timing = self._measurement_timing_for_run(
+            "continue" if retest else run_mode
+        )
 
         self._active_extra_only = preparation.extra_only
         if retest:
@@ -5933,6 +6263,7 @@ class MainWindow(QMainWindow):
                             preparation,
                             part_details.front_panel_channel_count,
                             extra_routing_method,
+                            measurement_timing,
                         )
                     ),
                     "limit_snapshot": profile.as_dict(),
@@ -6111,6 +6442,7 @@ class MainWindow(QMainWindow):
                 self._apply_database_run_context(context, update_setup=False)
                 self.hardware_run_number.setValue(selected_run_number)
             except DatabaseRunUnavailableError as error:
+                self._database_preflight_observed(error.preflight_result)
                 self._record_support(
                     SupportEventCategory.CONNECTION,
                     "database.run_start_blocked",
@@ -6178,7 +6510,7 @@ class MainWindow(QMainWindow):
             run_purpose=purpose,
             retest=retest,
             live_write_mode=self.live_write_mode_enabled,
-            timing_profile=self.active_timing_profile.as_dict(),
+            timing_profile=measurement_timing.as_dict(),
             status="started",
         )
 
@@ -6238,8 +6570,8 @@ class MainWindow(QMainWindow):
                     "Source profile origin": (
                         self.measurement_configuration.source_profile.origin
                     ),
-                    "Timing profile": self.active_timing_profile.name,
-                    "timing_profile": self.active_timing_profile.as_dict(),
+                    "Timing profile": measurement_timing.name,
+                    "timing_profile": measurement_timing.as_dict(),
                     "Mode selection method": self._wavelength_mode_selection_method,
                     "Measurement classification": (
                         self.measurement_configuration.classification.value
@@ -6361,8 +6693,8 @@ class MainWindow(QMainWindow):
             ),
             resume_existing=continuing_existing,
             live_write_mode=self.live_write_mode_enabled,
-            live_write_interval=self.active_timing_profile.live_update_pause_seconds,
-            measurement_timing=self.active_timing_profile,
+            live_write_interval=measurement_timing.live_update_pause_seconds,
+            measurement_timing=measurement_timing,
             support_logger=self.support_logger,
             workflow_id=workflow_id,
             reference_snapshot=self.active_run_reference_snapshot,
@@ -6958,6 +7290,58 @@ class MainWindow(QMainWindow):
             details.get("routing_method")
         )
         configured_count = details.get("configured_channel_count")
+        if details.get("decision_kind") == "cli_ip_readiness":
+            extra_only = bool(details.get("extra_only"))
+            readiness = details.get("ip_readiness_state")
+            address = details.get("network_address") or "unavailable"
+            message = QMessageBox(self)
+            message.setIcon(QMessageBox.Warning)
+            if readiness == "unassigned":
+                message.setWindowTitle("Switch IP address is not configured")
+                message.setText(
+                    "The switch is still using the unassigned address %s." % address
+                )
+                message.setInformativeText(
+                    "Set the switch IP address with the switch's front-panel control, "
+                    "then choose Recheck IP before starting CLI extra-channel testing."
+                )
+            else:
+                message.setWindowTitle("Could not read switch IP address")
+                message.setText("The switch IP address could not be read.")
+                detail = details.get("error_message") or (
+                    "No additional error details were provided."
+                )
+                message.setInformativeText(
+                    "%s\n\nCorrect the switch connection or IP configuration, "
+                    "then choose Recheck IP." % detail
+                )
+            recheck = message.addButton("Recheck IP", QMessageBox.ActionRole)
+            stop_text = "Stop Extra Testing" if extra_only else "Finish Run"
+            stop = message.addButton(stop_text, QMessageBox.RejectRole)
+            message.setDefaultButton(recheck)
+            message.setEscapeButton(stop)
+            message.exec_()
+            retry = message.clickedButton() == recheck
+            self._record_support(
+                SupportEventCategory.OPERATOR,
+                "extra_ports.cli_ip_readiness_decision",
+                extra_only=extra_only,
+                ip_readiness_state=readiness,
+                network_address=address,
+                choice=(
+                    "recheck_ip"
+                    if retry
+                    else "stop_extra_testing"
+                    if extra_only
+                    else "finish_run"
+                ),
+                routing_method=routing_method.value,
+                status="retry_requested" if retry else "stopped",
+            )
+            self._hardware_command(
+                "extra_port_action", "retry_ip_check" if retry else "stop"
+            )
+            return
         message = QMessageBox(self)
         message.setIcon(QMessageBox.Question)
         message.setWindowTitle("Front-panel testing complete")
@@ -8566,6 +8950,8 @@ class MainWindow(QMainWindow):
             return
         if hasattr(self, "part_lookup_controller"):
             self.part_lookup_controller.close()
+        if hasattr(self, "database_health_monitor"):
+            self.database_health_monitor.stop()
         self._record_support(
             SupportEventCategory.APPLICATION,
             "application.close_completed",
@@ -8818,34 +9204,79 @@ class MainWindow(QMainWindow):
             self._last_run_status_key = key
         return assessment
 
-    def refresh_analysis(self):
+    def refresh_analysis(self, *, stage_timings=None):
+        """Refresh derived displays while calculating composite status once."""
+        profile = (
+            self._profile_for_current_run()
+            if self.run_data is not None
+            else None
+        )
+        if profile is not None:
+            self._set_active_limit_profile(profile)
+        status_started = time.perf_counter()
         self.refresh_run_status()
+        if stage_timings is not None:
+            stage_timings["status_composite"] = max(
+                0,
+                int((time.perf_counter() - status_started) * 1000),
+            )
         if self.run_data is None:
             return
-        profile = self._profile_for_current_run()
+        analysis_started = time.perf_counter()
         if profile is None:
             self.metric_labels["total"].setText(str(len(self.run_data.measurements)))
             for key, label in self.metric_labels.items():
                 if key != "total":
                     label.setText("Limits unavailable")
+            if stage_timings is not None:
+                stage_timings["analysis_calculation"] = max(
+                    0,
+                    int((time.perf_counter() - analysis_started) * 1000),
+                )
+            table_started = time.perf_counter()
             self.refresh_current_reading()
             self.refresh_table()
+            if stage_timings is not None:
+                stage_timings["table_analysis_refresh"] = max(
+                    0,
+                    int((time.perf_counter() - table_started) * 1000),
+                )
+            controls_started = time.perf_counter()
             self.refresh_replacement_summary()
             self.refresh_coc_controls()
-            self.refresh_run_status()
+            if stage_timings is not None:
+                stage_timings["analysis_controls"] = max(
+                    0,
+                    int((time.perf_counter() - controls_started) * 1000),
+                )
             return
-        self._set_active_limit_profile(profile)
         summary = self.run_data.analysis_with_profile(profile)
         for key, label in self.metric_labels.items():
             if key in ("over_1310", "over_1550", "over_both"):
                 label.setText(format_channel_summary(summary[key + "_channels"]))
             else:
                 label.setText(str(summary[key]))
+        if stage_timings is not None:
+            stage_timings["analysis_calculation"] = max(
+                0,
+                int((time.perf_counter() - analysis_started) * 1000),
+            )
+        table_started = time.perf_counter()
         self.refresh_current_reading()
         self.refresh_table()
+        if stage_timings is not None:
+            stage_timings["table_analysis_refresh"] = max(
+                0,
+                int((time.perf_counter() - table_started) * 1000),
+            )
+        controls_started = time.perf_counter()
         self.refresh_replacement_summary()
         self.refresh_coc_controls()
-        self.refresh_run_status()
+        if stage_timings is not None:
+            stage_timings["analysis_controls"] = max(
+                0,
+                int((time.perf_counter() - controls_started) * 1000),
+            )
 
     def refresh_replacement_summary(self):
         """Refresh the replacement-analysis status shown beside the table."""
@@ -10167,22 +10598,21 @@ class MainWindow(QMainWindow):
 
     def _coc_run_options(self):
         """Return persisted runs for the active unit, including legacy context."""
-        if self.database_run_context is not None and self.database_workflow is not None:
-            current = self.database_run_context.run
-            contexts = tuple(
-                context
-                for context in self.database_workflow.list_for_assignment(
-                    current.assignment_id
-                )
-                if context.run.analysis_status not in {"excluded", "superseded"}
-                and context.run.superseded_by_run_id is None
-                and (context.run.run_started_at_utc, context.run.run_id)
+        if self.database_run_context is not None:
+            context = self.database_run_context
+            current = context.run
+            snapshots = tuple(
+                snapshot
+                for snapshot in context.assignment_run_snapshots
+                if snapshot.run.analysis_status not in {"excluded", "superseded"}
+                and snapshot.run.superseded_by_run_id is None
+                and (snapshot.run.run_started_at_utc, snapshot.run.run_id)
                 <= (current.run_started_at_utc, current.run_id)
             )
             return [
-                CocRunOption(self._database_coc_source(context))
-                for context in contexts
-                if context.snapshot.measurements
+                CocRunOption(self._database_coc_source(context, snapshot))
+                for snapshot in snapshots
+                if snapshot.measurements
             ]
         options = []
         if self.unit_directory is not None:
@@ -11321,6 +11751,8 @@ def main():
         sys.argv[1] if len(sys.argv) > 1 else None,
         support_logger=support_logger,
         database_workflow=database_workflow,
+        database_settings=database_workflow.database_settings,
+        database_health_probe=database_workflow.check_health,
     )
     window.showMaximized()
     try:

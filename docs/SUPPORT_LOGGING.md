@@ -110,8 +110,10 @@ Depending on the event, logs may contain:
   disconnection is confirmed, suspected, or unknown.
 - Requested and reported logical channel, documented effective physical port,
   raw optical power, reference power, calculated insertion loss, and whether
-  both wavelengths completed. A `CLOSe?` response is never logged as a physical
-  mapping result.
+  both wavelengths completed. When scheduled averaging is enabled, the trace
+  also records each raw power sample, its requested/actual offset, sample
+  count, average, minimum, maximum, and spread. A `CLOSe?` response is never
+  logged as a physical mapping result.
 - Whether a reading was temporary, repeated, accepted, written, overwritten,
   diagnostic-only, or failed.
 - Measurement commit lifecycle events, including commit start/success/failure,
@@ -126,6 +128,11 @@ Depending on the event, logs may contain:
   `database.ini` was created or loaded, its sanitized path, endpoint metadata,
   and validation failures. Credentials and complete connection strings are
   never logged.
+- Database run-load diagnostics, including the load source, a bounded
+  operation-correlated stage-timing map, operation-scoped connection and
+  transaction counts, related-run and measurement counts, the number of bulk
+  projection-measurement queries, routing/history counts, and the stage at
+  which a load failed.
 - New hardware-pairing lifecycle events, including conflict detection,
   confirmation shown/canceled/accepted, affected assignment IDs, stopped-run
   counts, fresh identity-map creation, transaction completion, and rollback
@@ -163,6 +170,50 @@ native handles, arbitrary object representations, or complete run/COC files.
 Raw hardware responses are length-limited. Logs may contain internal equipment
 identifiers, operator initials, and measurement evidence because those values
 are needed for engineering correlation.
+
+### Database run-load timing
+
+The events `database.run_load_started`, `database.run_load_completed`, and
+`database.run_load_failed` use `operation_id` to correlate one database-backed
+load. Completed and failed events include `load_source`, `elapsed_ms`,
+`stage_timings_ms`, and operation-scoped counts. The source identifies whether
+the load came from a unit/run-number lookup, a run ID, a comparison load, or a
+refresh.
+
+Run loads reuse one context-local physical connection and one rollback-only
+read transaction across readiness and repository reads. Related-run histories
+are fetched in one bulk operation for the effective replacement projection.
+The counters represent physical connections/transactions, not repository
+method calls; `projection_measurement_query_count` records the bulk-query
+fan-out. No readiness cache, SQL index change, permanent connection, or worker
+thread is introduced. `database.run_load_ui_completed` measures the
+user-visible unit/run-number load through UI publication. The workflow timing
+and UI timing are separate so database work can be distinguished from widget
+population.
+
+Infrastructure timing includes `connection_open` and `read_session_cleanup`.
+The UI-completed event includes bounded publication stages such as
+`context_state_publication`, `comparison_selector`, `status_composite`,
+`analysis_calculation`, `table_analysis_refresh`, `analysis_controls`, and
+`context_publication`. These values identify connection latency and unexpected
+post-load UI work without logging credentials or measurement payloads.
+
+### Database health monitoring
+
+The top-row database indicator runs a quiet read-only preflight after startup,
+approximately every 60 seconds, and when the operator clicks the indicator.
+Startup and manual requests/outcomes are logged, as are transitions between
+ready and unavailable. An unchanged successful periodic check is intentionally
+not logged. Events may include the check source, prior/current health state,
+elapsed time, schema versions, a sanitized error category, and whether an
+overlapping request was coalesced. They never include credentials, complete
+connection strings, or raw unbounded driver output.
+
+`Database: Ready` means the most recent check or real operation succeeded. It
+does not mean that Light Workbench retains a permanent SQL connection. A
+background failure updates the indicator and log without displaying a modal
+warning; a real operator-requested database operation retains its existing
+authoritative validation and error dialog.
 
 ## Support Logs menu
 

@@ -168,6 +168,15 @@ class RepositoryContractMixin:
             repository.snapshot_for_run(run.run_id),
             ((second,), (first, second)),
         )
+        self.assertEqual(
+            repository.history_for_runs(
+                (run.run_id, next_run.run_id, run.run_id)
+            ),
+            {
+                run.run_id: (first, second),
+                next_run.run_id: (),
+            },
+        )
 
         next_uuid = uuid4()
         third = repository.append_next(

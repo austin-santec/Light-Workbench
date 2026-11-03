@@ -48,7 +48,7 @@ class AdminConfigDialog(QDialog):
         profiles,
         repository,
         parent=None,
-        extra_channel_routing_method=ExtraChannelRoutingMethod.SCPI_MAPPED,
+        extra_channel_routing_method=ExtraChannelRoutingMethod.CLI_DIRECT,
     ):
         super().__init__(parent)
         self.setWindowTitle("Admin Config")
@@ -93,8 +93,9 @@ class AdminConfigDialog(QDialog):
         self.extra_routing_combo.currentIndexChanged.connect(self._mark_dirty)
         self.extra_routing_label = QLabel("Extra-channel routing:")
         self.extra_routing_combo.setToolTip(
-            "SCPI mapped channels are the default. CLI direct routing is an "
-            "experimental engineering option for OSX-150 only."
+            "CLI tunneling is the default for OSX-150 extra physical ports. "
+            "Select SCPI mapped channels only when the extra channels are "
+            "registered in the switch module map."
         )
         form.addRow(self.extra_routing_label, self.extra_routing_combo)
         self.warning_note = QLabel("Not applicable for OSX-100")
@@ -233,7 +234,7 @@ class AdminConfigDialog(QDialog):
 
     def _restore_defaults(self):
         self.profiles = default_limit_profiles()
-        self.extra_channel_routing_method = ExtraChannelRoutingMethod.SCPI_MAPPED
+        self.extra_channel_routing_method = ExtraChannelRoutingMethod.CLI_DIRECT
         self._load_current_profile()
         self._dirty = True
 

@@ -300,6 +300,12 @@ replace the active session reference.
   measurement ID is the maximum considered ID for compatibility and referential
   integrity; it is not required to belong to the context run. Any source-state
   change marks the latest snapshot stale and requires a new calculation.
+- A database run load constructs one immutable UI read model containing the
+  selected run, its current measurements, a lightweight unit run index, and
+  assignment-scoped related-run snapshots. Related snapshots are built from
+  one bulk measurement-history result. Comparison selectors and automatic
+  composite, COC, and replacement-analysis publication reuse this read model;
+  explicit loads fetch a new model rather than retaining a cross-load cache.
 - A completed replacement may reference the recommendation that informed it
   through `source_recommendation_id`. This records recommendation usage without
   claiming that Light Workbench commanded or verified the physical reroute.

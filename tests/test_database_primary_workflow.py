@@ -1,5 +1,6 @@
 import unittest
 from dataclasses import dataclass
+from unittest.mock import MagicMock
 
 from application.database_primary_workflow import DatabasePrimaryRunWorkflow
 from application.run_lifecycle_workflow import DatabaseRunUnavailableError
@@ -20,9 +21,21 @@ class _Readiness:
 class DatabasePrimaryRunWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.repositories = InMemoryRepositories()
+        self.support_events = []
+
+        class _SupportLogger:
+            def __init__(self, events):
+                self.events = events
+
+            def record(self, category, event, **fields):
+                self.events.append((category, event, fields))
+                return True
+
+        self.support_logger = _SupportLogger(self.support_events)
         self.workflow = DatabasePrimaryRunWorkflow(
             self.repositories,
             readiness_check=lambda: _Readiness(True),
+            support_logger=self.support_logger,
         )
 
     def _start(self):
@@ -68,9 +81,45 @@ class DatabasePrimaryRunWorkflowTests(unittest.TestCase):
         self.assertEqual(record.attempt_number, 1)
         self.assertEqual(len(refreshed.snapshot.measurements), 1)
 
+        self.support_events.clear()
         loaded = self.workflow.load_for_unit("MB-100", 1)
         self.assertEqual(loaded.run.run_id, context.run.run_id)
         self.assertEqual(len(loaded.snapshot.measurement_attempts), 1)
+        self.assertEqual(
+            tuple((item.run_id, item.run_number) for item in loaded.unit_run_index),
+            ((context.run.run_id, 1),),
+        )
+        self.assertEqual(len(loaded.assignment_run_snapshots), 1)
+        self.assertEqual(loaded.assignment_run_snapshots[0], loaded.snapshot)
+
+        self.assertTrue(loaded.load_operation_id.startswith("db-load-"))
+        self.assertIsNotNone(loaded.load_summary)
+        completed = [
+            item
+            for item in self.support_events
+            if item[1] == "database.run_load_completed"
+        ]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0][2]["status"], "success")
+        self.assertEqual(completed[0][2]["load_source"], "unit_run_number")
+        self.assertIn("database_connection_count", completed[0][2])
+        self.assertIn("stage_timings_ms", completed[0][2])
+
+        loaded_by_id = self.workflow.load_run(context.run.run_id)
+        refreshed_by_id = self.workflow.refresh(context.run.run_id)
+        comparison = self.workflow.load_run(
+            context.run.run_id, load_source="comparison"
+        )
+        for equivalent in (loaded_by_id, refreshed_by_id, comparison):
+            self.assertEqual(equivalent.run, loaded.run)
+            self.assertEqual(equivalent.snapshot, loaded.snapshot)
+            self.assertEqual(equivalent.routing, loaded.routing)
+            self.assertEqual(
+                equivalent.effective_projection, loaded.effective_projection
+            )
+        self.assertEqual(loaded_by_id.load_summary.source, "run_id")
+        self.assertEqual(refreshed_by_id.load_summary.source, "refresh")
+        self.assertEqual(comparison.load_summary.source, "comparison")
 
         completed = self.workflow.finish_run(context.run.run_id, "complete")
         self.assertEqual(completed.run.completion_status, "complete")
@@ -108,13 +157,56 @@ class DatabasePrimaryRunWorkflowTests(unittest.TestCase):
         self.assertEqual(retest.attempt_number, 2)
         self.assertEqual(len(refreshed.snapshot.measurement_attempts), 2)
 
+    def test_load_reuses_bulk_history_for_current_and_related_snapshots(self):
+        context = self._start()
+        pending = self.workflow.measurements.prepare_measurement(
+            run_id=context.run.run_id,
+            logical_channel=1,
+            physical_port=1,
+            wavelength_1_nm=1310,
+            wavelength_1_il_db=0.65,
+            wavelength_2_nm=1550,
+            wavelength_2_il_db=0.50,
+            reference_snapshot={"snapshot_id": "ref-1"},
+            written_by="AT",
+        )
+        self.workflow.measurements.commit(pending)
+        expected = self.workflow.queries.load(context.run.run_id)
+        original_snapshot = self.repositories.snapshot_for_run
+        self.repositories.snapshot_for_run = MagicMock(
+            side_effect=AssertionError("per-run snapshot query must not be used")
+        )
+        try:
+            loaded = self.workflow.load_for_unit("MB-100", 1)
+        finally:
+            self.repositories.snapshot_for_run = original_snapshot
+
+        self.assertEqual(loaded.snapshot, expected)
+        self.assertEqual(loaded.assignment_run_snapshots, (expected,))
+        self.assertEqual(
+            loaded.snapshot.coc_source(),
+            expected.coc_source(),
+        )
+        self.assertEqual(
+            loaded.load_summary.counts["projection_measurement_query_count"],
+            1,
+        )
+
     def test_failed_readiness_blocks_start_and_load(self):
         workflow = DatabasePrimaryRunWorkflow(
             self.repositories,
             readiness_check=lambda: _Readiness(False, "SQL Server is offline"),
+            support_logger=self.support_logger,
         )
         with self.assertRaisesRegex(DatabaseRunUnavailableError, "offline"):
             workflow.load_for_unit("MB-100", 1)
+        failures = [
+            item
+            for item in self.support_events
+            if item[1] == "database.run_load_failed"
+        ]
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0][2]["failure_stage"], "database_readiness")
 
     def test_unit_run_numbers_continue_across_switch_assignments(self):
         first = self._start()

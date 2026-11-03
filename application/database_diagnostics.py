@@ -14,13 +14,26 @@ from infrastructure.database.preflight import (
 class DatabaseDiagnosticsService:
     """Run a safe preflight and record credential-free diagnostic context."""
 
-    def __init__(self, support_logger=None, factory_type=DatabaseConnectionFactory):
+    def __init__(
+        self,
+        support_logger=None,
+        factory_type=DatabaseConnectionFactory,
+        factory: DatabaseConnectionFactory | None = None,
+    ):
         self._support_logger = support_logger
         self._factory_type = factory_type
+        self._factory = factory
 
-    def check(self, settings: DatabaseSettings) -> DatabasePreflightResult:
-        result = check_database_preflight(self._factory_type(settings))
-        if self._support_logger is not None:
+    def check(
+        self,
+        settings: DatabaseSettings,
+        *,
+        record_event: bool = True,
+    ) -> DatabasePreflightResult:
+        result = check_database_preflight(
+            self._factory if self._factory is not None else self._factory_type(settings)
+        )
+        if record_event and self._support_logger is not None:
             self._support_logger.record(
                 SupportEventCategory.CONNECTION,
                 "database.preflight_completed",

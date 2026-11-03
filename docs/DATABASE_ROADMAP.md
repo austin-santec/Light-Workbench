@@ -563,6 +563,27 @@ into the append-only replacement record, allowing adoption reporting through
 Status: not started. Local SQL Server operation and manual workstation testing
 remain the current scope. This milestone does not authorize a network rollout.
 
+Run-load preparation now includes operation-correlated stage metrics, a
+context-local rollback-only read session, and bulk related-run measurement
+retrieval. Host-local baselines prove one physical connection and transaction
+per load. The pilot must repeat the same read-only benchmark from each remote
+workstation and compare packaged-application UI timing before considering
+readiness caching or asynchronous loading.
+
+Phase 3 preparation additionally publishes a complete immutable loaded-run
+context. The automatic comparison-selector, composite/COC, and replacement
+analysis refreshes consume that context without opening follow-up database
+sessions. Explicit run selections remain fresh bounded loads. Connection-open,
+cleanup, and UI publication sub-stages are logged so a remote pilot can
+separate network/login cost from query and widget work.
+
+The workstation application now also has a nonblocking top-row database
+readiness indicator. A startup warm-up and restrained periodic preflight use
+short-lived connections, support manual rechecks, and detect recovery without
+modal background warnings. This is client availability monitoring only; the
+network pilot still requires server-side backup, capacity, uptime, and health
+monitoring before production rollout.
+
 ### Implement
 
 - Deploy the migrations to the approved network SQL Server.

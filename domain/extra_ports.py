@@ -9,6 +9,10 @@ from enum import Enum
 # interpreted as installed switch capacity.
 EXTRA_PORT_HARD_SAFETY_LIMIT = 512
 
+# Santec switches use this address before the operator assigns a usable LAN
+# address with the front-panel control. This is a readiness sentinel only.
+UNASSIGNED_SWITCH_IP = "192.168.99.10"
+
 
 class ExtraChannelRoutingMethod(str, Enum):
     """Supported ways to route channels beyond the front-panel count."""
@@ -32,7 +36,7 @@ class ExtraChannelRoutingMethod(str, Enum):
     @property
     def label(self) -> str:
         if self is self.CLI_DIRECT:
-            return "CLI direct physical ports (Experimental)"
+            return "CLI tunneling (direct physical ports)"
         return "SCPI mapped channels"
 
 
@@ -85,6 +89,7 @@ class ExtraPortPhaseStatus(str, Enum):
 
 __all__ = [
     "EXTRA_PORT_HARD_SAFETY_LIMIT",
+    "UNASSIGNED_SWITCH_IP",
     "ExtraChannelRoutingMethod",
     "ExtraPortPhaseStatus",
     "PhysicalPortRouteResult",

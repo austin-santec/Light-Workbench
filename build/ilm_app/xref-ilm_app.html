@@ -27,6 +27,7 @@ imports:
  &#8226;   <a href="#abc">abc</a>
  &#8226;   <a href="#application.admin_session">application.admin_session</a>
  &#8226;   <a href="#application.coc_workflow">application.coc_workflow</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#application.database_primary_workflow">application.database_primary_workflow</a>
  &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
  &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
@@ -230,6 +231,7 @@ imports:
  &#8226;   <a href="#sre_parse">sre_parse</a>
  &#8226;   <a href="#stat">stat</a>
  &#8226;   <a href="#sys">sys</a>
+ &#8226;   <a href="#time">time</a>
  &#8226;   <a href="#tools.dependency_check">tools.dependency_check</a>
  &#8226;   <a href="#traceback">traceback</a>
  &#8226;   <a href="#types">types</a>
@@ -238,6 +240,7 @@ imports:
  &#8226;   <a href="#ui.collapsible_group_box">ui.collapsible_group_box</a>
  &#8226;   <a href="#ui.database_replacements">ui.database_replacements</a>
  &#8226;   <a href="#ui.database_reports">ui.database_reports</a>
+ &#8226;   <a href="#ui.database_status">ui.database_status</a>
  &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
@@ -426,6 +429,7 @@ imported by:
     <a href="#PyQt5">PyQt5</a>
  &#8226;   <a href="#PyQt5.QtGui">PyQt5.QtGui</a>
  &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
  &#8226;   <a href="#application.live_controller">application.live_controller</a>
  &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
@@ -439,6 +443,7 @@ imported by:
  &#8226;   <a href="#ui.collapsible_group_box">ui.collapsible_group_box</a>
  &#8226;   <a href="#ui.database_replacements">ui.database_replacements</a>
  &#8226;   <a href="#ui.database_reports">ui.database_reports</a>
+ &#8226;   <a href="#ui.database_status">ui.database_status</a>
  &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
@@ -495,6 +500,7 @@ imported by:
  &#8226;   <a href="#ui.collapsible_group_box">ui.collapsible_group_box</a>
  &#8226;   <a href="#ui.database_replacements">ui.database_replacements</a>
  &#8226;   <a href="#ui.database_reports">ui.database_reports</a>
+ &#8226;   <a href="#ui.database_status">ui.database_status</a>
  &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
@@ -535,6 +541,7 @@ imported by:
 imported by:
     <a href="#application.coc_workflow">application.coc_workflow</a>
  &#8226;   <a href="#application.database_diagnostics">application.database_diagnostics</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#application.database_primary_workflow">application.database_primary_workflow</a>
  &#8226;   <a href="#application.database_reporting">application.database_reporting</a>
  &#8226;   <a href="#application.database_repositories">application.database_repositories</a>
@@ -558,6 +565,7 @@ imported by:
  &#8226;   <a href="#domain.unit_switch_assignments">domain.unit_switch_assignments</a>
  &#8226;   <a href="#et_xmlfile.xmlfile">et_xmlfile.xmlfile</a>
  &#8226;   <a href="#infrastructure.database.connection">infrastructure.database.connection</a>
+ &#8226;   <a href="#infrastructure.database.load_metrics">infrastructure.database.load_metrics</a>
  &#8226;   <a href="#infrastructure.database.maintenance">infrastructure.database.maintenance</a>
  &#8226;   <a href="#infrastructure.database.memory_repositories">infrastructure.database.memory_repositories</a>
  &#8226;   <a href="#infrastructure.database.migrations">infrastructure.database.migrations</a>
@@ -570,6 +578,7 @@ imported by:
  &#8226;   <a href="#ui.coc_export_dialog">ui.coc_export_dialog</a>
  &#8226;   <a href="#ui.database_replacements">ui.database_replacements</a>
  &#8226;   <a href="#ui.database_reports">ui.database_reports</a>
+ &#8226;   <a href="#ui.database_status">ui.database_status</a>
  &#8226;   <a href="#ui.timing_profiles">ui.timing_profiles</a>
 
   </div>
@@ -1609,6 +1618,7 @@ imported by:
     <a href="#application.admin_session">application.admin_session</a>
  &#8226;   <a href="#application.coc_workflow">application.coc_workflow</a>
  &#8226;   <a href="#application.database_diagnostics">application.database_diagnostics</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#application.database_primary_workflow">application.database_primary_workflow</a>
  &#8226;   <a href="#application.database_reporting">application.database_reporting</a>
  &#8226;   <a href="#application.database_repositories">application.database_repositories</a>
@@ -1699,6 +1709,32 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="application.database_health_monitor"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/application/database_health_monitor.py" type="text/plain"><tt>application.database_health_monitor</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
+ &#8226;   <a href="#__future__">__future__</a>
+ &#8226;   <a href="#application">application</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#datetime">datetime</a>
+ &#8226;   <a href="#domain.support_events">domain.support_events</a>
+ &#8226;   <a href="#enum">enum</a>
+ &#8226;   <a href="#infrastructure.database.connection">infrastructure.database.connection</a>
+ &#8226;   <a href="#threading">threading</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#ui.database_status">ui.database_status</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="application.database_primary_workflow"></a>
   <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/application/database_primary_workflow.py" type="text/plain"><tt>application.database_primary_workflow</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -1712,12 +1748,14 @@ imports:
  &#8226;   <a href="#application.replacement_persistence_workflow">application.replacement_persistence_workflow</a>
  &#8226;   <a href="#application.run_lifecycle_workflow">application.run_lifecycle_workflow</a>
  &#8226;   <a href="#application.unit_switch_workflow">application.unit_switch_workflow</a>
+ &#8226;   <a href="#contextlib">contextlib</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain.database_records">domain.database_records</a>
  &#8226;   <a href="#domain.effective_replacement_analysis">domain.effective_replacement_analysis</a>
  &#8226;   <a href="#domain.limit_profiles">domain.limit_profiles</a>
  &#8226;   <a href="#domain.unit_switch_assignments">domain.unit_switch_assignments</a>
+ &#8226;   <a href="#infrastructure.database.load_metrics">infrastructure.database.load_metrics</a>
  &#8226;   <a href="#typing">typing</a>
 
   </div>
@@ -3686,6 +3724,7 @@ imported by:
  &#8226;   <a href="#configparser">configparser</a>
  &#8226;   <a href="#domain.comparison">domain.comparison</a>
  &#8226;   <a href="#domain.measurement">domain.measurement</a>
+ &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.raw_export">domain.raw_export</a>
  &#8226;   <a href="#domain.reference">domain.reference</a>
@@ -3960,6 +3999,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#_threading_local">_threading_local</a>
+ &#8226;   <a href="#application.database_primary_workflow">application.database_primary_workflow</a>
  &#8226;   <a href="#ast">ast</a>
  &#8226;   <a href="#asyncio.staggered">asyncio.staggered</a>
  &#8226;   <a href="#et_xmlfile.incremental_tree">et_xmlfile.incremental_tree</a>
@@ -3970,6 +4010,8 @@ imported by:
  &#8226;   <a href="#importlib.resources._common">importlib.resources._common</a>
  &#8226;   <a href="#importlib.util">importlib.util</a>
  &#8226;   <a href="#infrastructure.database.connection">infrastructure.database.connection</a>
+ &#8226;   <a href="#infrastructure.database.load_metrics">infrastructure.database.load_metrics</a>
+ &#8226;   <a href="#infrastructure.database.memory_repositories">infrastructure.database.memory_repositories</a>
  &#8226;   <a href="#pyvisa.ctwrapper.functions">pyvisa.ctwrapper.functions</a>
  &#8226;   <a href="#pyvisa.highlevel">pyvisa.highlevel</a>
  &#8226;   <a href="#pyvisa.resources.messagebased">pyvisa.resources.messagebased</a>
@@ -4003,6 +4045,8 @@ imported by:
  &#8226;   <a href="#asyncio.runners">asyncio.runners</a>
  &#8226;   <a href="#asyncio.tasks">asyncio.tasks</a>
  &#8226;   <a href="#asyncio.threads">asyncio.threads</a>
+ &#8226;   <a href="#infrastructure.database.connection">infrastructure.database.connection</a>
+ &#8226;   <a href="#infrastructure.database.load_metrics">infrastructure.database.load_metrics</a>
 
   </div>
 
@@ -4283,6 +4327,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#application.coc_workflow">application.coc_workflow</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#application.database_primary_workflow">application.database_primary_workflow</a>
  &#8226;   <a href="#application.database_run_read_model">application.database_run_read_model</a>
  &#8226;   <a href="#application.hardware_planning">application.hardware_planning</a>
@@ -4324,6 +4369,8 @@ imported by:
  &#8226;   <a href="#hardware.santec_cli">hardware.santec_cli</a>
  &#8226;   <a href="#hardware.visa_errors">hardware.visa_errors</a>
  &#8226;   <a href="#infrastructure.coc_export">infrastructure.coc_export</a>
+ &#8226;   <a href="#infrastructure.database.connection">infrastructure.database.connection</a>
+ &#8226;   <a href="#infrastructure.database.load_metrics">infrastructure.database.load_metrics</a>
  &#8226;   <a href="#infrastructure.database.maintenance">infrastructure.database.maintenance</a>
  &#8226;   <a href="#infrastructure.database.memory_repositories">infrastructure.database.memory_repositories</a>
  &#8226;   <a href="#infrastructure.database.migrations">infrastructure.database.migrations</a>
@@ -4356,6 +4403,7 @@ imported by:
  &#8226;   <a href="#PyQt5.QtGui">PyQt5.QtGui</a>
  &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
  &#8226;   <a href="#_strptime">_strptime</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#application.database_primary_workflow">application.database_primary_workflow</a>
  &#8226;   <a href="#application.database_reporting">application.database_reporting</a>
  &#8226;   <a href="#application.database_repositories">application.database_repositories</a>
@@ -4843,6 +4891,7 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#__future__">__future__</a>
+ &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#domain">domain</a>
  &#8226;   <a href="#math">math</a>
@@ -5138,6 +5187,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#application.database_diagnostics">application.database_diagnostics</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
  &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
  &#8226;   <a href="#application.support_logging">application.support_logging</a>
@@ -8209,6 +8259,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#application.run_preflight">application.run_preflight</a>
  &#8226;   <a href="#application.unit_switch_workflow">application.unit_switch_workflow</a>
  &#8226;   <a href="#ast">ast</a>
@@ -9654,6 +9705,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#infrastructure.database.connection">infrastructure.database.connection</a>
+ &#8226;   <a href="#infrastructure.database.load_metrics">infrastructure.database.load_metrics</a>
  &#8226;   <a href="#infrastructure.database.maintenance">infrastructure.database.maintenance</a>
  &#8226;   <a href="#infrastructure.database.memory_repositories">infrastructure.database.memory_repositories</a>
  &#8226;   <a href="#infrastructure.database.migrations">infrastructure.database.migrations</a>
@@ -9674,22 +9726,51 @@ imports:
     <a href="#__future__">__future__</a>
  &#8226;   <a href="#config.database_config">config.database_config</a>
  &#8226;   <a href="#contextlib">contextlib</a>
+ &#8226;   <a href="#contextvars">contextvars</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#enum">enum</a>
  &#8226;   <a href="#infrastructure.database">infrastructure.database</a>
+ &#8226;   <a href="#infrastructure.database.load_metrics">infrastructure.database.load_metrics</a>
  &#8226;   <a href="#pyodbc">pyodbc</a>
  &#8226;   <a href="#re">re</a>
+ &#8226;   <a href="#threading">threading</a>
  &#8226;   <a href="#typing">typing</a>
 
   </div>
   <div class="import">
 imported by:
     <a href="#application.database_diagnostics">application.database_diagnostics</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
  &#8226;   <a href="#infrastructure.database">infrastructure.database</a>
  &#8226;   <a href="#infrastructure.database.preflight">infrastructure.database.preflight</a>
  &#8226;   <a href="#infrastructure.database.runtime">infrastructure.database.runtime</a>
  &#8226;   <a href="#infrastructure.database.settings_repository">infrastructure.database.settings_repository</a>
  &#8226;   <a href="#infrastructure.database.sql_repositories">infrastructure.database.sql_repositories</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="infrastructure.database.load_metrics"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/infrastructure/database/load_metrics.py" type="text/plain"><tt>infrastructure.database.load_metrics</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#contextlib">contextlib</a>
+ &#8226;   <a href="#contextvars">contextvars</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#infrastructure.database">infrastructure.database</a>
+ &#8226;   <a href="#time">time</a>
+ &#8226;   <a href="#typing">typing</a>
+ &#8226;   <a href="#uuid">uuid</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application.database_primary_workflow">application.database_primary_workflow</a>
+ &#8226;   <a href="#infrastructure.database.connection">infrastructure.database.connection</a>
 
   </div>
 
@@ -9724,6 +9805,7 @@ imported by:
 imports:
     <a href="#__future__">__future__</a>
  &#8226;   <a href="#collections.abc">collections.abc</a>
+ &#8226;   <a href="#contextlib">contextlib</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#decimal">decimal</a>
@@ -10547,6 +10629,7 @@ imported by:
  &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.run_status">domain.run_status</a>
  &#8226;   <a href="#fractions">fractions</a>
+ &#8226;   <a href="#op815_driver">op815_driver</a>
  &#8226;   <a href="#openpyxl.compat.strings">openpyxl.compat.strings</a>
  &#8226;   <a href="#openpyxl.drawing.drawing">openpyxl.drawing.drawing</a>
  &#8226;   <a href="#openpyxl.utils.datetime">openpyxl.utils.datetime</a>
@@ -11524,6 +11607,7 @@ imports:
  &#8226;   <a href="#domain.measurement_timing">domain.measurement_timing</a>
  &#8226;   <a href="#domain.models">domain.models</a>
  &#8226;   <a href="#domain.wavelengths">domain.wavelengths</a>
+ &#8226;   <a href="#math">math</a>
  &#8226;   <a href="#pathlib">pathlib</a>
  &#8226;   <a href="#struct">struct</a>
  &#8226;   <a href="#time">time</a>
@@ -18586,6 +18670,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#_threading_local">_threading_local</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#application.diagnostic_trace">application.diagnostic_trace</a>
  &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
  &#8226;   <a href="#application.measurement_worker">application.measurement_worker</a>
@@ -18603,6 +18688,7 @@ imported by:
  &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
  &#8226;   <a href="#http.cookiejar">http.cookiejar</a>
  &#8226;   <a href="#importlib.util">importlib.util</a>
+ &#8226;   <a href="#infrastructure.database.connection">infrastructure.database.connection</a>
  &#8226;   <a href="#infrastructure.database.memory_repositories">infrastructure.database.memory_repositories</a>
  &#8226;   <a href="#logging">logging</a>
  &#8226;   <a href="#multiprocessing.context">multiprocessing.context</a>
@@ -18652,6 +18738,8 @@ imported by:
  &#8226;   <a href="#hardware.optical_switch">hardware.optical_switch</a>
  &#8226;   <a href="#hardware.santec_cli">hardware.santec_cli</a>
  &#8226;   <a href="#http.cookiejar">http.cookiejar</a>
+ &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#infrastructure.database.load_metrics">infrastructure.database.load_metrics</a>
  &#8226;   <a href="#infrastructure.database.preflight">infrastructure.database.preflight</a>
  &#8226;   <a href="#logging">logging</a>
  &#8226;   <a href="#multiprocessing.connection">multiprocessing.connection</a>
@@ -18904,6 +18992,7 @@ imported by:
  &#8226;   <a href="#PyQt5.QtGui">PyQt5.QtGui</a>
  &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
  &#8226;   <a href="#PyQt5.sip">PyQt5.sip</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#application.database_primary_workflow">application.database_primary_workflow</a>
  &#8226;   <a href="#application.database_repositories">application.database_repositories</a>
  &#8226;   <a href="#application.hardware_connection">application.hardware_connection</a>
@@ -18936,6 +19025,7 @@ imported by:
  &#8226;   <a href="#importlib.resources.abc">importlib.resources.abc</a>
  &#8226;   <a href="#infrastructure.coc_exporter">infrastructure.coc_exporter</a>
  &#8226;   <a href="#infrastructure.database.connection">infrastructure.database.connection</a>
+ &#8226;   <a href="#infrastructure.database.load_metrics">infrastructure.database.load_metrics</a>
  &#8226;   <a href="#infrastructure.database.maintenance">infrastructure.database.maintenance</a>
  &#8226;   <a href="#infrastructure.database.migrations">infrastructure.database.migrations</a>
  &#8226;   <a href="#infrastructure.diagnostic_export">infrastructure.diagnostic_export</a>
@@ -19011,6 +19101,7 @@ imported by:
  &#8226;   <a href="#ui.collapsible_group_box">ui.collapsible_group_box</a>
  &#8226;   <a href="#ui.database_replacements">ui.database_replacements</a>
  &#8226;   <a href="#ui.database_reports">ui.database_reports</a>
+ &#8226;   <a href="#ui.database_status">ui.database_status</a>
  &#8226;   <a href="#ui.hardware_status">ui.hardware_status</a>
  &#8226;   <a href="#ui.live_il_reading">ui.live_il_reading</a>
  &#8226;   <a href="#ui.power_measurement_diagnostics">ui.power_measurement_diagnostics</a>
@@ -19115,6 +19206,26 @@ imports:
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain.database_reporting">domain.database_reporting</a>
  &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#ui">ui</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ilm_app.py">ilm_app.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ui.database_status"></a>
+  <a target="code" href="///C:/Users/Austin/Documents/Python%20Stuff/ILM%20Python%20Testing/ui/database_status.py" type="text/plain"><tt>ui.database_status</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PyQt5.QtCore">PyQt5.QtCore</a>
+ &#8226;   <a href="#PyQt5.QtWidgets">PyQt5.QtWidgets</a>
+ &#8226;   <a href="#__future__">__future__</a>
+ &#8226;   <a href="#application.database_health_monitor">application.database_health_monitor</a>
  &#8226;   <a href="#ui">ui</a>
 
   </div>
@@ -19484,6 +19595,7 @@ imported by:
  &#8226;   <a href="#domain.reference">domain.reference</a>
  &#8226;   <a href="#domain.replacements">domain.replacements</a>
  &#8226;   <a href="#ilm_app.py">ilm_app.py</a>
+ &#8226;   <a href="#infrastructure.database.load_metrics">infrastructure.database.load_metrics</a>
  &#8226;   <a href="#infrastructure.database.memory_repositories">infrastructure.database.memory_repositories</a>
  &#8226;   <a href="#infrastructure.database.sql_repositories">infrastructure.database.sql_repositories</a>
  &#8226;   <a href="#infrastructure.run_persistence">infrastructure.run_persistence</a>

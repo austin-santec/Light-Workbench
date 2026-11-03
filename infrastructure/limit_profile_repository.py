@@ -67,15 +67,15 @@ class LimitProfileRepository:
         return profiles
 
     def load_extra_channel_routing_method(self) -> ExtraChannelRoutingMethod:
-        """Load the OSX-150 extra-channel route, defaulting older files to SCPI."""
+        """Load the OSX-150 extra-channel route, defaulting missing values to CLI."""
         if not self.path.is_file():
-            return ExtraChannelRoutingMethod.SCPI_MAPPED
+            return ExtraChannelRoutingMethod.CLI_DIRECT
         parser = configparser.ConfigParser()
         parser.read(self.path, encoding="utf-8")
         value = parser.get(
             "hardware-routing",
             "osx_150_extra_channel_method",
-            fallback=ExtraChannelRoutingMethod.SCPI_MAPPED.value,
+            fallback=ExtraChannelRoutingMethod.CLI_DIRECT.value,
         )
         return ExtraChannelRoutingMethod.parse(value)
 

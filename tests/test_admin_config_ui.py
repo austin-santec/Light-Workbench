@@ -32,9 +32,29 @@ class AdminConfigRoutingTests(unittest.TestCase):
                 self.assertFalse(dialog.extra_routing_combo.isHidden())
                 self.assertEqual(
                     dialog.extra_routing_combo.currentData(),
-                    ExtraChannelRoutingMethod.SCPI_MAPPED.value,
+                    ExtraChannelRoutingMethod.CLI_DIRECT.value,
                 )
             finally:
+                dialog.close()
+
+    def test_restore_defaults_selects_cli_direct_for_osx150(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = LimitProfileRepository(Path(directory) / "limits.ini")
+            dialog = AdminConfigDialog(
+                default_limit_profiles(),
+                repository,
+                extra_channel_routing_method=ExtraChannelRoutingMethod.SCPI_MAPPED,
+            )
+            try:
+                dialog.model_combo.setCurrentText("OSX-150")
+                dialog._restore_defaults()
+
+                self.assertEqual(
+                    dialog.extra_routing_combo.currentData(),
+                    ExtraChannelRoutingMethod.CLI_DIRECT.value,
+                )
+            finally:
+                dialog._dirty = False
                 dialog.close()
 
     def test_admin_dialog_saves_cli_direct_selection(self):

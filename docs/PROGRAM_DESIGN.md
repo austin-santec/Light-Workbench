@@ -69,10 +69,11 @@ the validated three-digit front-panel count in the part number. The switch's
 the required count blocks the run, while a larger value does not add channels
 to the required pass. After all required channels are explicitly written, the
 worker can offer one optional extra-channel phase. The administrator-selected
-method is captured in run hardware metadata and remains fixed: default
-`scpi_mapped` tests the finite configured range `N + 1..M` with `set_channel()`,
-while experimental `cli_direct` probes unknown physical capacity sequentially
-with `set_physical_port()`. Declining finishes the run. Partial,
+method is captured in run hardware metadata and remains fixed. OSX-150 defaults
+to `cli_direct`, which probes unknown physical capacity sequentially with
+`set_physical_port()`. An administrator can select `scpi_mapped` to test the
+finite configured range `N + 1..M` with `set_channel()` when those extras are
+registered in the module map. Declining finishes the run. Partial,
 manual-order, retest-only, loaded-only, failed, and canceled runs do not make
 this offer; a continued full pass can offer it after completing all missing
 front-panel channels.
@@ -102,6 +103,13 @@ physical port independently from the assignment's effective channel map. The
 distinct `set_physical_port()` capability cannot change or reinterpret this
 contract. Both paths are serialized by the persistent hardware manager.
 
+CLI extra-channel testing has a worker-owned IP-readiness gate before the
+first extra route. The exact sentinel `192.168.99.10` means the switch still
+needs an operator-assigned IP; a LAN-query failure is also actionable through
+the `Recheck IP` prompt. The gate does not cache or independently probe the
+address, and the route adapter continues to query the current address before
+every `writereg` operation.
+
 An extra candidate remains provisional after routing and measurement. Retry,
 Stop Extra Testing, rejected readings, and route failures discard it; CLI mode
 also supports No More Physical Ports. Only the existing Write IL commit path
@@ -118,6 +126,16 @@ compatibility classifications remain readable for migration and review.
 Workers provide absolute measurements and reference powers to this service,
 which keeps calculation logic reusable for an integrated ILM or separate OPM
 and laser source.
+
+`domain/measurement_timing.py` defines the administrator-controlled timing
+profile, including one to three strictly increasing absolute power-sample
+offsets after source settling. The OP815 driver reads every scheduled sample
+for each wavelength and returns the arithmetic mean while preserving raw
+sample and timing diagnostics in the hardware trace. The same profile is
+passed to normal runs, retests, Live IL, diagnostics, repeatability, and
+reference calculation. A new run stores the full profile snapshot; a
+continuation or retest uses the original snapshot, and a legacy run without
+one uses the Standard profile.
 
 `domain/diagnostic_analysis.py` owns the in-memory diagnostic sample model and
 variation statistics. Manual samples and automatic monitoring samples carry
@@ -229,6 +247,28 @@ run loading, explicit file persistence, and numbered-run lookup. New hardware
 runs use the database-primary workflows and repository contracts under
 `application/` and `infrastructure/database/`. The established `run_data.py`
 and `run_persistence.py` import paths remain compatibility facades.
+
+A database-backed run load owns one bounded, context-local read session. The
+application workflow orchestrates the load while infrastructure reuses one
+physical connection, rolls the read transaction back on exit, and bulk-loads
+related-run measurement history. The session ends before the loaded context is
+published to Qt and does not alter ordinary write transaction ownership.
+
+That immutable context includes the unit's lightweight run index and the
+assignment's related run snapshots. Qt publication derives comparison choices,
+composite/COC status, and replacement-analysis display data from the context,
+without repository calls. A user-requested comparison or numbered-run load
+creates a new context and therefore observes current database state.
+
+`application/database_health_monitor.py` owns the advisory database-health
+lifecycle. After the main window is ready it runs a short-lived schema
+preflight outside the Qt GUI thread, repeats approximately once per minute,
+and publishes immutable disabled/checking/ready/unavailable snapshots. The
+compact top-row control in `ui/database_status.py` renders those snapshots and
+allows a manual recheck. Every probe closes its connection, may warm normal
+ODBC pooling, and never replaces the authoritative preflight performed by a
+database operation. Shutdown stops scheduling and ignores late daemon-probe
+results without waiting on the network timeout.
 
 `domain/run_status.py` owns the derived two-part run assessment. Completion is
 based on accepted readings compared with the saved hardware plan, while result
@@ -393,6 +433,14 @@ session Reference panel, then the vertically scrollable
 analysis/replacement/run-information area. This is a presentation-only
 arrangement; the existing widgets and workflow callbacks remain the source of
 behavior.
+
+`File > Clear Workspace...` is an in-memory unload boundary. It resets the
+loaded run context, setup form, pending reading state, table, comparison,
+analysis, and run-specific controls to their startup presentation without
+deleting persisted data. It deliberately retains hardware-manager connections,
+database-health state, wavelength mode, settings, and the session-scoped
+reference bank. The action is unavailable while acquisition, reference
+calculation, or measurement persistence is active.
 
 The Power Measurement Diagnostics dialog places its in-memory variation
 analysis beside the history table in a resizable splitter. The panel is
