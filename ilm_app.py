@@ -183,6 +183,7 @@ from hardware.factory import HardwareFactory
 from infrastructure.coc_exporter import (
     COC_TEMPLATE_45_FILENAME,
     COC_TEMPLATE_48_FILENAME,
+    DEFAULT_PART_LOOKUP_PARENT,
     DEFAULT_PART_LOOKUP_ROOT,
     FileCocExporter,
 )
@@ -976,6 +977,7 @@ class MainWindow(QMainWindow):
         self.part_lookup_controller.failed.connect(self._automatic_part_lookup_failed)
         self._device_connection_states = {}
         self._connected_switch_serial = ""
+        self._connected_switch_lookup_model = ""
         self._switch_ip_query_operation_id = ""
         self._active_part_lookup_request = None
         self._part_lookup_requests = {}
@@ -1247,14 +1249,18 @@ class MainWindow(QMainWindow):
             return
 
         serial_changed = serial.casefold() != self._connected_switch_serial.casefold()
+        model_changed = bool(self._connected_switch_lookup_model) and (
+            model != self._connected_switch_lookup_model
+        )
         new_connection = previous_state in (
             ConnectionState.DISCONNECTED,
             ConnectionState.CONNECTING,
             ConnectionState.ERROR,
         )
-        if not serial_changed and not new_connection:
+        if not serial_changed and not model_changed and not new_connection:
             return
         self._connected_switch_serial = serial
+        self._connected_switch_lookup_model = model
         self._record_support(
             SupportEventCategory.WORKFLOW,
             "metadata.main_board_serial_detected",
@@ -1289,7 +1295,7 @@ class MainWindow(QMainWindow):
         )
         form_serial_changed = current_serial.casefold() != serial.casefold()
         self._active_part_lookup_request = None
-        if form_serial_changed:
+        if form_serial_changed or model_changed:
             self.hardware_main_board_serial.setText(serial)
             self.hardware_part_number.setCurrentText("")
             self.metadata_labels["Part number"].setText("-")
@@ -1302,7 +1308,10 @@ class MainWindow(QMainWindow):
         try:
             request_id = self.part_lookup_controller.start(
                 serial,
-                DEFAULT_PART_LOOKUP_ROOT,
+                self.coc_exporter.part_lookup_roots(
+                    model, DEFAULT_PART_LOOKUP_PARENT
+                )[0],
+                switch_model=model,
             )
         except Exception as error:
             self._show_automatic_part_lookup_failure(
@@ -1324,7 +1333,7 @@ class MainWindow(QMainWindow):
             status="started",
         )
 
-    def _automatic_part_lookup_is_current(self, request_id, serial):
+    def _automatic_part_lookup_is_current(self, request_id, serial, model):
         if request_id != self._active_part_lookup_request:
             return False
         if self.run_data is not None or self.hardware_run_active:
@@ -1334,6 +1343,11 @@ class MainWindow(QMainWindow):
         )
         if current_serial.casefold() != serial.casefold():
             return False
+        try:
+            if self._part_lookup_model() != model:
+                return False
+        except ValueError:
+            return False
         return not self.hardware_part_number.currentText().strip()
 
     def _automatic_part_lookup_succeeded(self, request_id, serial, part_number):
@@ -1341,7 +1355,7 @@ class MainWindow(QMainWindow):
             request_id,
             (serial, "OSX"),
         )
-        if not self._automatic_part_lookup_is_current(request_id, serial):
+        if not self._automatic_part_lookup_is_current(request_id, serial, model):
             self._record_stale_part_lookup(request_id, serial, model)
             return
         self._active_part_lookup_request = None
@@ -1373,7 +1387,7 @@ class MainWindow(QMainWindow):
             request_id,
             (serial, "OSX"),
         )
-        if not self._automatic_part_lookup_is_current(request_id, serial):
+        if not self._automatic_part_lookup_is_current(request_id, serial, model):
             self._record_stale_part_lookup(request_id, serial, model)
             return
         self._active_part_lookup_request = None
@@ -4118,9 +4132,55 @@ class MainWindow(QMainWindow):
             "extra-only run. OSX-150 only."
         )
 
+    def _part_lookup_model(self) -> str | None:
+        """Use the displayed unit's identity, never a fake OSX-150 fallback."""
+        models = set()
+        if self.run_data is not None:
+            metadata = self.run_data.metadata
+            criteria = self.run_data.criteria_snapshot or {}
+            candidates = [criteria.get("model")]
+            candidates.extend(
+                metadata.get(key)
+                for key in ("Switch model", "Unit model", "Model")
+            )
+            part_number = metadata.get("Part number", "")
+        else:
+            candidates = []
+            part_number = self.hardware_part_number.currentText()
+            serial = self.coc_exporter.normalise_serial(
+                self.hardware_main_board_serial.text()
+            )
+            state = self._device_connection_states.get(DeviceCategory.OPTICAL_SWITCH)
+            if (
+                state in {ConnectionState.CONNECTED, ConnectionState.IN_USE}
+                and serial.casefold() == self._connected_switch_serial.casefold()
+            ):
+                candidates.append(self._connected_switch_lookup_model)
+        for candidate in candidates:
+            model = normalize_switch_model(candidate)
+            if model in {"OSX-100", "OSX-150"}:
+                models.add(model)
+        try:
+            models.add(parse_osx_part_number(part_number).model)
+        except ValueError:
+            pass
+        if len(models) > 1:
+            raise ValueError(
+                "The unit's saved/detected model and part number disagree. "
+                "Confirm the unit identity before looking up its part number."
+            )
+        return next(iter(models), None)
+
     def open_part_lookup_folder(self):
-        """Open the fixed network folder used for part-number lookup."""
-        lookup_root = Path(DEFAULT_PART_LOOKUP_ROOT)
+        """Open the model's lookup directory, or the shared parent if unknown."""
+        try:
+            roots = self.coc_exporter.part_lookup_roots(
+                self._part_lookup_model(), DEFAULT_PART_LOOKUP_PARENT
+            )
+        except ValueError as error:
+            QMessageBox.warning(self, "Part Number Lookup Folder", str(error))
+            return
+        lookup_root = roots[0] if len(roots) == 1 else Path(DEFAULT_PART_LOOKUP_PARENT)
         if not lookup_root.is_dir():
             QMessageBox.warning(
                 self,
@@ -4175,7 +4235,6 @@ class MainWindow(QMainWindow):
 
     def lookup_part_number(self):
         serial = self.hardware_main_board_serial.text().strip()
-        lookup_root = str(DEFAULT_PART_LOOKUP_ROOT)
         self._active_part_lookup_request = None
         self._record_support(
             SupportEventCategory.OPERATOR,
@@ -4185,7 +4244,11 @@ class MainWindow(QMainWindow):
             status="started",
         )
         try:
-            part_number = self.coc_exporter.find_part_number(serial, lookup_root)
+            part_number = self.coc_exporter.find_part_number(
+                serial,
+                switch_model=self._part_lookup_model(),
+                lookup_parent=DEFAULT_PART_LOOKUP_PARENT,
+            )
         except (OSError, LookupError, ValueError) as error:
             self._record_support(
                 SupportEventCategory.OPERATOR,
@@ -11095,7 +11158,8 @@ class MainWindow(QMainWindow):
             try:
                 part_number = self.coc_exporter.find_part_number(
                     serial,
-                    str(DEFAULT_PART_LOOKUP_ROOT),
+                    switch_model=coc_model,
+                    lookup_parent=DEFAULT_PART_LOOKUP_PARENT,
                 )
             except (OSError, LookupError, ValueError):
                 pass

@@ -49,7 +49,7 @@ from domain.measurement_timing import MeasurementTimingProfile
 from ilm_app import (
     AboutDialog,
     CompletedReplacementDialog,
-    DEFAULT_PART_LOOKUP_ROOT,
+    DEFAULT_PART_LOOKUP_PARENT,
     DEFAULT_RUN_ROOT,
     MainWindow,
     STANDARD_PART_NUMBERS,
@@ -129,7 +129,7 @@ class FakePartNumberLookupController(QObject):
         self.requests = []
         self.was_closed = False
 
-    def start(self, serial, lookup_root):
+    def start(self, serial, lookup_root, *, switch_model=None):
         request_id = len(self.requests) + 1
         self.requests.append((request_id, serial, Path(lookup_root)))
         return request_id
@@ -890,6 +890,7 @@ class MainWindowTests(unittest.TestCase):
             request_id, requested_serial, _root = lookup.requests[-1]
             expected_serial = str(index)
             self.assertEqual(requested_serial, expected_serial)
+            self.assertEqual(_root, DEFAULT_PART_LOOKUP_PARENT / model)
             self.assertEqual(window.hardware_main_board_serial.text(), expected_serial)
             self.assertEqual(
                 window.hardware_switch_serial.text(),
@@ -907,7 +908,10 @@ class MainWindowTests(unittest.TestCase):
             lookup_root = Path(directory)
             (lookup_root / "SN31415_OSX-150-PART").mkdir()
             original_entries = sorted(path.name for path in lookup_root.iterdir())
-            with patch("ilm_app.DEFAULT_PART_LOOKUP_ROOT", lookup_root):
+            with patch("ilm_app.DEFAULT_PART_LOOKUP_PARENT", lookup_root.parent), patch(
+                "infrastructure.coc_exporter._part_lookup_roots",
+                return_value=(lookup_root,),
+            ):
                 window = MainWindow()
                 lookup_finished = QEventLoop()
                 window.part_lookup_controller.succeeded.connect(
@@ -1111,11 +1115,131 @@ class MainWindowTests(unittest.TestCase):
 
         window.coc_exporter.find_part_number.assert_called_once_with(
             "SN13579",
-            str(DEFAULT_PART_LOOKUP_ROOT),
+            switch_model=None,
+            lookup_parent=DEFAULT_PART_LOOKUP_PARENT,
         )
         self.assertEqual(window.hardware_part_number.currentText(), "MANUAL-PART")
         self.assertEqual(window.run_data.metadata["Part number"], "MANUAL-PART")
         window.close()
+
+    def test_manual_lookup_uses_detected_model_for_matching_serial(self):
+        for model in ("OSX-100", "OSX-150"):
+            with self.subTest(model=model):
+                window = MainWindow(part_lookup_controller=FakePartNumberLookupController())
+                try:
+                    window._hardware_device_status_changed(DeviceInfo(
+                        category=DeviceCategory.OPTICAL_SWITCH,
+                        model=model, serial_number="12345", state=ConnectionState.CONNECTED,
+                    ))
+                    window.coc_exporter.find_part_number = MagicMock(
+                        return_value=model + "-1A-048-TEST"
+                    )
+                    window.lookup_part_number()
+                    window.coc_exporter.find_part_number.assert_called_once_with(
+                        "12345", switch_model=model,
+                        lookup_parent=DEFAULT_PART_LOOKUP_PARENT,
+                    )
+                finally:
+                    window.close()
+
+    def test_loaded_run_lookup_uses_saved_model_not_connected_switch(self):
+        window = MainWindow(part_lookup_controller=FakePartNumberLookupController())
+        try:
+            window.run_data = RunData(
+                Path("saved.csv"), [], {"Main board serial": "SAVED"},
+                criteria_snapshot={"model": "OSX-100"},
+            )
+            window.hardware_main_board_serial.setText("SAVED")
+            window._hardware_device_status_changed(DeviceInfo(
+                category=DeviceCategory.OPTICAL_SWITCH,
+                model="OSX-150", serial_number="OTHER", state=ConnectionState.CONNECTED,
+            ))
+            window.coc_exporter.find_part_number = MagicMock(
+                return_value="OSX-100-1A-048-TEST"
+            )
+            window.lookup_part_number()
+            window.coc_exporter.find_part_number.assert_called_once_with(
+                "SAVED", switch_model="OSX-100",
+                lookup_parent=DEFAULT_PART_LOOKUP_PARENT,
+            )
+        finally:
+            window.close()
+
+    def test_offline_lookup_uses_valid_part_number_model_without_mode_dependency(self):
+        window = MainWindow()
+        try:
+            window.hardware_part_number.setCurrentText("OSX-100-1A-048-TEST")
+            for mode in ("SM", "MM"):
+                window._set_wavelength_mode(mode)
+                self.assertEqual(window._part_lookup_model(), "OSX-100")
+            window.hardware_part_number.setCurrentText("")
+            self.assertIsNone(window._part_lookup_model())
+        finally:
+            window.close()
+
+    def test_conflicting_loaded_identity_blocks_lookup_without_guessing(self):
+        window = MainWindow()
+        try:
+            window.run_data = RunData(
+                Path("saved.csv"), [], {"Part number": "OSX-100-1A-048-TEST"},
+                criteria_snapshot={"model": "OSX-150"},
+            )
+            window.coc_exporter.find_part_number = MagicMock()
+            with patch("ilm_app.QMessageBox.warning") as warning:
+                window.lookup_part_number()
+            warning.assert_called_once()
+            window.coc_exporter.find_part_number.assert_not_called()
+        finally:
+            window.close()
+
+    def test_same_serial_model_change_starts_new_lookup_and_ignores_old_result(self):
+        lookup = FakePartNumberLookupController()
+        window = MainWindow(part_lookup_controller=lookup)
+        try:
+            for model in ("OSX-100", "OSX-150"):
+                window._hardware_device_status_changed(DeviceInfo(
+                    category=DeviceCategory.OPTICAL_SWITCH,
+                    model=model, serial_number="12345", state=ConnectionState.CONNECTED,
+                ))
+            self.assertEqual(len(lookup.requests), 2)
+            self.assertEqual(lookup.requests[-1][2], DEFAULT_PART_LOOKUP_PARENT / "OSX-150")
+            lookup.succeeded.emit(1, "12345", "OSX-100-1A-048-STALE")
+            self.assertEqual(window.hardware_part_number.currentText(), "")
+            lookup.succeeded.emit(2, "12345", "OSX-150-1A-048-CURRENT")
+            self.assertEqual(window.hardware_part_number.currentText(), "OSX-150-1A-048-CURRENT")
+        finally:
+            window.close()
+
+    def test_disconnect_during_lookup_ignores_late_model_result(self):
+        lookup = FakePartNumberLookupController()
+        window = MainWindow(part_lookup_controller=lookup)
+        try:
+            info = DeviceInfo(
+                category=DeviceCategory.OPTICAL_SWITCH,
+                model="OSX-100", serial_number="12345", state=ConnectionState.CONNECTED,
+            )
+            window._hardware_device_status_changed(info)
+            window._hardware_device_status_changed(info.with_state(ConnectionState.DISCONNECTED))
+            lookup.succeeded.emit(1, "12345", "OSX-100-1A-048-STALE")
+            self.assertEqual(window.hardware_part_number.currentText(), "")
+        finally:
+            window.close()
+
+    def test_part_number_folder_action_opens_each_models_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for model in ("OSX-100", "OSX-150"):
+                folder = Path(directory) / model
+                folder.mkdir()
+                window = MainWindow()
+                try:
+                    window.hardware_part_number.setCurrentText(model + "-1A-048-TEST")
+                    with patch("ilm_app.DEFAULT_PART_LOOKUP_PARENT", Path(directory)), patch(
+                        "ilm_app.QDesktopServices.openUrl", return_value=True
+                    ) as open_url:
+                        window.open_part_lookup_folder()
+                    self.assertEqual(Path(open_url.call_args.args[0].toLocalFile()), folder)
+                finally:
+                    window.close()
 
     def test_completed_replacement_dialog_prefills_recommendations(self):
         dialog = CompletedReplacementDialog(
@@ -1421,10 +1545,10 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(window.settings.values["switch_visa_address"], "")
         window.close()
 
-    def test_part_number_lookup_folder_opens_fixed_designated_folder(self):
+    def test_part_number_lookup_folder_opens_shared_parent_when_model_unknown(self):
         window = MainWindow()
         with patch(
-            "ilm_app.DEFAULT_PART_LOOKUP_ROOT", Path(tempfile.gettempdir())
+            "ilm_app.DEFAULT_PART_LOOKUP_PARENT", Path(tempfile.gettempdir())
         ), patch(
             "ilm_app.QDesktopServices.openUrl", return_value=True
         ) as open_url:
@@ -2860,6 +2984,38 @@ class MainWindowTests(unittest.TestCase):
             persist.assert_called_once()
             self.assertFalse(window.hardware_controller.is_active)
             window.close()
+
+    def test_coc_missing_part_lookup_uses_context_run_model(self):
+        for model in ("OSX-100", "OSX-150"):
+            with self.subTest(model=model), tempfile.TemporaryDirectory() as directory:
+                source = CocSourceRun(
+                    1, Path(directory) / "Run-1.csv",
+                    (MeasurementRecord(1, 0.6, 0.7, 1),),
+                    {"Main board serial": "00123"},
+                    {"model": model, "fail_above_db": 0.8 if model == "OSX-100" else 2.5},
+                )
+                result = prepare_coc(source, 1)
+                self.assertTrue(result.eligible)
+                dialog = MagicMock()
+                dialog.exec_.return_value = QDialog.Accepted
+                dialog.preparation_result = result
+                dialog.base_run = source
+                window = MainWindow()
+                try:
+                    window.run_data = RunData(source.source_path, list(source.measurements), {})
+                    window.coc_exporter.find_part_number = MagicMock(
+                        return_value=model + "-1A-001-TEST"
+                    )
+                    with patch.object(window, "_coc_run_options", return_value=[CocRunOption(source)]), patch(
+                        "ilm_app.CocExportDialog", return_value=dialog
+                    ), patch.object(window, "_select_coc_template", return_value=None):
+                        window.write_coc()
+                    window.coc_exporter.find_part_number.assert_called_once_with(
+                        "00123", switch_model=model,
+                        lookup_parent=DEFAULT_PART_LOOKUP_PARENT,
+                    )
+                finally:
+                    window.close()
 
     def test_coc_validation_log_fields_include_bounded_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

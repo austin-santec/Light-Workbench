@@ -70,7 +70,27 @@ class PartNumberLookupControllerTests(unittest.TestCase):
         )
         controller.close()
 
+    def test_background_lookup_passes_model_to_read_only_exporter(self):
+        calls = []
+
+        def lookup(serial, root, *, switch_model):
+            calls.append((serial, root, switch_model))
+            return "OSX-100-1A-048-TEST"
+
+        controller = PartNumberLookupController(lookup)
+        loop = QEventLoop()
+        controller.succeeded.connect(lambda *_values: loop.quit())
+        QTimer.singleShot(3000, loop.quit)
+        controller.start("12345", Path("OSX-100"), switch_model="OSX-100")
+        loop.exec_()
+        self.assertEqual(calls, [("12345", Path("OSX-100"), "OSX-100")])
+        controller.close()
+
     def test_error_categories_distinguish_existing_lookup_failures(self):
+        self.assertEqual(
+            classify_part_lookup_error(LookupError("Part-number model mismatch: OSX-150")),
+            "model_mismatch",
+        )
         self.assertEqual(
             classify_part_lookup_error(LookupError("No folder was found")),
             "no_matching_serial",

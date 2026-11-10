@@ -13,6 +13,8 @@ def classify_part_lookup_error(error: Exception) -> str:
     if isinstance(error, FileNotFoundError):
         return "lookup_folder_unavailable"
     if isinstance(error, LookupError):
+        if "part-number model mismatch" in message:
+            return "model_mismatch"
         if "more than one" in message:
             return "multiple_matches"
         if "does not contain a part number" in message:
@@ -33,7 +35,7 @@ class PartNumberLookupController(QObject):
 
     def __init__(
         self,
-        lookup_function: Callable[[str, str | Path], str],
+        lookup_function: Callable[..., str],
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -42,14 +44,16 @@ class PartNumberLookupController(QObject):
         self._next_request_id = 0
         self._closed = threading.Event()
 
-    def start(self, serial: str, lookup_root: str | Path) -> int:
+    def start(
+        self, serial: str, lookup_root: str | Path, *, switch_model: str | None = None
+    ) -> int:
         """Start one daemon lookup and return its monotonically increasing ID."""
         with self._lock:
             self._next_request_id += 1
             request_id = self._next_request_id
         thread = threading.Thread(
             target=self._run_lookup,
-            args=(request_id, str(serial), Path(lookup_root)),
+            args=(request_id, str(serial), Path(lookup_root), switch_model),
             name="part-number-lookup-%d" % request_id,
             daemon=True,
         )
@@ -65,9 +69,15 @@ class PartNumberLookupController(QObject):
         request_id: int,
         serial: str,
         lookup_root: Path,
+        switch_model: str | None,
     ) -> None:
         try:
-            part_number = self._lookup_function(serial, lookup_root)
+            if switch_model is None:
+                part_number = self._lookup_function(serial, lookup_root)
+            else:
+                part_number = self._lookup_function(
+                    serial, lookup_root, switch_model=switch_model
+                )
         except Exception as error:  # Deliberate worker boundary.
             if not self._closed.is_set():
                 try:

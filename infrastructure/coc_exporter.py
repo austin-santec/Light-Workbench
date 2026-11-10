@@ -8,6 +8,7 @@ from config.app_config import (
     COC_TEMPLATE_48_FILENAME,
     COC_TEMPLATE_FILENAME,
     COC_TEMPLATE_PROFILE_FILENAMES,
+    DEFAULT_PART_LOOKUP_PARENT,
     DEFAULT_PART_LOOKUP_ROOT,
 )
 from infrastructure.coc_export import (
@@ -17,6 +18,7 @@ from infrastructure.coc_export import (
     inspect_coc_template_capacity as _inspect_coc_template_capacity,
     inspect_coc_template_profile as _inspect_coc_template_profile,
     normalise_serial as _normalise_serial,
+    part_lookup_roots as _part_lookup_roots,
     template_filename_for_channel_count as _template_filename_for_channel_count,
     template_filename_for_profile as _template_filename_for_profile,
 )
@@ -31,10 +33,26 @@ class FileCocExporter:
     def find_part_number(
         self,
         main_board_serial: str,
-        lookup_root: str | Path = DEFAULT_PART_LOOKUP_ROOT,
+        lookup_root: str | Path | None = None,
+        *,
+        switch_model: str | None = None,
+        lookup_parent: str | Path = DEFAULT_PART_LOOKUP_PARENT,
     ) -> str:
-        """Find a part number in the configured OSX-150 folder tree."""
-        return _find_part_number(main_board_serial, lookup_root)
+        """Find a model-consistent part using read-only directory enumeration."""
+        return _find_part_number(
+            main_board_serial,
+            lookup_root,
+            switch_model=switch_model,
+            lookup_parent=lookup_parent,
+        )
+
+    def part_lookup_roots(
+        self,
+        switch_model: str | None = None,
+        lookup_parent: str | Path = DEFAULT_PART_LOOKUP_PARENT,
+    ) -> tuple[Path, ...]:
+        """Resolve the same directories used by automatic/manual/COC lookup."""
+        return _part_lookup_roots(switch_model, lookup_parent)
 
     def normalise_serial(self, value: str) -> str:
         """Normalize the serial format used in COC fields and filenames."""

@@ -63,6 +63,36 @@ records. CSV measurement and reference headers are generated from the run's
 actual OPM wavelength pair. Files without wavelength metadata or generic maps
 continue to load as native SM 1310/1550 runs.
 
+## Read-only product-log lookup
+
+The optional part-number lookup reads `SN<main-board serial>_<part number>`
+directory names under `U:\Product Log\Units-COCs-Param Files`:
+
+- OSX-100 (SM or MM): `OSX-100` subdirectory.
+- OSX-150: `OSX-150` subdirectory.
+
+`config/app_config.py` owns the shared parent default;
+`infrastructure/coc_export.py` resolves roots and performs read-only directory
+enumeration through the application-facing `FileCocExporter`. An explicit
+single-root argument remains available for legacy callers and local tests.
+Lookup never creates directories, opens files, writes, copies, renames, or
+deletes anything in the product log. It does not export COCs or change SQL data.
+
+Automatic lookup uses detected model/serial identity. Manual lookup uses saved
+identity for a loaded run, otherwise the connected model for the matching
+serial or a valid entered part number. Conflicting identities require review,
+not a guessed model. COC fallback uses the selected context run's model. No
+path uses the unrelated fake-hardware OSX-150 fallback to decide lookup scope.
+
+When the model is unknown, search both model subdirectories and require one
+unambiguous match. An unavailable directory means an incomplete lookup, even
+if the other contains a match; do not interpret it as no match. Known-model
+searches never fall back across families. Duplicate serial matches and
+part-number/folder/model disagreements are rejected. Manual part-number entry
+remains available after failure. Open Lookup Folder opens the selected model
+directory, or their shared parent when the model is unknown; this launches
+File Explorer only and performs no application write to the share.
+
 ## Format responsibilities
 
 - SQL Server: canonical structured application data for new recorded hardware runs on

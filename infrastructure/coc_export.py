@@ -17,6 +17,7 @@ from config.app_config import (
     COC_TEMPLATE_48_FILENAME,
     COC_TEMPLATE_FILENAME,
     COC_TEMPLATE_PROFILE_FILENAMES,
+    DEFAULT_PART_LOOKUP_PARENT,
     DEFAULT_PART_LOOKUP_ROOT,
 )
 from domain.limit_profiles import normalize_switch_model, normalize_wavelength_mode
@@ -79,38 +80,82 @@ def normalise_serial(value: str) -> str:
     return serial
 
 
-def find_part_number(main_board_serial, lookup_root=DEFAULT_PART_LOOKUP_ROOT):
-    """Find the part number in the matching SN<serial>_<part> directory."""
+def part_lookup_roots(
+    switch_model: str | None = None,
+    lookup_parent: str | Path = DEFAULT_PART_LOOKUP_PARENT,
+) -> tuple[Path, ...]:
+    """Resolve read-only lookup directories without accessing the filesystem."""
+    model = normalize_switch_model(switch_model)
+    if model and model not in {"OSX-100", "OSX-150"}:
+        raise ValueError("Unsupported part-number lookup model: %s" % model)
+    models = (model,) if model else ("OSX-100", "OSX-150")
+    return tuple(Path(lookup_parent) / item for item in models)
+
+
+def find_part_number(
+    main_board_serial: str,
+    lookup_root: str | Path | None = None,
+    *,
+    switch_model: str | None = None,
+    lookup_parent: str | Path = DEFAULT_PART_LOOKUP_PARENT,
+) -> str:
+    """Read directory names only; never create, open, or modify lookup files.
+
+    An explicit root preserves the legacy single-directory API. Otherwise a
+    known model selects its own directory, and an unknown model searches both.
+    Every required directory must be available before a match can be accepted.
+    """
     serial = normalise_serial(main_board_serial)
     if not serial:
         raise ValueError("Enter a Main Board serial number first.")
 
-    root = Path(lookup_root)
-    if not root.is_dir():
-        raise FileNotFoundError(
-            "The part-number lookup folder is not available:\n%s" % root
-        )
-
+    roots = part_lookup_roots(switch_model, lookup_parent)
+    if lookup_root is not None:
+        roots = (Path(lookup_root),)
     prefix = "SN%s_" % serial
-    matches = sorted(
-        directory
-        for directory in root.iterdir()
-        if directory.is_dir()
-        and directory.name.casefold().startswith(prefix.casefold())
-    )
+    matches = []
+    for root in roots:
+        if not root.is_dir():
+            raise FileNotFoundError(
+                "The part-number lookup folder is not available:\n%s\n"
+                "Lookup is incomplete. Restore access or enter the part number manually."
+                % root
+            )
+        matches.extend(
+            directory
+            for directory in root.iterdir()
+            if directory.name.casefold().startswith(prefix.casefold())
+            and directory.is_dir()
+        )
+    matches.sort()
+    searched = "\n".join(str(root) for root in roots)
     if not matches:
         raise LookupError(
-            "No OSX-150 folder was found for Main Board serial %s." % serial
+            "No matching folder was found for Main Board serial %s in:\n%s"
+            % (serial, searched)
         )
     if len(matches) > 1:
         raise LookupError(
-            "More than one OSX-150 folder was found for Main Board serial %s:\n%s"
-            % (serial, "\n".join(directory.name for directory in matches))
+            "More than one folder was found for Main Board serial %s:\n%s\n"
+            "Confirm the model and part number before continuing."
+            % (serial, "\n".join(str(directory) for directory in matches))
         )
 
     part_number = matches[0].name[len(prefix):]
     if not part_number:
         raise LookupError("The matching folder does not contain a part number.")
+    expected_model = normalize_switch_model(switch_model)
+    folder_model = normalize_switch_model(matches[0].parent.name)
+    actual_model = normalize_switch_model(part_number)
+    if (
+        actual_model not in {"OSX-100", "OSX-150"}
+        or (expected_model and actual_model != expected_model)
+        or (folder_model in {"OSX-100", "OSX-150"} and actual_model != folder_model)
+    ):
+        raise LookupError(
+            "Part-number model mismatch: %s does not match %s in %s."
+            % (part_number, expected_model or folder_model, matches[0].parent)
+        )
     return part_number
 
 

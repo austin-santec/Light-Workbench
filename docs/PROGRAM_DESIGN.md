@@ -370,9 +370,15 @@ interaction.
 `application/part_number_lookup.py` owns background execution for the optional
 network-backed part-number lookup. The main window projects the serial from a
 newly connected supported switch into the setup form only when no run is
-loaded or active, then applies a lookup result only if its request and serial
-are still current. Lookup failure remains separate from hardware readiness and
-never writes run data.
+loaded or active, then applies a lookup result only if its request, serial,
+and detected model are still current. Automatic lookup, manual lookup, the
+folder-opening action, and the COC missing-part fallback share model-specific
+directory resolution through `infrastructure/coc_exporter.py`. Loaded runs
+and COCs use saved identity rather than an unrelated connected switch; unknown
+models require an unambiguous search of both model directories. The lookup
+only enumerates directory names and never opens or modifies product-log files.
+Lookup failure remains separate from hardware readiness and never writes run
+data. See DATA_ARCHITECTURE for the lookup roots and failure rules.
 
 `domain/hardware_connection.py` defines capability, readiness, snapshot, and
 ownership errors without importing Qt or vendor drivers. Normal-run readiness

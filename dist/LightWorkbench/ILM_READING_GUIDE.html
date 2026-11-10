@@ -180,6 +180,7 @@
           <li>Select SM (1310/1550) or MM (850/1300).</li>
           <li>Review the connected hardware identities.</li>
           <li>Connect all hardware or one device at a time.</li>
+          <li>Check the advisory Database status.</li>
         </ul>
       </section>
       <section class="map-card">
@@ -200,6 +201,7 @@
       </section>
     </div>
     <p>Hardware test setup can be collapsed, and the center splitter can be moved, to give the readings table more room without clearing entered values.</p>
+    <p><strong>Database status:</strong> The top-row indicator checks in the background at startup and approximately once per minute. Green <strong>Database: Ready</strong> means the last check succeeded; <strong>Checking...</strong> means a check is running, and red <strong>Database: Unavailable</strong> means it failed. Hover for details or click to check again. The monitor does not hold a permanent connection, and Ready does not guarantee that a later save will succeed.</p>
 
     <h2>2. Select the wavelength mode and connect hardware</h2>
     <ol class="steps">
@@ -222,11 +224,12 @@
         <tr><td>Operating band</td><td>Select O band or C band. It is stored with the run.</td></tr>
         <tr><td>Tested by</td><td>Enter the operator's initials.</td></tr>
         <tr><td>Station</td><td>Enter the positive station number. New database runs require it; Admin Mode does not bypass this requirement.</td></tr>
-        <tr><td>Run number</td><td>Select the numbered run for this unit. Existing database runs can be loaded by unit and run number.</td></tr>
-        <tr><td>Run purpose</td><td>Production is the default. Engineering, Training, and Calibration runs are retained but excluded from normal production analysis.</td></tr>
+        <tr><td>Run number</td><td>Use this with the main-board serial to load an existing run. When a new database run is created, SQL Server allocates the next run number for the unit; check the number displayed after creation.</td></tr>
+        <tr><td>Run purpose</td><td>Production is the default; Engineering, Training, and Calibration are also available. Purpose is fixed for active or loaded runs. Production-only reports filter by purpose, but purpose alone does not exclude compatible measurements from replacement analysis or COC creation.</td></tr>
       </tbody>
     </table>
     <div class="notice"><strong>Admin Mode:</strong> An authenticated administrator may explicitly continue past missing descriptive metadata. It cannot bypass disconnected hardware, an invalid channel plan, a missing/mismatched reference, or the required database station number.</div>
+    <p><strong>Part-number lookup is read-only:</strong> OSX-100 units (SM or MM) are searched under <code>U:\Product Log\Units-COCs-Param Files\OSX-100</code>; OSX-150 units use the sibling <code>OSX-150</code> folder. A loaded run uses its saved model, not a different connected device. With no known model, lookup checks both folders and requires one unambiguous match; an unavailable folder makes that search incomplete. Resolve duplicate/model-mismatch messages or enter the verified part number manually. The lookup-folder action opens the appropriate model folder, or their shared parent if the model is unknown. Lookup never creates, edits, renames, or deletes files on the drive.</p>
 
     <h2>4. Calculate and maintain the reference</h2>
     <div class="tip">
@@ -250,7 +253,23 @@
         <tr><td>OSX-150</td><td>Below 0.5 dB</td><td>Above 2.25 dB through 2.5 dB</td><td>Above 2.5 dB</td></tr>
       </tbody>
     </table>
-    <p>The shipped SM and MM profiles currently use the same numeric values but are stored independently. Too-good and optimization conditions require review but do not make a row red. A formal failure makes the row red. A negative IL reading indicates a reference or connection problem; it may remain visible temporarily for troubleshooting but cannot be written.</p>
+    <p>These are shipped defaults, not a substitute for the run's saved criteria. SM and MM profiles are stored independently. Too-good and optimization conditions require review but do not make a row red or automatically invalidate a reading. A formal failure makes the row red. A negative IL reading after four-decimal rounding indicates a reference or connection problem; it may remain visible temporarily for troubleshooting but cannot be written.</p>
+    <div class="notice"><strong>COC boundary:</strong> COC validation is stricter at the exact failure limit: each wavelength must be <em>below</em> the applicable COC limit after four-decimal rounding. A value exactly at that boundary can therefore block COC creation even when the table does not classify it as above the formal-failure limit. Read the COC validation summary.</div>
+
+    <h3>Administrator timing profiles and averaged readings</h3>
+    <p>After enabling Admin Mode, open <strong>Edit &gt; Timing Profiles...</strong>. Select an existing profile, or use <strong>New</strong> or <strong>Duplicate</strong>, then adjust the following and click <strong>Save Changes</strong> to save and activate the selected profile:</p>
+    <table>
+      <thead><tr><th>Setting</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>OPM wavelength settling</td><td>Wait after setting the meter wavelength, before confirming it.</td></tr>
+        <tr><td>Laser source settling</td><td>Wait after enabling the source, before the power-sample schedule begins.</td></tr>
+        <tr><td>Live update pause</td><td>Pause between completed automatic live readings, not the total time to measure both wavelengths.</td></tr>
+        <tr><td>Samples per wavelength</td><td>Select 1, 2, or 3 power samples. Multiple samples are averaged separately for each wavelength before calculating IL.</td></tr>
+        <tr><td>Sample offsets</td><td>Absolute times after source settling, in increasing order. For example, 200, 250, and 350 ms target those three offsets, not three successive delays. Hardware-call duration can make actual sampling later.</td></tr>
+      </tbody>
+    </table>
+    <p>The current driver uses the arithmetic mean of the sampled dBm values. It does not average channels, mix wavelengths, or average accepted attempts from different runs. A failed sample does not become an accepted partial reading. The Standard profile uses 100 ms meter settling, 500 ms source settling, a 250 ms live pause, and one sample at offset 0 ms.</p>
+    <div class="warning"><strong>Timing changes require controlled validation:</strong> Faster settings can affect accuracy or stability; a shorter pause alone does not remove source settling or instrument response time. The active profile applies to future acquisitions, including reference calculation and standalone tools. New runs save a profile snapshot; continuation and retesting use that run's saved snapshot, not newly edited settings. Older runs without a snapshot use Standard. Do not change timing to bypass hardware safety constraints.</div>
 
     <h2>6. Choose the channel plan</h2>
     <table>
@@ -259,6 +278,7 @@
         <tr><td>Full configured pass</td><td>Normal production plan. It tests logical channels 1 through the front-panel count derived from the part number. A larger temporary switch configuration does not expand this required pass.</td></tr>
         <tr><td>Single channel</td><td>Tests one selected logical channel.</td></tr>
         <tr><td>Specific channels/ranges</td><td>Tests a comma-separated plan such as <code>1, 3, 7-10</code>. Repeated entries are tested once.</td></tr>
+        <tr><td>Extra channels only</td><td>OSX-150 only. Starts a separate supplemental run above the part-number front-panel count without requiring a completed front-panel pass. Useful for measuring spares later; see section 8. It does not collect front-panel channels or make a standalone COC dataset.</td></tr>
         <tr><td>Choose channel order manually</td><td>Optional full-pass workflow for scattered hardware. Select each next channel manually. A repeated accepted channel creates another attempt while the newest accepted attempt becomes the current table value.</td></tr>
       </tbody>
     </table>
@@ -268,25 +288,34 @@
       <li><strong>Click Start Run.</strong> Preflight checks the channel plan, required setup fields, SQL Server readiness, both hardware connections, and the authorized reference before creating or moving anything.</li>
       <li><strong>Confirm the prompt.</strong> The confirmation identifies the run purpose and warns that the switch will move.</li>
       <li><strong>Move the cable.</strong> Follow the active channel/physical-port message in Current readings.</li>
-      <li><strong>Wait for both wavelengths.</strong> Live Write Mode is enabled by default. It continuously obtains complete two-wavelength readings and waits approximately 250 ms after each completed pair before starting the next pair. Instrument and DLL response time make the total cycle longer.</li>
+      <li><strong>Wait for both wavelengths.</strong> Live Write Mode is enabled by default. It continuously obtains complete two-wavelength readings using the run's timing profile, including any scheduled averaging, then waits the configured Live update pause. Wavelength/source settling, sample offsets, and instrument/DLL response time all contribute to the total cycle.</li>
       <li><strong>Review the pending reading.</strong> The displayed pair is temporary. Continuous updates never save a reading automatically.</li>
-      <li><strong>Click Write IL.</strong> Click <span class="button">Write IL</span> or use its displayed shortcut, normally <kbd>+</kbd>. The complete pair is committed atomically to SQL Server, the table updates, and the worker advances.</li>
+      <li><strong>Click Write IL.</strong> Click <span class="button">Write IL</span> or use its displayed shortcut, normally <kbd>+</kbd>. The complete pair is committed atomically to SQL Server. The worker advances only after the matching saved-reading acknowledgement; wait for the next channel prompt before moving the cable.</li>
       <li><strong>Repeat.</strong> Move the cable as directed, review the complete pair, and write it until the selected plan is finished.</li>
     </ol>
     <div class="tip"><strong>Manual reading option:</strong> Before starting a run, clear <strong>Tools &gt; Live Write Mode</strong> if you want separate Read IL and Write IL steps. Read IL measures and displays both wavelengths; only Write IL commits and advances.</div>
-    <div class="warning"><strong>Atomic readings:</strong> Light Workbench never treats one wavelength as a completed channel. If measurement or database persistence fails, no partial pair becomes an accepted measurement. Follow the popup; do not assume a value was saved merely because it appeared on screen.</div>
+    <div class="warning"><strong>Atomic readings:</strong> Light Workbench never treats one wavelength as a completed channel. If measurement or database persistence fails, no partial pair becomes an accepted measurement. Follow the popup; do not assume a value was saved merely because it appeared on screen. A pending save failure keeps the reading available for retry: resolve the reported problem and use Write IL again as instructed, rather than repeatedly clicking or moving to another channel.</div>
 
-    <h2>8. Optional extra physical-port testing</h2>
-    <p>After a successful automatic full pass covers every required front-panel channel, Light Workbench asks whether to finish or test additional physical ports through the switch's engineering interface. This applies to both a new full pass and a continued full pass that completes its remaining front-panel channels.</p>
-    <p>For OSX-150, <strong>CLI tunneling</strong> is the Admin Config default for extra physical ports. An administrator may select <strong>SCPI mapped channels</strong> when those extras are registered in the switch module map. The selected method is saved with the run and does not change during continuation.</p>
+    <h2>8. Test extra physical ports on OSX-150</h2>
+    <p>There are two entry paths. After a successful automatic full pass covers every required front-panel channel, choose <strong>Test Extra Ports</strong> or <strong>Finish Run</strong>. This offer applies to new and continued automatic full passes, not manual-order or selected-channel retests. Alternatively, select <strong>Extra channels only</strong> before Start Run to create an independent supplemental run, even if no front-panel pass has been completed. Do not try to continue a completed front-panel run as an extra-only run.</p>
+    <p><strong>Channel counts:</strong> The part number defines the front-panel boundary <em>N</em>. The SCPI-configured count <em>M</em> describes registered logical channels, not the installed physical capacity. A larger configured count does not expand the required front-panel pass. Accepted extra-candidate measurements, not an assumed total, establish which extras can be used by analysis.</p>
+    <table>
+      <thead><tr><th>Extra routing method</th><th>Operator expectations</th></tr></thead>
+      <tbody>
+        <tr><td>CLI tunneling</td><td>Default for new OSX-150 settings. Extras are routed directly starting at N + 1, without requiring them in the module map. Physical capacity is unknown: accept only installed, correctly connected candidates, and explicitly stop when there are no more ports.</td></tr>
+        <tr><td>SCPI mapped channels</td><td>An administrator selects this when extras have already been registered through the approved external module-map process. Tests the finite configured range N + 1 through M and finishes at its end. It does not use CLI or offer No More Physical Ports.</td></tr>
+      </tbody>
+    </table>
+    <p>The administrator selects the method in <strong>Edit &gt; Admin Config...</strong>. An existing explicit SCPI setting is retained. The method is saved with the run and cannot change during continuation; there is no automatic fallback between methods.</p>
     <ol class="steps">
-      <li>Choose <strong>Finish Run</strong> unless extra spare-port measurements are intentionally required.</li>
-      <li>If you choose <strong>Test Extra Ports</strong>, the program begins at front-panel count + 1 and routes each candidate sequentially using the fixed engineering command. When continuing a run, previously accepted extra-port readings are skipped and testing resumes at the first missing candidate.</li>
-      <li>If the route cannot be verified, proceed only after independently confirming it. Otherwise choose Retry, No More Physical Ports, or Stop Extra Testing.</li>
-      <li>A candidate is provisional until a complete valid two-wavelength result is explicitly accepted with <strong>Write IL and Continue</strong>.</li>
-      <li>Choose <strong>No More Physical Ports</strong> when the current candidate is not installed. Choose <strong>Stop Extra Testing</strong> to end without making a capacity claim.</li>
+      <li><strong>Start intentionally.</strong> Choose Test Extra Ports after the normal pass, or start a new Extra channels only run. A stopped/incomplete extra-only run can be continued using its saved method and accepted coverage.</li>
+      <li><strong>For CLI, check IP readiness.</strong> If the switch returns <code>192.168.99.10</code>, the program warns that its IP appears unset. Set the IP through the switch's approved front-panel process, then choose <strong>Recheck IP</strong>. A LAN-address query failure also requires rechecking. The switch and PC must have an appropriate reachable network connection; setting an IP alone does not prove reachability. Finish Run or Stop Extra Testing leaves the candidate unrecorded.</li>
+      <li><strong>Follow the candidate prompt.</strong> Routing starts above the front-panel boundary; continuation skips already accepted extras. CLI queries the switch's current IP before each direct route. Normal front-panel channels still use SCPI.</li>
+      <li><strong>Resolve routing problems.</strong> A failed route must be retried or stopped. If the separate <strong>Physical-port route unverified</strong> dialog offers <strong>Proceed Unverified</strong>, use it only after independently confirming the actual route. Sending a command or receiving a response does not prove that a port exists.</li>
+      <li><strong>Measure and accept.</strong> Move the cable as directed, review the complete valid pair, then use <strong>Write &amp; Continue</strong>. Temporary readings are not saved automatically.</li>
+      <li><strong>Finish accurately.</strong> In CLI mode, choose <strong>No More Physical Ports</strong> only when the current candidate is not installed. <strong>Stop Extra Testing</strong> stops without claiming the physical endpoint. SCPI mode ends when its configured extra range is covered. Never accept a nonexistent candidate merely because it produces a plausible reading.</li>
     </ol>
-    <div class="warning"><strong>Extra-port boundaries:</strong> Sending a route command or seeing a temporary reading does not prove that a physical port exists. Failed, dark, stopped, retried, or unaccepted candidates are not saved. Accepted extras can support replacement analysis, but they do not count toward front-panel completion and are never written directly as COC channel rows.</div>
+    <div class="warning"><strong>Extra-port boundaries:</strong> Failed, dark, stopped, retried, or unaccepted candidates are not saved as accepted extras. Previously committed readings remain saved. Accepted extras can support replacement analysis, but they do not count toward front-panel completion and are never written directly as COC channel rows. OSX-100 does not support this extra-only/replacement workflow.</div>
 
     <h2>9. Correct the channel or retest</h2>
     <div class="workflow-grid">
@@ -318,8 +347,9 @@
       <thead><tr><th>Area</th><th>What it tells you</th></tr></thead>
       <tbody>
         <tr><td>Current readings</td><td>The active channel and the current complete wavelength pair. It remains temporary until Write IL succeeds.</td></tr>
-        <tr><td>Results table</td><td>The newest accepted attempt for each channel. Formal failures are red; too-good and optimization warnings are described in the Status column and Analysis panel without yellow row highlighting.</td></tr>
-        <tr><td>Run status</td><td><strong>Run</strong> reports collection progress such as In progress, Complete, Incomplete, or Interrupted. <strong>Result</strong> separately reports Pass, optimization/review conditions, recoverable/unrecoverable failure, supplemental use, or a possible composite pass.</td></tr>
+        <tr><td>Results table</td><td>The loaded run's newest accepted attempt for each channel. Passing rows say <strong>Pass</strong>; low readings say <strong>Too good, please verify</strong>. Formal failures are red; too-good and optimization warnings appear in the Status column and Analysis panel without yellow row highlighting.</td></tr>
+        <tr><td>Run</td><td>Collection progress for this run's saved plan: Not started, In progress, Complete, Incomplete, Interrupted, or Unknown. A two-channel verification run can be Complete at 2/2 without covering the entire front panel.</td></tr>
+        <tr><td>Result</td><td>Separately reports Pass, Pass &middot; optimization available, Pass &middot; review recommended, Fail &middot; recovery available, Fail &middot; no measured recovery, Composite pass available, Supplemental run, Review required, or Not evaluated. This may use compatible assignment history, not just the rows visible in the loaded run.</td></tr>
         <tr><td>Purpose</td><td>Shows whether the loaded run is Production, Engineering, Training, or Calibration.</td></tr>
         <tr><td>Show readings</td><td>Filters only the visible table. It does not interrupt acquisition, alter analysis, or delete data.</td></tr>
         <tr><td>Compare with</td><td>Adds read-only comparison columns from another compatible run for the same unit. Comparison never changes either run.</td></tr>
@@ -327,6 +357,8 @@
       </tbody>
     </table>
     <p>Hover over the Run or Result status for missing channels, failing channels, available compatible runs, and other details.</p>
+    <div class="tip"><strong>Composite pass available (green):</strong> The latest effective measurements across compatible runs cover all required front-panel channels and satisfy COC measurement eligibility. COC creation is available; it is never automatic. Output/template/metadata problems can still prevent export. A newer accepted failing retest overrides an older pass in both status and COC preparation.</div>
+    <div class="notice"><strong>Recovery available (amber):</strong> Measured spare candidates can address the failing channels, but the unit is not yet a verified pass. Complete the external replacements, record them, and accept post-replacement retests. No measured recovery means current evidence offers no qualifying recovery; it does not prove that repair is physically impossible. Supplemental run describes a partial/extra dataset when it does not establish a passing composite.</div>
 
     <h2>11. Finish, stop, and review a run</h2>
     <ol class="steps">
@@ -339,21 +371,36 @@
       <li><strong>Copy values when needed.</strong> <span class="button">Copy Raw Data...</span> copies accepted channel/wavelength values as tab-separated text. It ignores the current table filter and does not create or modify run data.</li>
     </ol>
 
+    <h3>Hardware pairing and mistaken runs</h3>
+    <p>A database run belongs to one main-board/switch assignment. If Start Run detects a different pairing, review <strong>Use switch with this main board?</strong> carefully. Confirm only after the required external module-map reset/installation process is complete. Confirmation closes affected assignments, marks their unfinished runs stopped, and creates a fresh assignment with an identity map. Previous measurements, replacements, spares, and analysis do not carry into the new pairing; historical records remain available.</p>
+    <p>For an accidental run whose readings must not contribute to later analysis or COC, an administrator can use <strong>Void Run from Analysis...</strong> on an inactive database run and provide a reason. Voiding retains the measurements and history but excludes that run from effective calculations. There is no unvoid action. Purpose is not a substitute for voiding, and an older pass cannot be chosen merely to hide a newer accepted failure.</p>
+
     <h2>12. Replacement analysis and records</h2>
-    <p><strong>Analyze Replacements</strong> uses accepted front-panel readings and accepted extra-port readings to suggest improvements for OSX-150. The minimum worthwhile improvement is controlled in <strong>Edit &gt; Admin Config</strong> for OSX-150 and each wavelength mode, and defaults to 0.2 dB. OSX-100 has no replacement-analysis threshold because it does not use extra channels. Recommendations are advisory. Light Workbench does not command the switch to change a permanent mapping and does not use <code>CLOSe?</code> to verify a replacement.</p>
+    <p><strong>Analyze Replacements</strong> uses the latest compatible accepted front-panel and extra-candidate readings across the current OSX-150 assignment, not only the loaded run. The minimum worthwhile improvement is controlled in <strong>Edit &gt; Admin Config...</strong> for OSX-150 and each wavelength mode, and defaults to 0.2 dB. Recommendations are advisory; a candidate's measured performance is not a guarantee of the result after installation.</p>
+    <p>Database analysis snapshots and recommendations are saved with their source evidence. <strong>Analysis History...</strong> lets you review saved results after reopening the application. New accepted readings, replacements, spare changes, run exclusions, or criteria changes can make an earlier snapshot stale. Recalculate rather than treating stale recommendations as current. A failed analysis save is not a successfully published snapshot.</p>
     <p><strong>Routing confirmation:</strong> On approved firmware, <code>CLOSe?</code> reports the active logical channel. Light Workbench compares it with the requested logical channel before measuring. The physical port shown or saved for a normal/replacement reading comes from the recorded assignment map, not from <code>CLOSe?</code>.</p>
-    <p>After a physical reroute is completed through the approved external process, use <strong>Manage Port Replacements...</strong>. For database runs, select the logical channel; Light Workbench supplies the current effective port, assignment/run context, identity, and UTC timestamp. A selected recommendation also supplies its proposed port, category, improvement, and an editable default reason. For a manual change, choose the logical channel and proposed physical port.</p>
-    <p>You must provide or confirm the reason and operator, may enter optional details, and must explicitly confirm that the physical reroute was completed outside Light Workbench. Opening or canceling the window records nothing. SQL history is append-only: Replace Again and correction/reversal actions add a row instead of deleting history. Existing and recommended designated spares are reviewed before Save. The application then reloads the effective map and audit history from SQL Server.</p>
+    <ol class="steps">
+      <li><strong>Review recommendations.</strong> Compare <strong>Current IL</strong> with <strong>Candidate IL</strong> at both wavelengths. Current IL is the effective front-panel measurement; Candidate IL is the accepted measurement of the proposed extra port. Check the category and measured improvement as well.</li>
+      <li><strong>Complete the external reroute.</strong> Follow the approved physical repair and module-map procedure. Analysis and Manage Port Replacements do not perform it for you.</li>
+      <li><strong>Open Manage Port Replacements...</strong> In <strong>Record Replacements</strong>, choose <strong>Use Selected Recommendation</strong> or <strong>Add Manual Replacement</strong>. Select the logical channel and proposed replacement port. Current port and assignment/run context are supplied from the saved assignment. Normal replacements require evidence from an accepted extra-candidate measurement.</li>
+      <li><strong>Document the cause.</strong> Choose a Reason: Dirty/scratched fiber; Issue with terminated boot; Splicing issue; Break in fiber; or Unknown cause of high loss. Confirm the Operator, which defaults from Tested by. Use <strong>Additional details</strong> for free-text explanation.</li>
+      <li><strong>Queue and review.</strong> Click <strong>Queue Replacement for Save</strong> for each logical channel. Only one pending replacement per logical channel is allowed. Review the queued rows, current mapping, and <strong>Designated Spares</strong> tab before saving. Recommended spare selections are proposals until saved.</li>
+      <li><strong>Save once.</strong> Save commits the queued replacements and spare changes atomically; opening or canceling the dialog records nothing. Validation or save failure retains the queue for correction/retry. The application reloads the effective map and audit history after success.</li>
+      <li><strong>Verify the installed result.</strong> Use <strong>Start Replacement Verification Run...</strong> to test the logical channels still awaiting retest. Follow the cable prompts and explicitly write each complete pair. An old pre-replacement reading or the candidate's original reading does not verify the new mapped channel.</li>
+      <li><strong>Analyze again.</strong> Recalculate after verification to use the latest assignment evidence. Continue if a further recovery or worthwhile optimization is recommended. A passing dataset with no qualifying improvement available can be ready for COC; an unverified replacement or remaining failure is not cleared merely because there are no spares left.</li>
+    </ol>
+    <p><strong>Correcting documentation:</strong> Select a row in Current effective assignment mapping and use <strong>Correct Selected Mapping...</strong> to document a correction, reversal, or later mapping change. This adds an audited record; it does not delete earlier records or physically undo a reroute. Confirm the documented route matches the approved external work and obtain required post-change measurements. The <strong>Audit History</strong> tab retains prior records.</p>
     <div class="warning"><strong>Replacement boundary:</strong> Light Workbench records the operator's documentation. It does not command the switch to change its permanent mapping, does not use <code>CLOSe?</code> to verify a replacement, and does not infer that an analysis recommendation was completed.</div>
 
     <h2>13. Write a COC explicitly</h2>
     <ol class="steps">
       <li>Click <span class="button">Write COC...</span> or use <strong>File &gt; Write COC...</strong>. Completing or stopping a run never starts COC creation automatically.</li>
-      <li>Select one persisted base run and, when needed, one compatible supplemental/retest run. Run purpose does not by itself block COC eligibility.</li>
+      <li>In Prepare COC, select the <strong>Context run</strong>. The program automatically considers all compatible persisted runs; there is no two-run limit or manual supplemental-run picker. Run purpose does not by itself block COC eligibility.</li>
       <li>Review the derived front-panel count and validation summary. Required channels must be present, valid, non-negative, physically consistent, and below the COC failure boundary after four-decimal rounding.</li>
-      <li>For a combined result, supplemental readings replace complete channel pairs and must agree with documented port replacements when the physical port changes.</li>
-      <li>For a database run, choose the output folder. Light Workbench selects the model/mode/capacity template and creates a new timestamped workbook without changing the template.</li>
+      <li>Check contributing runs, excluded-run reasons, and channel provenance in the summary. The newest eligible accepted whole pair wins, even when it fails. The program cannot substitute an older passing pair or mix one wavelength from each attempt. Changed ports must agree with recorded replacements and have compatible accepted post-replacement retests.</li>
+      <li>Click <strong>Validate and Write COC</strong>. For a database run, choose the output folder. Light Workbench selects the model/mode/capacity template and creates a new timestamped workbook without changing the template. If validation or export fails, follow its details; do not treat a failed attempt as a completed COC.</li>
     </ol>
+    <p>Database aggregation stays within one unit/switch assignment and compatible model, wavelength, metadata, and criteria context. Voided and superseded runs do not contribute. A fresh hardware pairing cannot reuse an older assignment's passing readings. COC preparation is a report view, not a new combined run, and does not modify source measurements or switch routing.</p>
     <div class="notice"><strong>Supported templates:</strong> OSX-100 supports SM and MM COCs. OSX-150 supports SM COCs. Capacity 1-45 uses the 45-channel template and 46-48 uses the 48-channel template. Extra physical ports are excluded from direct COC rows.</div>
 
     <h2>14. Support and troubleshooting</h2>
@@ -364,6 +411,9 @@
         <tr><td>Reference rejected</td><td>Check the reference cable, seating, selected mode, and received power. A dark reading below -40.0 dBm cannot authorize a run.</td></tr>
         <tr><td>Negative IL displayed</td><td>Check the active reference and current optical connection. The value cannot be written as valid data.</td></tr>
         <tr><td>Database unavailable</td><td>The run or reading is not treated as successfully stored. Keep the application open, follow the popup, and contact support before repeating work.</td></tr>
+        <tr><td>Extra-port IP warning</td><td>For CLI, set the switch IP through its approved front-panel process, then Recheck IP. If it still fails, verify network reachability or stop extra testing; do not accept the candidate as measured.</td></tr>
+        <tr><td>Replacement awaiting retest</td><td>Record the correct mapping, take and write both wavelengths in a post-replacement verification run, then recalculate analysis. Check that the run belongs to the same assignment and is not voided.</td></tr>
+        <tr><td>Saved analysis is stale</td><td>Use Analyze Replacements again against current assignment evidence. History preserves the earlier snapshot; it does not make its recommendations current.</td></tr>
         <tr><td>COC blocked or failed</td><td>Use the validation or technical details in the dialog. The local support log correlates explicit COC attempts for engineering review.</td></tr>
         <tr><td>Engineering support needed</td><td>Use <strong>Help &gt; Support Logs</strong> to open the local logs folder, inspect logging status, copy its path, or export a support bundle.</td></tr>
       </tbody>
@@ -373,21 +423,26 @@
     <div class="cheat-sheet">1. Select SM (1310/1550) or MM (850/1300).
 2. Connect ILM/OP815, switch, and test cable.
 3. Click Connect Hardware... and verify both device identities.
-4. Complete serials, part number, band, initials, station, run number, and purpose.
+4. Complete serials, part number, band, initials, station, and purpose.
 5. Confirm the derived front-panel channel count.
 6. Calculate Reference for the selected mode and connected ILM.
-7. Choose Full pass, Single channel, or Specific channels/ranges.
+7. Choose Full configured pass, Single channel, Specific channels/ranges,
+   or an independent OSX-150 Extra channels only run.
 8. Click Start Run and approve switch movement.
 9. Move the cable to the displayed channel/port.
 10. Wait for a complete two-wavelength pair; nothing is saved yet.
-11. Write IL (+) to commit the pair to SQL Server and advance.
+11. Write IL (+); wait for the save acknowledgement and next-channel prompt.
 12. Repeat until the plan is finished or intentionally stopped.
-13. For a new or continued full pass, finish or intentionally enter optional extra-port testing after all front-panel channels are complete.
+13. For a completed automatic full pass, finish or intentionally test extras.
+    For CLI, resolve any unset-IP warning before routing extras.
 14. Review Run, Result, Analysis, and Reading History.
-15. Use Write COC... explicitly only when a COC is required.</div>
+15. If replacing ports: analyze, complete external work, record, verify,
+    and analyze again. A candidate reading is not a verification reading.
+16. Use Write COC... explicitly when eligible. Compatible history is combined
+    automatically; the latest accepted whole pair wins, not the best pass.</div>
 
     <footer>
-      Light Workbench IL Reading Guide &middot; Use the software's current on-screen prompts if they differ from this document.
+      Light Workbench IL Reading Guide &middot; Updated 2026-11-10 against application 1.36.0 source. This guide describes implemented workflows, not hardware qualification or completed acceptance tests. If the installed build differs, report the discrepancy to engineering before relying on an uncertain procedure.
     </footer>
   </main>
 </body>

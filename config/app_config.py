@@ -8,9 +8,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RUN_ROOT = Path.home() / "Documents" / "ILM-Reads"
-DEFAULT_PART_LOOKUP_ROOT = Path(
-    r"U:\Product Log\Units-COCs-Param Files\OSX-150"
-)
+DEFAULT_PART_LOOKUP_PARENT = Path(r"U:\Product Log\Units-COCs-Param Files")
+# Compatibility alias for callers supplying the former single-model root.
+DEFAULT_PART_LOOKUP_ROOT = DEFAULT_PART_LOOKUP_PARENT / "OSX-150"
 COC_TEMPLATE_45_FILENAME = "OSX-150 Single Mode COC Template 2 (45max).xlsx"
 COC_TEMPLATE_48_FILENAME = "OSX-150 Single Mode COC Template 1 (48max).xlsx"
 # The bundled COC catalog is keyed by switch model, wavelength mode, and
