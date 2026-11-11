@@ -41,6 +41,25 @@ def source(run_number, measurements, criteria=None, **metadata):
 
 
 class CocPreparationTests(unittest.TestCase):
+    def test_channel_49_is_required_and_can_pass_or_block_coc(self):
+        readings = [MeasurementRecord(channel, 1.0, 1.1, channel) for channel in range(1, 50)]
+        base = source(1, readings, **{"Part number": "OSX-150-1A-049-09-FA-00B-2H"})
+        complete = prepare_coc(base, 49)
+        self.assertTrue(complete.eligible)
+        self.assertEqual(len(complete.channels), 49)
+        self.assertEqual(complete.template_capacity, 48)
+
+        missing = prepare_coc(source(1, readings[:-1]), 49)
+        self.assertFalse(missing.eligible)
+        self.assertEqual(missing.missing_channels, (49,))
+
+        failed = prepare_coc(
+            source(1, readings[:-1] + [MeasurementRecord(49, 2.6, 1.1, 49)]),
+            49,
+        )
+        self.assertFalse(failed.eligible)
+        self.assertEqual(failed.failures[0].channel, 49)
+
     def test_three_or_more_compatible_runs_contribute_without_manual_selection(self):
         result = prepare_coc(
             source(1, [MeasurementRecord(1, 1.0, 1.1, 1)]),

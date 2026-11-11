@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Mapping
+from uuid import UUID
 
 from application.database_run_read_model import (
     DatabaseRunQueryService,
@@ -46,6 +47,7 @@ from domain.effective_replacement_analysis import (
     build_effective_replacement_projection,
 )
 from domain.limit_profiles import LimitProfile
+from domain.run_sessions import RunSessionCheckpoint, RunSessionRecord
 from infrastructure.database.load_metrics import (
     DatabaseLoadMetrics,
     DatabaseLoadSummary,
@@ -71,6 +73,7 @@ class DatabaseRunContext:
     pairing_stopped_run_ids: tuple[int, ...] = ()
     load_operation_id: str = ""
     load_summary: DatabaseLoadSummary | None = None
+    timing_sessions: tuple[RunSessionRecord, ...] = ()
 
     @property
     def run(self) -> RunRecord:
@@ -312,9 +315,28 @@ class DatabasePrimaryRunWorkflow:
         record = self.measurements.commit(pending)
         return record, self.refresh(record.run_id)
 
-    def finish_run(self, run_id: int, status: str) -> DatabaseRunContext:
-        run = self.lifecycle.finish_run(run_id, status)
+    def finish_run(
+        self, run_id: int, status: str, *, timing_checkpoint: RunSessionCheckpoint | None = None
+    ) -> DatabaseRunContext:
+        run = self.lifecycle.finish_run(run_id, status, timing_checkpoint=timing_checkpoint)
         return self._context(run)
+
+    def begin_test_session(
+        self, run_id: int, client_session_uuid: UUID, started_at_utc: datetime,
+        *, partial: bool = False,
+    ) -> RunSessionRecord:
+        return self.repositories.begin_test_session(
+            run_id, client_session_uuid, started_at_utc, partial=partial
+        )
+
+    def checkpoint_test_session(self, checkpoint: RunSessionCheckpoint) -> RunSessionRecord:
+        return self.repositories.checkpoint_test_session(checkpoint)
+
+    def end_test_session(self, checkpoint: RunSessionCheckpoint, end_reason: str) -> None:
+        self.repositories.end_test_session(checkpoint, end_reason)
+
+    def test_sessions_for_runs(self, run_ids: tuple[int, ...]) -> tuple[RunSessionRecord, ...]:
+        return self.repositories.test_sessions_for_runs(run_ids)
 
     def resume_run(self, run_id: int) -> DatabaseRunContext:
         self._require_ready()
@@ -496,6 +518,8 @@ class DatabasePrimaryRunWorkflow:
             with self._stage(load_metrics, "replacement_analysis_history"):
                 analysis_history = self.replacement_analyses.history_for_run(run.run_id)
                 latest_analysis = analysis_history[0] if analysis_history else None
+            with self._stage(load_metrics, "timing_sessions"):
+                timing_sessions = self.repositories.test_sessions_for_runs((run.run_id,))
         context = DatabaseRunContext(
             unit=unit,
             switch=switch,
@@ -507,6 +531,7 @@ class DatabasePrimaryRunWorkflow:
             effective_projection=projection,
             unit_run_index=unit_run_index,
             assignment_run_snapshots=assignment_snapshots,
+            timing_sessions=timing_sessions,
         )
         if load_metrics is not None:
             load_metrics.set_count(

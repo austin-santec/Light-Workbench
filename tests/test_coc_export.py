@@ -170,10 +170,10 @@ class CocExportTests(unittest.TestCase):
         for count in (1, 36, 45):
             with self.subTest(count=count):
                 self.assertEqual(template_filename_for_channel_count(count), template_45)
-        for count in (46, 47, 48):
+        for count in (46, 47, 48, 49, 52):
             with self.subTest(count=count):
                 self.assertEqual(template_filename_for_channel_count(count), template_48)
-        for count in (0, 49):
+        for count in (0,):
             with self.subTest(count=count):
                 with self.assertRaises(ValueError):
                     template_filename_for_channel_count(count)
@@ -276,6 +276,71 @@ class CocExportTests(unittest.TestCase):
                 for name in drawing_parts:
                     self.assertIn(name, output_zip.namelist())
                     self.assertEqual(template_zip.read(name), output_zip.read(name))
+
+    def test_extends_48_channel_template_with_formatted_rows_and_complete_print_area(self):
+        template_root = Path(__file__).resolve().parents[1] / "Templates"
+        cases = (
+            ("SM", 49, "OSX-100 Single Mode COC Template 1 (48max).xlsx"),
+            ("MM", 52, "OSX-100 Multi Mode COC Template 1 (48max).xlsx"),
+        )
+        for mode, count, filename in cases:
+            with self.subTest(mode=mode, count=count), tempfile.TemporaryDirectory() as directory:
+                template = template_root / filename
+                source_bytes = template.read_bytes()
+                source = load_workbook(template)
+                source_sheet = source["OSX Template"]
+                middle_style = source_sheet["B68"].style_id
+                end_style = source_sheet["B69"].style_id
+                measurement_style = source_sheet["D68"].style_id
+                return_loss_specification = source_sheet["F67"].value
+                source.close()
+                wavelengths = (850, 1300) if mode == "MM" else (1310, 1550)
+                readings = [
+                    MeasurementRecord.from_wavelengths(
+                        channel,
+                        {wavelengths[0]: 0.5, wavelengths[1]: 0.6},
+                        wavelength_mode=mode,
+                    )
+                    for channel in range(1, count + 1)
+                ]
+                output = export_coc(
+                    template,
+                    directory,
+                    readings,
+                    "OSX-100-1A-%03d-09-FA-00B-2H" % count,
+                    "19243",
+                    front_panel_channel_count=count,
+                    switch_model="OSX-100",
+                    wavelength_mode=mode,
+                )
+                workbook = load_workbook(output)
+                sheet = workbook["OSX Template"]
+                last_row = 69 + count - 48
+                self.assertEqual(sheet.max_row, last_row)
+                self.assertEqual(sheet["B69"].style_id, middle_style)
+                self.assertEqual(sheet[f"B{last_row}"].style_id, end_style)
+                self.assertEqual(sheet[f"D{last_row}"].style_id, measurement_style)
+                self.assertEqual(sheet.row_dimensions[last_row].height, 11.25)
+                self.assertEqual(sheet.print_area, f"'OSX Template'!$B$1:$H${last_row}")
+                self.assertEqual(sheet.print_title_rows, "$63:$66")
+                self.assertEqual(sheet.page_setup.fitToWidth, 1)
+                self.assertEqual(sheet.page_setup.fitToHeight, 0)
+                merged = {str(item) for item in sheet.merged_cells.ranges}
+                self.assertIn(f"F67:F{last_row}", merged)
+                self.assertIn(f"G67:G{last_row}", merged)
+                self.assertEqual(sheet["F67"].value, return_loss_specification)
+                for channel in range(46, count + 1):
+                    row = 66 + channel - 45
+                    self.assertEqual(sheet[f"B{row}"].value, channel)
+                    self.assertEqual(sheet[f"D{row}"].value, 0.5)
+                    self.assertEqual(sheet[f"E{row}"].value, 0.6)
+                    self.assertIn(f"B{row}:C{row}", merged)
+                workbook.close()
+                with ZipFile(template) as source_zip, ZipFile(output) as output_zip:
+                    for drawing in source_zip.namelist():
+                        if drawing.startswith(("xl/drawings/", "xl/media/")):
+                            self.assertEqual(source_zip.read(drawing), output_zip.read(drawing))
+                self.assertEqual(template.read_bytes(), source_bytes)
 
     def test_malformed_channel_map_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

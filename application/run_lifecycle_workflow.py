@@ -17,6 +17,7 @@ from domain.database_records import (
 )
 from domain.database_run_lifecycle import StaleRunDecision
 from domain.run_purpose import default_analysis_policy, normalize_run_purpose
+from domain.run_sessions import RunSessionCheckpoint
 
 
 class DatabaseReadinessResult(Protocol):
@@ -132,6 +133,8 @@ class RunLifecycleWorkflow:
         run_id: int,
         completion_status: str,
         ended_at_utc: datetime | None = None,
+        *,
+        timing_checkpoint: RunSessionCheckpoint | None = None,
     ) -> RunRecord:
         current = self._repository.get(run_id)
         if current is None:
@@ -140,11 +143,19 @@ class RunLifecycleWorkflow:
             analysis_status = "included"
         else:
             analysis_status = "pending"
+        timing_args = {}
+        if timing_checkpoint is not None:
+            timing_checkpoint.validate()
+            if timing_checkpoint.run_id != run_id:
+                raise ValueError("Timing checkpoint belongs to another run")
+            timing_args["timing_checkpoint"] = timing_checkpoint
+            ended_at_utc = timing_checkpoint.checkpoint_at_utc
         return self._repository.finish(
             run_id,
             completion_status,
             ended_at_utc or utc_now(),
             analysis_status=analysis_status,
+            **timing_args,
         )
 
     def resume_run(self, run_id: int) -> RunRecord:

@@ -42,9 +42,10 @@ from domain.database_records import (
     require_utc,
 )
 from domain.run_purpose import VALID_RUN_PURPOSES
+from infrastructure.database.run_sessions import MemoryRunSessions
 
 
-class InMemoryRepositories:
+class InMemoryRepositories(MemoryRunSessions):
     """One shared in-memory store satisfying every repository protocol."""
 
     def __init__(self) -> None:
@@ -60,6 +61,7 @@ class InMemoryRepositories:
             int, ReplacementAnalysisRecommendationRecord
         ] = {}
         self._next_ids: dict[str, int] = {}
+        self._test_sessions = {}
         self._lock = RLock()
 
     @contextmanager
@@ -318,6 +320,7 @@ class InMemoryRepositories:
 
             before_assignments = dict(self.assignments)
             before_runs = dict(self.runs)
+            before_test_sessions = dict(self._test_sessions)
             before_next_ids = dict(self._next_ids)
             try:
                 stopped_ids = []
@@ -341,6 +344,7 @@ class InMemoryRepositories:
                             run.assignment_id == item.assignment_id
                             and run.completion_status == "in_progress"
                         ):
+                            self._close_test_sessions(run.run_id)
                             self.runs[run.run_id] = replace(
                                 run,
                                 completion_status="stopped",
@@ -365,6 +369,7 @@ class InMemoryRepositories:
             except Exception:
                 self.assignments = before_assignments
                 self.runs = before_runs
+                self._test_sessions = before_test_sessions
                 self._next_ids = before_next_ids
                 raise
 
@@ -378,6 +383,7 @@ class InMemoryRepositories:
         with self._lock:
             before_assignments = dict(self.assignments)
             before_runs = dict(self.runs)
+            before_test_sessions = dict(self._test_sessions)
             before_next_ids = dict(self._next_ids)
             try:
                 installed, closed, stopped = self.install_fresh_pairing(
@@ -390,6 +396,7 @@ class InMemoryRepositories:
             except Exception:
                 self.assignments = before_assignments
                 self.runs = before_runs
+                self._test_sessions = before_test_sessions
                 self._next_ids = before_next_ids
                 raise
 
@@ -554,6 +561,18 @@ class InMemoryRepositories:
         )
 
     def finish(
+        self, run_id: int, completion_status: str, run_ended_at_utc: datetime, *,
+        analysis_status: str | None = None, void_info: RunVoidInfo | None = None,
+        timing_checkpoint=None,
+    ) -> RunRecord:
+        with self._lock:
+            return self._finish_locked(
+                run_id, completion_status, run_ended_at_utc,
+                analysis_status=analysis_status, void_info=void_info,
+                timing_checkpoint=timing_checkpoint,
+            )
+
+    def _finish_locked(
         self,
         run_id: int,
         completion_status: str,
@@ -561,6 +580,7 @@ class InMemoryRepositories:
         *,
         analysis_status: str | None = None,
         void_info: RunVoidInfo | None = None,
+        timing_checkpoint=None,
     ) -> RunRecord:
         if completion_status not in {"complete", "stopped", "failed"}:
             raise ValueError("Invalid terminal completion status")
@@ -584,6 +604,10 @@ class InMemoryRepositories:
                 if analysis_status is not None
                 else current.void_info
             ),
+        )
+        self._close_test_sessions(
+            updated.run_id, timing_checkpoint,
+            "completed" if completion_status == "complete" else completion_status,
         )
         self.runs[updated.run_id] = updated
         return updated

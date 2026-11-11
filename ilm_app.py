@@ -4,6 +4,7 @@ import sys
 import time
 import traceback
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -179,6 +180,9 @@ from domain.run_status import (
     utc_now,
 )
 from domain.timing import SwitchTestTimer
+from domain.timing import format_duration
+from domain.run_sessions import RunSessionCheckpoint, summarize_run_timing
+from application.run_session_timing import RunSessionClock, TimingCheckpointWriter
 from hardware.factory import HardwareFactory
 from infrastructure.coc_exporter import (
     COC_TEMPLATE_45_FILENAME,
@@ -1020,6 +1024,20 @@ class MainWindow(QMainWindow):
         self.designated_spares = []
         self.hardware_session = HardwareRunSession()
         self.switch_test_timer = None
+        self._database_session_clock = None
+        self._pending_timing_finish = None
+        self._pending_timing_start = None
+        self._timing_error = ""
+        self.timing_checkpoint_timer = QTimer(self)
+        self.timing_checkpoint_timer.setInterval(30000)
+        self.timing_checkpoint_timer.timeout.connect(self._checkpoint_database_timing)
+        self.timing_checkpoint_writer = None
+        if self.database_workflow is not None:
+            self.timing_checkpoint_writer = TimingCheckpointWriter(
+                self.database_workflow, self
+            )
+            self.timing_checkpoint_writer.succeeded.connect(self._timing_checkpoint_saved)
+            self.timing_checkpoint_writer.failed.connect(self._timing_checkpoint_failed)
         self.displayed_records = []
         self.comparison_run_data = None
         self.comparison_run_number = None
@@ -1499,6 +1517,7 @@ class MainWindow(QMainWindow):
         self._update_hardware_readiness_controls()
 
     def _update_hardware_readiness_controls(self):
+        self._refresh_database_timing()
         if not hasattr(self, "start_hardware_button"):
             return
         run_available = (
@@ -1988,7 +2007,7 @@ class MainWindow(QMainWindow):
         self.hardware_channel_label = QLabel("Channel:")
         channel_mode_context_layout.addWidget(self.hardware_channel_label)
         self.hardware_single_channel = QSpinBox()
-        self.hardware_single_channel.setRange(1, 256)
+        self.hardware_single_channel.setRange(1, 2_147_483_647)
         self.hardware_single_channel.setValue(1)
         channel_mode_context_layout.addWidget(self.hardware_single_channel)
         self.manual_channel_order_checkbox = QCheckBox(
@@ -2512,6 +2531,17 @@ class MainWindow(QMainWindow):
             "View every accepted reading and retest saved for this run."
         )
         self.view_history_button.clicked.connect(self.show_reading_history)
+        self.run_timing_label = QLabel("Not available")
+        self.run_timing_label.setWordWrap(True)
+        metadata_layout.addRow("Test timing:", self.run_timing_label)
+        self.timing_history_button = QPushButton("View Test Sessions...")
+        self.timing_history_button.clicked.connect(self.show_test_session_history)
+        self.timing_history_button.setEnabled(False)
+        metadata_layout.addRow(self.timing_history_button)
+        self.retry_timing_button = QPushButton("Retry Timing Save")
+        self.retry_timing_button.clicked.connect(self.retry_timing_save)
+        self.retry_timing_button.setEnabled(False)
+        metadata_layout.addRow(self.retry_timing_button)
         self.view_history_button.setEnabled(False)
         metadata_layout.addRow(self.view_history_button)
         self.void_run_button = QPushButton("Void Run from Analysis...")
@@ -3348,6 +3378,9 @@ class MainWindow(QMainWindow):
         wavelength mode, and the session reference bank remain untouched.
         """
 
+        if self._pending_timing_finish is not None:
+            QMessageBox.warning(self, "Timing save pending", "Use Retry Timing Save before clearing this run.")
+            return False
         reference_active = (
             self.reference_controller.thread is not None
             or self.reference_controller.worker is not None
@@ -5218,6 +5251,13 @@ class MainWindow(QMainWindow):
                 "Front-panel channels: Not available"
             )
             return
+        self.hardware_single_channel.setMaximum(
+            max(
+                1,
+                count,
+                int(self.hardware_configured_channel_count or 0),
+            )
+        )
         self.front_panel_channel_count_label.setText(
             "Front-panel channels: %d" % count
         )
@@ -5908,6 +5948,9 @@ class MainWindow(QMainWindow):
         return True
 
     def start_hardware(self, channels=None, retest=False):
+        if self._pending_timing_finish is not None:
+            QMessageBox.warning(self, "Timing save pending", "Use Retry Timing Save before starting another test session.")
+            return
         if self.hardware_run_active:
             return
         selected_extra_only = self._is_extra_only_channel_mode()
@@ -6837,9 +6880,14 @@ class MainWindow(QMainWindow):
                 }
             ),
         )
+        if not self.begin_switch_test_session(partial=continuing_existing or retest):
+            return
         try:
             self.hardware_controller.start(request)
         except (RuntimeError, OSError) as error:
+            if self._database_session_clock is not None:
+                self._finish_database_run("failed")
+            self.finish_switch_test_session()
             if (
                 self.database_workflow is not None
                 and self.database_run_context is not None
@@ -6883,7 +6931,6 @@ class MainWindow(QMainWindow):
         self.change_hardware_channel_button.setEnabled(False)
         self.retest_button.setEnabled(False)
         self.statusBar().showMessage("Starting hardware run...")
-        self.begin_switch_test_session()
         self.refresh_run_status(include_composite=False)
         self._update_hardware_readiness_controls()
 
@@ -7122,10 +7169,178 @@ class MainWindow(QMainWindow):
         )
         return True
 
-    def begin_switch_test_session(self):
+    def _refresh_database_timing(self):
+        if not hasattr(self, "run_timing_label"):
+            return
+        context = self.database_run_context
+        self.timing_history_button.setEnabled(context is not None)
+        self.retry_timing_button.setEnabled(bool(self._pending_timing_finish or self._timing_error))
+        if context is None:
+            self.run_timing_label.setText("Not available for this data source")
+            return
+        summary = summarize_run_timing(context.run, context.timing_sessions)
+        def duration(value):
+            return "Not available" if value is None else format_duration(value / 1000)
+        self.run_timing_label.setText(
+            "Active: %s | Elapsed: %s | Stopped: %s\nSessions: %d | %s%s"
+            % (duration(summary.active_duration_ms), duration(summary.elapsed_ms),
+               duration(summary.stopped_ms), summary.session_count,
+               summary.timing_quality.replace("_", " "),
+               (" | Save pending: " + self._timing_error) if self._timing_error else "")
+        )
+        self.run_timing_label.setToolTip(
+            "Active includes cable movement and waiting while testing. Explicit stops are excluded. "
+            "Provisional values are last-saved checkpoints; partial/estimated timing is not an exact full-run total."
+        )
+
+    def show_test_session_history(self):
+        if self.database_run_context is None:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Test Session History (UTC)")
+        dialog.resize(1000, 420)
+        layout = QVBoxLayout(dialog)
+        note = QLabel("Read-only saved sessions. Interrupted sessions end at their last durable checkpoint, not at application restart.")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        table = QTableWidget(0, 6)
+        table.setHorizontalHeaderLabels(["Session", "Started (UTC)", "Ended (UTC)", "Active time", "End reason", "Timing quality"])
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        for row, session in enumerate(self.database_run_context.timing_sessions):
+            table.insertRow(row)
+            values = (
+                session.session_id, session.started_at_utc.isoformat(),
+                session.ended_at_utc.isoformat() if session.ended_at_utc else "Open",
+                format_duration(session.active_duration_ms / 1000),
+                session.end_reason or "In progress", session.timing_quality,
+            )
+            for column, value in enumerate(values):
+                table.setItem(row, column, QTableWidgetItem(str(value)))
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table)
+        close = QPushButton("Close")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close)
+        dialog.exec_()
+
+    def _checkpoint_database_timing(self):
+        if self._database_session_clock is not None and self._pending_timing_finish is None:
+            self.timing_checkpoint_writer.submit(self._database_session_clock.checkpoint())
+
+    def _timing_checkpoint_saved(self, saved):
+        context = self.database_run_context
+        if context is None or context.run.run_id != saved.run_id:
+            return
+        sessions = {s.session_id: s for s in context.timing_sessions}
+        current = sessions.get(saved.session_id)
+        if current is None or (current.ended_at_utc is None and saved.active_duration_ms >= current.active_duration_ms):
+            sessions[saved.session_id] = saved
+            self.database_run_context = replace(context, timing_sessions=tuple(sessions.values()))
+        if (
+            self._pending_timing_finish is None
+            and self._database_session_clock is not None
+            and self._database_session_clock.client_session_uuid == saved.client_session_uuid
+        ):
+            self._timing_error = ""
+        self._refresh_database_timing()
+
+    def _timing_checkpoint_failed(self, checkpoint, message):
+        clock = self._database_session_clock
+        if clock is None or clock.client_session_uuid != checkpoint.client_session_uuid:
+            return
+        self._timing_error = message
+        self._record_support(SupportEventCategory.CONNECTION, "database.timing_checkpoint_failed", level=SupportLogLevel.ERROR, error_message=message, status="error")
+        self._refresh_database_timing()
+
+    def _save_timing_finish(self, status):
+        if self._pending_timing_finish is None:
+            checkpoint = self._database_session_clock.stop()
+            self._pending_timing_finish = (checkpoint, status)
+        return self.retry_timing_save()
+
+    def retry_timing_save(self):
+        if self._pending_timing_finish is None:
+            self._checkpoint_database_timing()
+            return True
+        checkpoint, status = self._pending_timing_finish
+        self.timing_checkpoint_timer.stop()
+        try:
+            if self._pending_timing_start is not None:
+                clock, partial = self._pending_timing_start
+                # Resolve an uncertain start commit using its original UUID.
+                started = self.database_workflow.begin_test_session(
+                    clock.run_id, clock.client_session_uuid, clock.started_at_utc,
+                    partial=partial,
+                )
+                # SQL DATETIME2(3) may round a zero-duration uncertain start
+                # slightly forward. Settle it at that saved precision.
+                checkpoint = replace(
+                    checkpoint,
+                    checkpoint_at_utc=max(checkpoint.checkpoint_at_utc, started.started_at_utc),
+                )
+                self._pending_timing_finish = (checkpoint, status)
+            if status is None:
+                self.database_workflow.end_test_session(checkpoint, "stopped")
+                context = self.database_workflow.refresh(checkpoint.run_id)
+            else:
+                context = self.database_workflow.finish_run(checkpoint.run_id, status, timing_checkpoint=checkpoint)
+            self._database_session_clock = None
+            self._pending_timing_finish = None
+            self._pending_timing_start = None
+            self._timing_error = ""
+            self._apply_database_run_context(context, update_setup=False)
+            self._refresh_database_timing()
+            self.set_open_csv_available(not self.hardware_run_active)
+            return True
+        except Exception as error:
+            self._timing_error = str(error)
+            self._record_support(
+                SupportEventCategory.CONNECTION, "database.timing_finish_failed",
+                level=SupportLogLevel.ERROR, run_id=checkpoint.run_id,
+                completion_status=status or "timing_only",
+                error_type=type(error).__name__, error_message=str(error), status="error",
+            )
+            self._refresh_database_timing()
+            self.set_open_csv_available(False)
+            QMessageBox.critical(self, "Test timing save failed", "The session's final timing/status is still pending. Accepted readings remain saved. Use Retry Timing Save before continuing or closing.\n%s" % error)
+            return False
+
+    def begin_switch_test_session(self, *, partial=False):
         """Start timing one real switch-test session."""
         if self.run_data is None:
-            return
+            return False
+        if self.database_run_context is not None:
+            clock = RunSessionClock(self.database_run_context.run.run_id)
+            try:
+                saved = self.database_workflow.begin_test_session(
+                    clock.run_id, clock.client_session_uuid, clock.started_at_utc,
+                    partial=partial and not self.database_run_context.timing_sessions,
+                )
+                if saved.ended_at_utc is not None:
+                    raise ValueError("This timing session already ended; start a new session.")
+            except ValueError as error:
+                QMessageBox.critical(self, "Could not start test timing", "No hardware test was started.\n%s" % error)
+                return False
+            except Exception as error:
+                # The connection may have failed after commit. Keep the UUID
+                # and settle this never-acquired session with zero active time.
+                self._database_session_clock = clock
+                self._pending_timing_start = (
+                    clock, partial and not self.database_run_context.timing_sessions
+                )
+                self._pending_timing_finish = (
+                    RunSessionCheckpoint(clock.run_id, clock.client_session_uuid, clock.started_at_utc, 0),
+                    "failed",
+                )
+                self._timing_error = str(error)
+                self._refresh_database_timing()
+                QMessageBox.critical(self, "Could not start test timing", "No hardware test was started. The database start outcome is uncertain; use Retry Timing Save before trying again.\n%s" % error)
+                return False
+            self._database_session_clock = clock
+            self._timing_checkpoint_saved(saved)
+            self._timing_error = ""
+            self.timing_checkpoint_timer.start()
         if (
             self.switch_test_timer is None
             or self.switch_test_timer.metadata is not self.run_data.metadata
@@ -7137,9 +7352,14 @@ class MainWindow(QMainWindow):
         self.switch_test_timer.start_session()
         self.run_data.switch_test_sessions = self.switch_test_timer.sessions
         self.persist_run_metadata()
+        return True
 
     def finish_switch_test_session(self):
         """Stop timing the current real switch-test session and save it."""
+        if self._database_session_clock is not None and self._pending_timing_finish is None:
+            # Incomplete-coverage/cleanup paths can end acquisition without
+            # declaring the run complete. Preserve that lifecycle distinction.
+            self._save_timing_finish(None)
         if self.switch_test_timer is None or not self.switch_test_timer.active:
             return
         self.switch_test_timer.stop_session()
@@ -7153,6 +7373,7 @@ class MainWindow(QMainWindow):
 
     def hardware_channel_configuration_ready(self, channel_count):
         self.hardware_session.set_configured_channel_count(channel_count)
+        self._refresh_front_panel_channel_count_label()
         if self.hardware_full_pass and not self.hardware_retest:
             try:
                 front_panel_count = parse_osx_part_number(
@@ -7239,7 +7460,9 @@ class MainWindow(QMainWindow):
         if self.hardware_worker is None:
             return
 
-        maximum_channel = self.hardware_configured_channel_count or 256
+        maximum_channel = self.hardware_configured_channel_count or max(
+            1, self.hardware_single_channel.maximum()
+        )
         current_channel = self.hardware_pending_channel or 1
         channel, accepted = QInputDialog.getInt(
             self,
@@ -8019,6 +8242,7 @@ class MainWindow(QMainWindow):
                 for item in self.run_data.measurement_attempts
                 if item.attempt_id == measurement_uuid
             )
+            self._checkpoint_database_timing()
             self._record_support(
                 SupportEventCategory.MEASUREMENT,
                 "measurement.commit_succeeded",
@@ -8752,9 +8976,12 @@ class MainWindow(QMainWindow):
                 % missing_text,
             )
             return
-        self._finish_database_run("complete")
-        self._run_terminal_status = COMPLETION_COMPLETE
-        self._run_completion_reason = "Every planned channel has an accepted reading."
+        saved_complete = self._finish_database_run("complete")
+        self._run_terminal_status = COMPLETION_COMPLETE if saved_complete else COMPLETION_INTERRUPTED
+        self._run_completion_reason = (
+            "Every planned channel has an accepted reading." if saved_complete
+            else "Measurements finished; final database timing/status save is pending."
+        )
         self._run_completed_at_utc = utc_now()
         self._record_support(
             SupportEventCategory.WORKFLOW,
@@ -8780,11 +9007,12 @@ class MainWindow(QMainWindow):
         self._set_run_purpose_editable(False)
         self.refresh_run_status(include_composite=False)
         self.statusBar().showMessage(
-            "Hardware run complete. Readings are saved in SQL Server."
+            ("Hardware run complete. Readings are saved in SQL Server." if saved_complete
+             else "Test ended. Final timing/status save is pending; use Retry Timing Save.")
             if self.database_workflow is not None
             else "Hardware run complete. CSV and JSON are saved."
         )
-        if not self._active_extra_only:
+        if saved_complete and not self._active_extra_only:
             self._schedule_post_run_replacement_offer()
 
     def hardware_stopped(self):
@@ -8863,6 +9091,8 @@ class MainWindow(QMainWindow):
             return True
         if self.database_run_context.run.completion_status != "in_progress":
             return True
+        if self._database_session_clock is not None or self._pending_timing_finish is not None:
+            return self._save_timing_finish(completion_status)
         try:
             context = self.database_workflow.finish_run(
                 self.database_run_context.run.run_id,
@@ -8946,6 +9176,7 @@ class MainWindow(QMainWindow):
         self.hardware_pending_token = token
 
     def set_open_csv_available(self, available):
+        available = available and self._pending_timing_finish is None
         """Keep CSV loading disabled while a hardware run owns the UI."""
         self.open_csv_button.setEnabled(available)
         self.open_csv_action.setEnabled(available)
@@ -8995,6 +9226,16 @@ class MainWindow(QMainWindow):
                     event.ignore()
                     return
             self.finish_switch_test_session()
+        if self._database_session_clock is not None and self._pending_timing_finish is None:
+            if not self._save_timing_finish("stopped"):
+                event.ignore()
+                return
+        if self._pending_timing_finish is not None and not self.retry_timing_save():
+            event.ignore()
+            return
+        self.timing_checkpoint_timer.stop()
+        if self.timing_checkpoint_writer is not None:
+            self.timing_checkpoint_writer.close()
         try:
             self._record_support(
                 SupportEventCategory.CONNECTION,

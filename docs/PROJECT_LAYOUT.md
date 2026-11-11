@@ -60,6 +60,9 @@ packages.
   `domain/run_data.py`.
 - Two-part run completion/result assessment and stable status labels:
   `domain/run_status.py`.
+- Active test sessions and summaries: `domain/run_sessions.py`; monotonic clock
+  and background checkpoint worker: `application/run_session_timing.py`;
+  SQL/memory timing persistence: `infrastructure/database/run_sessions.py`.
 - Operator-selected SM/MM OPM/source profiles and legacy classification support:
   `domain/wavelengths.py`. UI and hardware adapters consume the resolved
   configuration rather than duplicating wavelength maps. Hardware identity is

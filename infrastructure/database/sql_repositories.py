@@ -38,6 +38,7 @@ from domain.database_records import (
     require_utc,
 )
 from infrastructure.database.connection import DatabaseConnectionFactory
+from infrastructure.database.run_sessions import SqlRunSessions
 
 
 def _json(value) -> str:
@@ -86,7 +87,7 @@ def _void_info(value: str | None) -> RunVoidInfo | None:
     )
 
 
-class SqlRepositories:
+class SqlRepositories(SqlRunSessions):
     """One SQL-backed provider satisfying all approved repository protocols."""
 
     def __init__(self, factory: DatabaseConnectionFactory) -> None:
@@ -457,6 +458,8 @@ class SqlRepositories:
                     *assignment_ids,
                 ).fetchall()
                 stopped_ids = [int(row[0]) for row in run_rows]
+                for stopped_run_id in stopped_ids:
+                    self._close_test_sessions(cursor, stopped_run_id)
                 cursor.execute(
                     """
                     UPDATE dbo.IL_RUNS SET completion_status = 'stopped',
@@ -590,6 +593,8 @@ class SqlRepositories:
                         *assignment_ids,
                     ).fetchall()
                     stopped_ids_list = [int(row[0]) for row in run_rows]
+                    for stopped_run_id in stopped_ids_list:
+                        self._close_test_sessions(cursor, stopped_run_id)
                     cursor.execute(
                         "UPDATE dbo.IL_RUNS SET completion_status = 'stopped', "
                         "run_ended_at_utc = ?, analysis_status = 'pending', "
@@ -896,11 +901,16 @@ class SqlRepositories:
         *,
         analysis_status: str | None = None,
         void_info: RunVoidInfo | None = None,
+        timing_checkpoint=None,
     ) -> RunRecord:
         if completion_status not in {"complete", "stopped", "failed"}:
             raise ValueError("Invalid terminal completion status")
         ended = require_utc(run_ended_at_utc, "Run end time")
         with self._factory.transaction() as cursor:
+            cursor.execute(
+                "SELECT run_id FROM dbo.IL_RUNS WITH (UPDLOCK, HOLDLOCK) WHERE run_id = ?",
+                int(run_id),
+            ).fetchone()
             current_row = cursor.execute(
                 self._RUN_SELECT + " WHERE run.run_id = ?", int(run_id)
             ).fetchone()
@@ -917,6 +927,10 @@ class SqlRepositories:
                 raise ValueError("Invalid analysis status")
             if analysis_status == "excluded" and void_info is None:
                 raise ValueError("Voided runs require run void information")
+            self._close_test_sessions(
+                cursor, run_id, timing_checkpoint,
+                "completed" if completion_status == "complete" else completion_status,
+            )
             changed = cursor.execute(
                 """
                 UPDATE dbo.IL_RUNS SET completion_status = ?, run_ended_at_utc = ?,

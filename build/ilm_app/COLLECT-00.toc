@@ -442,6 +442,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\database\\sql_migrations\\0006_authoritative_channel_roles.sql',
    'DATA'),
+  ('infrastructure\\database\\sql_migrations\\0007_run_test_sessions.sql',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\sql_migrations\\0007_run_test_sessions.sql',
+   'DATA'),
   ('libcrypto-3.dll',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\DLLs\\libcrypto-3.dll',
    'BINARY'),

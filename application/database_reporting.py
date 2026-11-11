@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 from datetime import datetime
 
 from application.database_run_read_model import (
@@ -20,6 +21,7 @@ from domain.database_reporting import (
 )
 from domain.limit_profiles import LimitProfile
 from domain.run_status import RESULT_LABELS, RESULT_NOT_EVALUATED, RESULT_REVIEW
+from domain.run_sessions import summarize_run_timing, session_interval_union_ms
 
 
 def _contains(candidate, expected) -> bool:
@@ -102,6 +104,12 @@ class DatabaseReportingService:
                 for assignment_id, replacements in replacement_groups.items()
             }
 
+        timing_sessions = self._repositories.test_sessions_for_runs(
+            tuple(run.run_id for run, _assignment, _unit, _switch in selected)
+        )
+        timing_by_run = {}
+        for session in timing_sessions:
+            timing_by_run.setdefault(session.run_id, []).append(session)
         run_rows = []
         contexts = []
         for run, assignment, unit, switch in selected:
@@ -110,7 +118,13 @@ class DatabaseReportingService:
                 histories.get(run.run_id, ()),
             )
             replacements = tuple(replacement_groups.get(assignment.assignment_id, ()))
-            run_rows.append(self._run_row(run, unit, switch, snapshot, replacements))
+            timing = summarize_run_timing(run, timing_by_run.get(run.run_id, ()))
+            run_rows.append(replace(
+                self._run_row(run, unit, switch, snapshot, replacements),
+                active_test_ms=timing.active_duration_ms,
+                elapsed_ms=timing.elapsed_ms, stopped_ms=timing.stopped_ms,
+                timing_session_count=timing.session_count, timing_quality=timing.timing_quality,
+            ))
             contexts.append((run, assignment, unit, switch, snapshot, replacements))
 
         run_rows.sort(key=lambda row: (row.started_at_utc, row.run_id), reverse=True)
@@ -123,6 +137,23 @@ class DatabaseReportingService:
             switches_by_id,
         )
         replacement_rows = self._replacement_rows(contexts)
+        timed_assignments = []
+        for row in assignment_rows:
+            scoped_runs = [run for run in run_rows if run.assignment_id == row.assignment_id]
+            ids = {run.run_id for run in scoped_runs}
+            sessions = [session for session in timing_sessions if session.run_id in ids]
+            qualities = {run.timing_quality for run in scoped_runs}
+            quality = (
+                "unavailable" if not sessions else
+                "partial" if qualities.intersection({"unavailable", "partial"}) else
+                "checkpoint_estimate" if "checkpoint_estimate" in qualities else
+                "provisional" if "provisional" in qualities else "confirmed"
+            )
+            timed_assignments.append(replace(
+                row, active_test_ms=sum(s.active_duration_ms for s in sessions) if sessions else None,
+                covered_test_ms=session_interval_union_ms(sessions) if sessions else None,
+                timing_session_count=len(sessions), timing_quality=quality,
+            ))
         summary = ReportingSummary(
             run_count=len(run_rows),
             current_channel_count=sum(row.current_channel_count for row in run_rows),
@@ -133,7 +164,7 @@ class DatabaseReportingService:
         )
         return DatabaseReport(
             filters,
-            tuple(assignment_rows),
+            tuple(timed_assignments),
             tuple(run_rows),
             tuple(replacement_rows),
             summary,

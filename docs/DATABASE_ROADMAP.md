@@ -13,6 +13,15 @@ without changing the schema or migration history.
 
 ## Milestone 0 - Freeze the database contract
 
+Current extension (2026-11-10): migration 0007 adds active test sessions and a
+run-timing summary view. Session lifecycle, checkpoints, retry/recovery rules,
+and read-only reporting are implemented in source. Applying the migration,
+SQL integration verification, and workstation stop/continue/crash smoke tests
+remain deployment gates; no live database was migrated by this implementation.
+Historical session reconstruction is intentionally out of scope. This extends
+the current schema to eleven tables including tracking and five views; the
+original milestone counts below describe its historical baseline.
+
 Status: complete. The implemented baseline is ten tables, four read-only
 views, forward-only migration history, and separate lifecycle, purpose, and
 analysis-status vocabularies.

@@ -202,7 +202,8 @@ not command or verify the hardware map. Assignment-scoped measurements,
 replacements, spares, analyses, and COC inputs never cross the transition.
 
 `domain/part_numbers.py` owns supported OSX part-number parsing. Its validated
-three-digit channel field is the authoritative front-panel production count.
+numeric channel field (at least three digits) is the authoritative front-panel
+production count. There is no arbitrary 48-channel application ceiling.
 The switch's SCPI-configured count is only a diagnostic/routing snapshot and is
 not physical capacity. Replacement analysis and COC preparation consume the
 part-number count and confirmed committed extra-port measurements; they do not
@@ -220,6 +221,8 @@ recommendations when the selected profile enables them. It validates the
 approved COC combinations: OSX-100 SM (1310/1550), OSX-100 MM (850/1300),
 and OSX-150 SM (1310/1550). OSX-150 MM remains unsupported. It has no Qt,
 filesystem, workbook, or hardware dependency.
+For a count above 48, the matching 48-channel COC template is extended in the
+generated workbook; the source template remains unchanged.
 COC preparation is operator-initiated only: the main window's explicit
 Write COC... button and File-menu action call the validated workflow. Run
 completion, manual stop, failure, and worker cleanup do not offer or prepare a
@@ -304,6 +307,16 @@ graphics restoration remain infrastructure concerns rather than UI logic.
 `domain/comparison.py` owns read-only measurement indexing and comparison-value
 formatting. `domain/timing.py` owns switch-test session duration and metadata
 rules; Live IL and Red Light tools do not instantiate that timer.
+Database timing additionally uses `domain/run_sessions.py` for immutable
+checkpoints and summaries, `application/run_session_timing.py` for a monotonic
+clock and single-in-flight background checkpoint writes, and
+`infrastructure/database/run_sessions.py` for SQL/memory repository contracts.
+One interval is saved per acquisition start/continuation; normal session close
+and run lifecycle closure are atomic. Frozen final payloads survive in-memory
+retries; interrupted or historically incomplete timing is explicitly labeled.
+Run information and reports consume loaded timing records without adding
+repository calls during automatic UI publication. No hardware timing settings,
+measurement acceptance rules, or COC eligibility are changed by this feature.
 
 `domain/raw_export.py` owns pure formatting of accepted measurements for
 clipboard transfer. It produces Excel-compatible tab-separated text and has no

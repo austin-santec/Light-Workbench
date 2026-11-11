@@ -41,6 +41,10 @@ class AssignmentReportRow:
     removed_by: str
     removal_reason: str
     run_count: int
+    active_test_ms: int | None = None
+    covered_test_ms: int | None = None
+    timing_session_count: int = 0
+    timing_quality: str = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,11 @@ class RunReportRow:
     replacement_analysis_status: str = ""
     replacement_recommendation_count: int = 0
     replacement_recommendations_used: int = 0
+    active_test_ms: int | None = None
+    elapsed_ms: int | None = None
+    stopped_ms: int | None = None
+    timing_session_count: int = 0
+    timing_quality: str = "unavailable"
 
 
 @dataclass(frozen=True)

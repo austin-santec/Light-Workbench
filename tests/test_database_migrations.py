@@ -94,14 +94,16 @@ class MigrationDiscoveryTests(unittest.TestCase):
     def test_bundled_migrations_are_discovered(self):
         migrations = discover_migrations()
 
-        self.assertEqual([item.migration_id for item in migrations], [1, 2, 3, 4, 5, 6])
+        self.assertEqual([item.migration_id for item in migrations], [1, 2, 3, 4, 5, 6, 7])
         self.assertEqual(migrations[0].name, "initial_schema")
         self.assertEqual(migrations[1].name, "nonnegative_measurement_losses")
-        self.assertEqual(migrations[-1].name, "authoritative_channel_roles")
-        self.assertIn("last_reported_scpi_channel_count", migrations[-1].script)
-        self.assertIn("measurement_role", migrations[-1].script)
-        self.assertIn("vw_ConfirmedExtraPorts", migrations[-1].script)
-        prior_script = migrations[-2].script
+        self.assertEqual(migrations[-1].name, "run_test_sessions")
+        self.assertIn("UX_IL_RUN_SESSIONS_open", migrations[-1].script)
+        self.assertIn("vw_RunTimingSummary", migrations[-1].script)
+        self.assertIn("last_reported_scpi_channel_count", migrations[-2].script)
+        self.assertIn("measurement_role", migrations[-2].script)
+        self.assertIn("vw_ConfirmedExtraPorts", migrations[-2].script)
+        prior_script = migrations[-3].script
         self.assertIn("FOR JSON PATH, WITHOUT_ARRAY_WRAPPER", prior_script)
         self.assertIn("DROP COLUMN analysis_exclusion_reason", prior_script)
         self.assertIn("CK_IL_RUNS_void_info_json", prior_script)
@@ -324,6 +326,7 @@ class SqlServerMigrationIntegrationTests(unittest.TestCase):
                 "SWITCHES",
                 "UNIT_SWITCH_ASSIGNMENTS",
                 "IL_RUNS",
+                "IL_RUN_SESSIONS",
                 "IL_MEASUREMENTS",
                 "CHANNEL_REPLACEMENTS",
                 "DESIGNATED_SPARES",
@@ -337,6 +340,8 @@ class SqlServerMigrationIntegrationTests(unittest.TestCase):
                 "vw_CurrentILMeasurements",
                 "vw_CurrentChannelMap",
                 "vw_ReplacementRecommendationUsage",
+                "vw_ConfirmedExtraPorts",
+                "vw_RunTimingSummary",
             },
         )
         self.assertIn("lwb_app_writer", roles)
@@ -348,7 +353,49 @@ class SqlServerMigrationIntegrationTests(unittest.TestCase):
         ).apply()
 
         self.assertEqual(result.applied_ids, ())
-        self.assertEqual(result.current_version, 5)
+        self.assertEqual(result.current_version, 7)
+
+    def test_session_summary_excludes_stop_gap(self):
+        from uuid import uuid4
+        _, _, assignment_id = self._create_assignment(uuid4().hex)
+        run_id = self._create_run(assignment_id, str(uuid4()))
+        cursor = self.connection.cursor()
+        for start_minute, end_minute, duration in ((0, 12, 720000), (60, 68, 480000)):
+            cursor.execute(
+                "INSERT INTO dbo.IL_RUN_SESSIONS (run_id, client_session_uuid, "
+                "started_at_utc, ended_at_utc, active_duration_ms, last_checkpoint_at_utc, "
+                "end_reason, timing_quality) SELECT run_id, ?, "
+                "DATEADD(minute, ?, run_started_at_utc), DATEADD(minute, ?, run_started_at_utc), "
+                "?, DATEADD(minute, ?, run_started_at_utc), 'stopped', 'confirmed' "
+                "FROM dbo.IL_RUNS WHERE run_id = ?",
+                str(uuid4()), start_minute, end_minute, duration, end_minute, run_id,
+            )
+        cursor.execute(
+            "UPDATE dbo.IL_RUNS SET completion_status = 'complete', "
+            "run_ended_at_utc = DATEADD(minute, 68, run_started_at_utc) WHERE run_id = ?", run_id,
+        )
+        row = cursor.execute(
+            "SELECT timing_session_count, active_test_ms, elapsed_ms, stopped_ms, "
+            "timing_quality FROM dbo.vw_RunTimingSummary WHERE run_id = ?", run_id,
+        ).fetchone()
+        self.assertEqual(tuple(row), (2, 1200000, 4080000, 2880000, "confirmed"))
+        cursor.close()
+
+    def test_only_one_open_session_per_run_is_allowed(self):
+        from uuid import uuid4
+        _, _, assignment_id = self._create_assignment(uuid4().hex)
+        run_id = self._create_run(assignment_id, str(uuid4()))
+        cursor = self.connection.cursor()
+        insert = (
+            "INSERT INTO dbo.IL_RUN_SESSIONS (run_id, client_session_uuid, "
+            "started_at_utc, active_duration_ms, last_checkpoint_at_utc, timing_quality) "
+            "SELECT run_id, ?, run_started_at_utc, 0, run_started_at_utc, 'confirmed' "
+            "FROM dbo.IL_RUNS WHERE run_id = ?"
+        )
+        cursor.execute(insert, str(uuid4()), run_id)
+        with self.assertRaises(self.pyodbc.IntegrityError):
+            cursor.execute(insert, str(uuid4()), run_id)
+        cursor.close()
 
     def test_invalid_json_and_nonpositive_counts_are_rejected(self):
         cursor = self.connection.cursor()

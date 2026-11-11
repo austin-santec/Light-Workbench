@@ -444,6 +444,33 @@ class InMemoryRepositoryTests(RepositoryContractMixin, unittest.TestCase):
     def setUp(self):
         self.repository = InMemoryRepositories()
 
+    def test_49_channel_unit_can_be_assigned_and_started(self):
+        part_number = "OSX-100-1A-049-09-FA-00B-2H"
+        unit = self.repository.get_or_create(
+            UnitSpec("19243", part_number, 49, "OSX-100")
+        )
+        switch = self.repository.get_or_create(SwitchSpec("SW-49", "OSX-100", 50))
+        channel_map = {channel: channel for channel in range(1, 50)}
+        assignment = self.repository.install(
+            AssignmentSpec(unit.unit_id, switch.switch_id, NOW, "AT", channel_map)
+        )
+        run = self.repository.create(
+            RunSpec(
+                assignment_id=assignment.assignment_id,
+                run_number=1,
+                client_run_uuid=uuid4(),
+                run_started_at_utc=NOW,
+                tested_by="AT",
+                wavelength_mode="SM",
+                operating_band="O band",
+                application_version="test",
+                front_panel_channel_count=49,
+            )
+        )
+        self.assertEqual(run.front_panel_channel_count, 49)
+        self.assertEqual(len(assignment.initial_channel_map), 49)
+        self.assertEqual(assignment.initial_channel_map[49], 49)
+
     def test_complete_repository_contract(self):
         self.exercise_repository_contract()
 

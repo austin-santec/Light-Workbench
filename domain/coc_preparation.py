@@ -17,7 +17,6 @@ from .part_numbers import infer_front_panel_channel_count
 from .replacements import ReplacementReading, analyze_replacements
 
 
-COC_MAX_CHANNELS = 48
 COC_FORMAL_LIMIT_DB = 2.5
 COC_OPTIMIZATION_LIMIT_DB = 2.25
 
@@ -139,8 +138,8 @@ def prepare_coc(
 ) -> CocPreparationResult:
     """Prepare a COC and advisory recovery options from compatible run history."""
     count = int(front_panel_channel_count)
-    if not 1 <= count <= COC_MAX_CHANNELS:
-        raise ValueError("Front-panel channel count must be between 1 and 48.")
+    if count < 1:
+        raise ValueError("Front-panel channel count must be positive.")
     candidates = list(source_runs or compatible_runs)
     legacy_explicit_supplement = isinstance(supplemental_run, CocSourceRun)
     if not candidates and supplemental_run is not None:
@@ -813,7 +812,6 @@ def _optimization_recommendations(
 
 __all__ = [
     "COC_FORMAL_LIMIT_DB",
-    "COC_MAX_CHANNELS",
     "COC_OPTIMIZATION_LIMIT_DB",
     "CocFailure",
     "CocPreparationResult",

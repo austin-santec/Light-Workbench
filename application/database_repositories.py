@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID
+from domain.run_sessions import RunSessionCheckpoint, RunSessionRecord
 
 from domain.database_records import (
     AssignmentRecord,
@@ -109,6 +110,7 @@ class RunRepository(Protocol):
         *,
         analysis_status: str | None = None,
         void_info: RunVoidInfo | None = None,
+        timing_checkpoint: RunSessionCheckpoint | None = None,
     ) -> RunRecord: ...
 
     def resume(self, run_id: int) -> RunRecord: ...
@@ -156,6 +158,19 @@ class MeasurementRepository(Protocol):
     def snapshot_for_run(
         self, run_id: int
     ) -> tuple[tuple[MeasurementRecord, ...], tuple[MeasurementRecord, ...]]: ...
+
+
+class RunSessionRepository(Protocol):
+    def end_test_session(self, checkpoint: RunSessionCheckpoint, end_reason: str) -> None: ...
+
+    def begin_test_session(
+        self, run_id: int, client_session_uuid: UUID, started_at_utc: datetime,
+        *, partial: bool = False,
+    ) -> RunSessionRecord: ...
+
+    def checkpoint_test_session(self, checkpoint: RunSessionCheckpoint) -> RunSessionRecord: ...
+
+    def test_sessions_for_runs(self, run_ids: tuple[int, ...]) -> tuple[RunSessionRecord, ...]: ...
 
 
 class ReplacementAnalysisRepository(Protocol):

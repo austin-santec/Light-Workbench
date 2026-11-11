@@ -15,6 +15,7 @@ class PartNumberTests(unittest.TestCase):
             "OSX-150-1A-036-09-FA-00B-3H": 36,
             "OSX-150-1A-048-09-FA-00B-3H": 48,
             "osx-100-1A-008-09-FA-00B-2H": 8,
+            "OSX-100-1A-049-09-FA-00B-2H": 49,
         }
         for part_number, expected in cases.items():
             with self.subTest(part_number=part_number):
@@ -36,7 +37,6 @@ class PartNumberTests(unittest.TestCase):
             "OSX-150-UNKNOWN-36",
             "OSX-150-1A-12-09-FA-00B-2H",
             "OSX-150-1A-000-09-FA-00B-2H",
-            "OSX-150-1A-049-09-FA-00B-2H",
             "OSX-150-1A-09-012-FA-00B-2H",
         )
         for part_number in invalid:

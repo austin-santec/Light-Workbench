@@ -101,6 +101,8 @@ class AppPaths:
         """Return the bundled template for a model, mode, and capacity."""
         normalized_model = str(model or "").strip().upper().replace("_", "-")
         normalized_mode = str(wavelength_mode or "SM").strip().upper()
+        if int(capacity) < 1:
+            raise ValueError("Front-panel channel count must be positive.")
         report_capacity = 45 if int(capacity) <= 45 else 48
         filename = COC_TEMPLATE_PROFILE_FILENAMES.get(
             (normalized_model, normalized_mode, report_capacity)

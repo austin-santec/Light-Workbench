@@ -10,7 +10,6 @@ from .coc_preparation import (
     prepare_coc,
 )
 from .part_numbers import (
-    MAX_FRONT_PANEL_CHANNELS,
     OsxPartNumber,
     parse_osx_part_number,
     resolve_front_panel_channel_count,
@@ -69,7 +68,6 @@ __all__ = [
     "CocSourceRun",
     "infer_front_panel_channel_count",
     "prepare_coc",
-    "MAX_FRONT_PANEL_CHANNELS",
     "OsxPartNumber",
     "parse_osx_part_number",
     "resolve_front_panel_channel_count",

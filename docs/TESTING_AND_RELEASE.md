@@ -130,8 +130,11 @@ that integration backup.
 
 COC coverage must include whole-pair multi-run overrides, run/criteria/physical
 port compatibility, strict 2.5000 dB publication blocking, optimization
-confirmation, 45/48 template selection, row trimming, merged ranges, print
-area, source-template immutability, and preservation of source run readings.
+confirmation, 45/48 base-template selection, row trimming, expansion beyond 48,
+merged ranges, print area and pagination, source-template immutability, and
+preservation of source run readings. Verify expanded COCs in Excel and on the
+target printer before deployment; workbook round trips alone do not establish
+printed layout.
 
 Run-purpose coverage must verify the Production default, production-report
 filtering, terminal completion policy, purpose display for loaded runs,
@@ -201,6 +204,20 @@ operator-confirmed unverified path, and prove that returning to a normal
 channel uses `CLOSe` and logical `CLOSe?` confirmation.
 
 ## Required checks
+
+Database session-timing coverage uses deterministic monotonic/UTC clocks and
+fake repositories/connections. Cover explicit stop/continue gaps, UUID retries,
+late/coalesced checkpoints, atomic final close/rollback, failed/uncertain saves,
+stale-session recovery at the last checkpoint, partial/legacy timing, pairing
+transitions, numeric report export, and assignment interval union. Migration
+0007 must preserve prior migrations and enforce one open session per run.
+The opt-in SQL migration cases verify the actual summary view and unique index
+only against `LWBTestDB_Integration`; fake SQL tests do not qualify T-SQL execution.
+Before deployment, manually test stop/continue across application restarts,
+forced termination on controlled test data, database outage/retry, concurrent
+station ownership, Run information/history, and the report columns in light/dark
+mode. Do not declare interrupted estimates exact or claim the update is ready
+on a target database until migration 0007 is applied and verified there.
 
 ```powershell
 python -m unittest discover -s tests

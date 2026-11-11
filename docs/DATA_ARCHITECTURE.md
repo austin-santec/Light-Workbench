@@ -40,6 +40,31 @@ snapshot with normalized recommendations. A saved analysis is historical
 evidence, not routing authority; source changes make it stale and require a new
 calculation.
 
+## Database test time and interruptions
+
+Database runs record individual active intervals in `IL_RUN_SESSIONS` rather
+than deriving testing effort from the original run start and latest end.
+Stopping closes an interval; continuing/retesting opens another under the same
+run. Cable movement, review, and waits while active count; explicit stopped
+gaps, pre-run references, standalone tools, and between-run repairs do not.
+Monotonic elapsed milliseconds are authoritative for active effort, while UTC
+timestamps establish chronology. Existing file-backed timing remains unchanged.
+
+Checkpoints run in the background about every 30 seconds and after accepted
+writes, without changing the atomic measurement handshake. Normal final timing
+and run status save together. Failed final saves retain their frozen payload
+for Retry Timing Save, not a growing duration or a local fallback file.
+Crashes recover only through the last durable checkpoint and are labeled
+estimated; legacy/partially tracked runs are unavailable/partial, not invented
+full histories. Loading/reporting never closes an interrupted session as a side
+effect; recovery occurs on an explicit later start/continuation.
+
+Run information provides timing totals and View Test Sessions. Reports expose
+active, elapsed, stopped, session count, and quality; assignment rows separate
+filtered summed effort from the union of covered intervals. Parallel intervals
+must not be naively summed as chronological test time. See DATABASE_ARCHITECTURE
+for fields, migration 0007, quality rules, and recovery constraints.
+
 ## Canonical data model
 
 New code should work with typed domain models first and serialize them second.
@@ -217,9 +242,10 @@ Changed physical ports must agree with the unit's completed replacement
 records. Source measurements, references, replacement records, and hardware
 state remain unchanged.
 
-The three-digit channel field in the selected context run's supported OSX-100 or
-OSX-150 part number defines the confirmed front-panel count and required
-logical channels `1..N`. The operator does not enter this value manually.
+The numeric channel field (at least three digits) in the selected context
+run's supported OSX-100 or OSX-150 part number defines the confirmed front-panel
+count and required logical channels `1..N`. The operator does not enter this
+value manually.
 Every required channel must be present and valid, and each loss rounded to the
 established four-decimal display precision must be below the selected model's
 fail limit. OSX-100 uses 0.8000 dB; OSX-150 uses 2.5000 dB. Readings above the
@@ -242,9 +268,12 @@ channel on its recorded replacement physical port.
 Run voiding is non-destructive. `void_info_json` records UTC time, operator,
 and reason while all measurements, retests, replacements, and saved analyses
 remain queryable. The application offers no unvoid action.
-Each approved model/mode uses separate templates for capacities 1-45 and
-46-48; the exporter removes unused rows and updates merged ranges and print
-area on the copied workbook only. Output files use the local-time name format
+Each approved model/mode uses separate base templates for capacities 1-45 and
+46 or more. The exporter removes unused rows for smaller reports. Above 48 it
+extends the 48-channel template's second measurement section in the output copy,
+preserving row styles, merged return-loss specifications, and drawings, and
+updates the print area and print pagination. The bundled source templates are
+never edited. Output files use the local-time name format
 `COC <OSX-100 or OSX-150> <Main Board serial>_YYMMDD-HHMMSS.xlsx`, with a
 numeric collision suffix when multiple exports occur in the same second.
 

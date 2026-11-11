@@ -51,6 +51,11 @@ RUN_HEADERS = (
     "Replacements",
     "Replacement Analysis",
     "Recommendations Used",
+    "Active Test (s)",
+    "Elapsed (s)",
+    "Stopped (s)",
+    "Timing Sessions",
+    "Timing Quality",
 )
 ASSIGNMENT_HEADERS = (
     "Unit Serial",
@@ -63,6 +68,10 @@ ASSIGNMENT_HEADERS = (
     "Removed By",
     "Removal Reason",
     "Runs",
+    "Filtered Test Effort (s)",
+    "Filtered Covered Time (s)",
+    "Timing Sessions",
+    "Timing Quality",
 )
 CHANNEL_HEADERS = (
     "Unit Serial",
@@ -199,6 +208,10 @@ def _timestamp(value) -> str:
     return value.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _seconds(value) -> str:
+    return "Not available" if value is None else "%.3f" % (value / 1000)
+
+
 def run_report_rows(report) -> list[list[str]]:
     return [
         [
@@ -228,6 +241,11 @@ def run_report_rows(report) -> list[list[str]]:
                 row.replacement_recommendations_used,
                 row.replacement_recommendation_count,
             ),
+            _seconds(row.active_test_ms),
+            _seconds(row.elapsed_ms),
+            _seconds(row.stopped_ms),
+            str(row.timing_session_count),
+            row.timing_quality,
         ]
         for row in report.runs
     ]
@@ -246,6 +264,10 @@ def assignment_report_rows(report) -> list[list[str]]:
             row.removed_by,
             row.removal_reason,
             str(row.run_count),
+            _seconds(row.active_test_ms),
+            _seconds(row.covered_test_ms),
+            str(row.timing_session_count),
+            row.timing_quality,
         ]
         for row in report.assignments
     ]

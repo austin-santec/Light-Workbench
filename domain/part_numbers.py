@@ -6,9 +6,8 @@ from dataclasses import dataclass
 import re
 
 
-MAX_FRONT_PANEL_CHANNELS = 48
 _OSX_PART_NUMBER_PATTERN = re.compile(
-    r"^OSX-(?P<model>100|150)-[^-]+-(?P<channel_count>\d{3})(?:-|$)",
+    r"^OSX-(?P<model>100|150)-[^-]+-(?P<channel_count>\d{3,})(?:-|$)",
     re.IGNORECASE,
 )
 
@@ -42,12 +41,8 @@ def parse_osx_part_number(part_number: str) -> OsxPartNumber:
         )
 
     count = int(match.group("channel_count"))
-    if not 1 <= count <= MAX_FRONT_PANEL_CHANNELS:
-        raise ValueError(
-            "The part number specifies %d front-panel channels; supported "
-            "values are 1 through %d."
-            % (count, MAX_FRONT_PANEL_CHANNELS)
-        )
+    if count < 1:
+        raise ValueError("The part number must specify a positive front-panel channel count.")
 
     return OsxPartNumber(
         value=value,
@@ -70,7 +65,6 @@ def infer_front_panel_channel_count(part_number: str) -> int | None:
 
 
 __all__ = [
-    "MAX_FRONT_PANEL_CHANNELS",
     "OsxPartNumber",
     "infer_front_panel_channel_count",
     "parse_osx_part_number",

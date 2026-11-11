@@ -5,7 +5,9 @@
 Status: implemented through assignment-scoped iterative replacement analysis,
 permanent run voiding, persistent analysis history, and read-only database
 reporting. The current schema includes forward-only migrations through
-`0006_authoritative_channel_roles.sql`.
+`0007_run_test_sessions.sql`. Migration 0007 adds durable active-test sessions
+and `vw_RunTimingSummary`; source implementation is present, but applying it
+and verifying it against a target SQL Server is a separate deployment step.
 
 Migration `0006` reclassifies only legacy measurements that are unambiguously
 extra candidates: both their stored logical channel and physical port exceed
@@ -161,6 +163,7 @@ UNIT_SWITCH_ASSIGNMENTS <----- SWITCHES
   |
   +---- IL_RUNS
   |       |
+  |       +---- IL_RUN_SESSIONS
   |       +---- IL_MEASUREMENTS
   |       +---- REPLACEMENT_ANALYSES
   |               |
@@ -299,6 +302,60 @@ Rules:
 - Removal cannot precede installation.
 - Filtered unique indexes allow at most one active assignment per unit and at
   most one active assignment per switch where `removed_at_utc IS NULL`.
+
+### `IL_RUN_SESSIONS`
+
+One active-testing interval per start/continuation/retest of a database run.
+No historical sessions are fabricated by migration 0007.
+
+| Field | SQL Server type | Description |
+| --- | --- | --- |
+| `session_id` | `BIGINT IDENTITY` | Primary key |
+| `run_id` | `BIGINT` | Foreign key to the tested run/assignment |
+| `client_session_uuid` | `UNIQUEIDENTIFIER` | Unique retry identity, retained across uncertain commits |
+| `started_at_utc` | `DATETIME2(3)` | Start after preflight, before worker acquisition starts |
+| `ended_at_utc` | `DATETIME2(3) NULL` | Exact normal end or last durable checkpoint on interruption |
+| `active_duration_ms` | `BIGINT` | Nonnegative absolute monotonic counter; never an additive retry delta |
+| `last_checkpoint_at_utc` | `DATETIME2(3)` | Last durably reported timing instant |
+| `end_reason` | `VARCHAR(20) NULL` | `completed`, `stopped`, `failed`, or `interrupted`; null while open |
+| `timing_quality` | `VARCHAR(30)` | `confirmed`, `checkpoint_estimate`, or `partial` |
+
+A filtered unique index permits at most one open session per run. A new UUID
+cannot take over a recently checkpointed session. On explicit continuation,
+an open session whose checkpoint is at least 90 seconds old is closed at that
+checkpoint with estimated quality, never at restart time. This is a timing
+liveness safeguard, not a hardware lock; workstation clocks must be synchronized.
+
+The application submits coalesced background checkpoints approximately every
+30 seconds and after accepted measurement commits. These writes are separate
+from measurement transactions and never alter measurement acceptance. Outages
+can extend checkpoint gaps; interrupted timing is not claimed exact. A final
+session close and normal run lifecycle transition share one transaction.
+Coverage-reconciliation/cleanup paths may close only the timing interval while
+leaving the incomplete run available for continuation. Pairing transitions
+close affected open intervals at their last checkpoint as estimated history.
+
+Final payloads are frozen for retry, so a database outage after Stop does not
+accumulate retry downtime. The UI retains a failed final save in memory and
+offers Retry Timing Save; clearing/starting another test and clean shutdown
+cannot silently discard it. There is no local timing outbox. If the process
+is terminated, subsequent recovery uses durable checkpoints. Uncertain start
+commits retain their UUID and are settled as zero-duration failed sessions
+because no acquisition was launched.
+
+`vw_RunTimingSummary` exposes `timing_session_count`, `active_test_ms`,
+`elapsed_ms`, `stopped_ms`, and summary `timing_quality` per run. Elapsed time
+is original run creation through final end (or current UTC while open).
+Stopped time is elapsed minus active only for fully confirmed coverage;
+otherwise it is null. No sessions means unavailable active/stopped time, not
+zero. An open interval is reported as provisional. The first tracked interval
+on a pre-existing continued/retested run is partial; earlier time is unknown.
+
+Report run rows expose numeric seconds and quality. Assignment timing uses
+only runs selected by the report filters: summed effort and chronological
+interval union are separate metrics. Missing/partial/estimated/open evidence
+propagates to assignment quality. Run-level station/operator identity remains
+unchanged; sessions do not introduce a station registry or infer repair labor.
 
 ### `IL_RUNS`
 
@@ -684,6 +741,14 @@ reportable without treating an advisory calculation as proof that the physical
 reroute occurred. A recommendation with no matching replacement is simply
 shown as unused.
 
+### `vw_RunTimingSummary`
+
+Returns active milliseconds, overall elapsed milliseconds, confirmed stopped
+milliseconds, session count, and timing quality for each run. Runs without
+session evidence retain null active/stopped values. Open, interrupted, and
+partial histories are distinguished from confirmed timing. See IL_RUN_SESSIONS
+above for the complete definitions; the view does not change run state.
+
 ## Required indexes
 
 At minimum, create indexes for:
@@ -847,8 +912,9 @@ Resolved:
   planned.
 - SQL Server is authoritative for new run data on the database branch.
 - Support logs remain local.
-- The ten-table schema and four read-only views are the approved
-  baseline.
+- The current source schema has eleven tables (including migration tracking)
+  and five read-only views through migration 0007; the earlier ten-table,
+  four-view baseline remains historical.
 - Read-only reporting lives in Light Workbench and uses application/repository
   boundaries rather than SQL in Qt presentation code.
 

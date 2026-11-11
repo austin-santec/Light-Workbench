@@ -5,7 +5,7 @@ import posixpath
 import re
 import shutil
 import tempfile
-from copy import deepcopy
+from copy import copy, deepcopy
 from datetime import date, datetime
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,8 +55,8 @@ def template_profile_for(model, wavelength_mode, channel_count):
     normalized_model = normalize_switch_model(model)
     normalized_mode = normalize_wavelength_mode(wavelength_mode)
     count = int(channel_count)
-    if not 1 <= count <= 48:
-        raise ValueError("Front-panel channel count must be between 1 and 48.")
+    if count < 1:
+        raise ValueError("Front-panel channel count must be positive.")
     capacity = 45 if count <= 45 else 48
     if (normalized_model, normalized_mode, capacity) not in COC_TEMPLATE_PROFILE_FILENAMES:
         raise ValueError(
@@ -183,12 +183,15 @@ def _next_output_path(directory, serial, export_timestamp=None, switch_model="OS
     return output_path
 
 
-def measurement_rows(template_capacity=48):
-    """Return the expected logical-channel rows for a template capacity."""
+def measurement_rows(template_capacity=48, channel_count=None):
+    """Return channel rows, extending the 48-row template when needed."""
     if int(template_capacity) == 45:
         return list(range(11, 56))
     if int(template_capacity) == 48:
-        return list(range(11, 56)) + list(range(67, 70))
+        rows = list(range(11, 56)) + list(range(67, 70))
+        if channel_count is not None and int(channel_count) > 48:
+            rows.extend(range(70, 70 + int(channel_count) - 48))
+        return rows
     raise ValueError("COC template capacity must be 45 or 48 channels.")
 
 
@@ -304,6 +307,48 @@ def _trim_report_rows(sheet, channel_count, template_capacity):
     if sheet.max_row > last_row:
         sheet.delete_rows(last_row + 1, sheet.max_row - last_row)
     sheet.print_area = "$B$1:$H$%d" % last_row
+
+
+def _extend_report_rows(sheet, channel_count):
+    """Copy the 48-channel section's middle/end row formatting into new rows."""
+    if channel_count <= 48:
+        return
+
+    # The template merges the return-loss specification over rows 67-69.
+    # Preserve the last row's bottom border at the new endpoint.
+    middle_styles = {column: copy(sheet.cell(68, column)._style) for column in range(2, 8)}
+    final_styles = {column: copy(sheet.cell(69, column)._style) for column in range(2, 8)}
+    middle_dimension = copy(sheet.row_dimensions[68])
+    final_dimension = copy(sheet.row_dimensions[69])
+    merged_spec_columns = tuple(
+        column
+        for column in ("F", "G")
+        if "%s67:%s69" % (column, column) in sheet.merged_cells
+    )
+    for column in merged_spec_columns:
+        sheet.unmerge_cells("%s67:%s69" % (column, column))
+
+    last_row = 69 + channel_count - 48
+    for row in range(69, last_row + 1):
+        is_final = row == last_row
+        styles = final_styles if is_final else middle_styles
+        dimension = copy(final_dimension if is_final else middle_dimension)
+        dimension.index = row
+        sheet.row_dimensions[row] = dimension
+        for column, style in styles.items():
+            sheet.cell(row, column)._style = copy(style)
+        if row > 69:
+            sheet.cell(row, 2).value = row - 21
+            sheet.merge_cells(start_row=row, start_column=2, end_row=row, end_column=3)
+
+    for column in merged_spec_columns:
+        sheet.merge_cells("%s67:%s%d" % (column, column, last_row))
+    # Extra channels can span several pages. Repeat the second-section headings.
+    if sheet["B64"].value == "Channels":
+        sheet.print_title_rows = "63:66"
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
 
 
 def _restore_template_drawings(template_path, output_path):
@@ -519,8 +564,8 @@ def export_coc(
     if not serial:
         raise ValueError("Enter a Main Board serial number before writing the COC.")
     channel_count = int(front_panel_channel_count)
-    if not 1 <= channel_count <= 48:
-        raise ValueError("Front-panel channel count must be between 1 and 48.")
+    if channel_count < 1:
+        raise ValueError("Front-panel channel count must be positive.")
     expected_profile = template_profile_for(
         switch_model, wavelength_mode, channel_count
     )
@@ -574,13 +619,15 @@ def export_coc(
         sheet["F4"] = export_date or date.today()
         sheet["G4"] = str(tested_by or "").strip()
 
+        _extend_report_rows(sheet, channel_count)
+
         records_by_channel = {
             record.channel: record
             for record in measurements
             if 1 <= record.channel <= channel_count
         }
         for channel, row in enumerate(
-            measurement_rows(expected_profile.capacity), start=1
+            measurement_rows(expected_profile.capacity, channel_count), start=1
         ):
             if channel > channel_count:
                 break

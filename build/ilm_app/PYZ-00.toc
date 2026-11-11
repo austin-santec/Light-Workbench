@@ -130,6 +130,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\run_preflight.py',
    'PYMODULE'),
+  ('application.run_session_timing',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\application\\run_session_timing.py',
+   'PYMODULE'),
   ('application.run_start',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\application\\run_start.py',
@@ -438,6 +442,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\run_purpose.py',
    'PYMODULE'),
+  ('domain.run_sessions',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\domain\\run_sessions.py',
+   'PYMODULE'),
   ('domain.run_status',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\domain\\run_status.py',
@@ -712,6 +720,10 @@
   ('infrastructure.database.preflight',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\infrastructure\\database\\preflight.py',
+   'PYMODULE'),
+  ('infrastructure.database.run_sessions',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\infrastructure\\database\\run_sessions.py',
    'PYMODULE'),
   ('infrastructure.database.runtime',
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '

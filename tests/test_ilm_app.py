@@ -845,6 +845,14 @@ class MainWindowTests(unittest.TestCase):
                 window.front_panel_channel_count_label.text(),
                 "Front-panel channels: 12",
             )
+            window.hardware_part_number.setCurrentText(
+                "OSX-100-1A-049-09-FA-00B-2H"
+            )
+            self.assertEqual(window.front_panel_channel_count_label.text(), "Front-panel channels: 49")
+            self.assertGreaterEqual(window.hardware_single_channel.maximum(), 49)
+            window.hardware_configured_channel_count = 50
+            window._refresh_front_panel_channel_count_label()
+            self.assertGreaterEqual(window.hardware_single_channel.maximum(), 50)
             window.hardware_part_number.setCurrentText("not-a-part-number")
             self.assertIn("Not available", window.front_panel_channel_count_label.text())
         finally:

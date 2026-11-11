@@ -282,7 +282,12 @@ def format_coc_summary(result: CocPreparationResult) -> str:
         % (", ".join("Run %d" % value for value in result.considered_run_numbers) or "None"),
         "Runs supplying current channels: %s"
         % (", ".join("Run %d" % value for value in result.source_run_numbers) or "None"),
-        "Template: %d-channel maximum" % result.template_capacity,
+        (
+            "Base template: %d channels; report expanded to %d channels"
+            % (result.template_capacity, result.front_panel_channel_count)
+            if result.front_panel_channel_count > result.template_capacity
+            else "Template: %d-channel maximum" % result.template_capacity
+        ),
     ]
     if result.overridden_channels:
         lines.append("Retest/replacement overrides:")
