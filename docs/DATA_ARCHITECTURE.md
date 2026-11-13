@@ -340,6 +340,10 @@ replace the active session reference.
 - Avoid modifying the original COC template; create a copy for each export.
 - Preserve template graphics and unrelated cell content during COC export.
 - Keep clipboard exports read-only with respect to run and unit persistence.
+- Copy Raw Data rounds the clipboard-only tab-separated values to the operator's
+  selected 0-4 decimal places (two by default). Database IL values are stored
+  at four decimal places; legacy in-memory floats do not reliably retain their
+  original textual precision. Cancellation does not change clipboard contents.
 - Database replacement records are assignment-scoped documentation. Legacy
   file-backed replacement records remain unit-level for compatibility. The
   replacement editor does not use `CLOSe?`, change switch mappings, or verify a

@@ -143,7 +143,7 @@ from domain.measurement_attempts import (
     new_measurement_attempt,
     normalise_attempts,
 )
-from domain.raw_export import format_raw_measurements
+from domain.raw_export import MAX_COPY_DECIMAL_PLACES, format_raw_measurements
 from domain.part_numbers import parse_osx_part_number
 from domain.database_records import (
     MEASUREMENT_ROLE_EXTRA_CANDIDATE,
@@ -10109,8 +10109,22 @@ class MainWindow(QMainWindow):
             )
             return
 
+        decimal_places, accepted = QInputDialog.getInt(
+            self,
+            "Copy Raw Data",
+            "Decimal places (0-%d):" % MAX_COPY_DECIMAL_PLACES,
+            2,
+            0,
+            MAX_COPY_DECIMAL_PLACES,
+            1,
+        )
+        if not accepted:
+            return
+
         try:
-            raw_data = format_raw_measurements(self.run_data.measurements)
+            raw_data = format_raw_measurements(
+                self.run_data.measurements, decimal_places=decimal_places
+            )
         except ValueError as error:
             QMessageBox.information(self, "No raw data", str(error))
             return
@@ -10126,8 +10140,8 @@ class MainWindow(QMainWindow):
             status="success",
         )
         self.statusBar().showMessage(
-            "%d completed channel reading(s) copied to clipboard."
-            % len(self.run_data.measurements)
+            "%d completed channel reading(s) copied to clipboard (%d decimal places)."
+            % (len(self.run_data.measurements), decimal_places)
         )
 
     def show_replacement_analysis_history(self):

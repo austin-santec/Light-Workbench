@@ -320,7 +320,9 @@ measurement acceptance rules, or COC eligibility are changed by this feature.
 
 `domain/raw_export.py` owns pure formatting of accepted measurements for
 clipboard transfer. It produces Excel-compatible tab-separated text and has no
-Qt, filesystem, or hardware dependencies.
+Qt, filesystem, or hardware dependencies. Copy Raw Data asks for 0-4 decimal
+places, defaults to two, and rounds only the clipboard text; cancelling leaves
+the clipboard unchanged. The four-place maximum matches SQL's saved IL scale.
 
 `domain/run_data.py` owns the loaded-run model and over-limit rules. CSV
 formatting and compatibility parsing live in

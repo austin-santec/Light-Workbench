@@ -368,7 +368,7 @@
       <li><strong>Review attempt history.</strong> Use <strong>View Reading History...</strong> to see the original accepted reading and every accepted retest for the loaded database run.</li>
       <li><strong>Open legacy data when needed.</strong> <strong>Open Existing CSV</strong> and <strong>File &gt; Open CSV Run...</strong> load older file-backed data for review and export. A legacy CSV is not converted into a writable database run.</li>
       <li><strong>Clear the workspace between units when needed.</strong> <strong>File &gt; Clear Workspace...</strong> unloads the displayed run and resets setup fields, readings, analysis, comparison, and table content. It does not delete saved SQL/CSV data, disconnect hardware, change wavelength mode, or invalidate the current session reference. Finish any active acquisition, reference calculation, or database write first.</li>
-      <li><strong>Copy values when needed.</strong> <span class="button">Copy Raw Data...</span> copies accepted channel/wavelength values as tab-separated text. It ignores the current table filter and does not create or modify run data.</li>
+      <li><strong>Copy values when needed.</strong> <span class="button">Copy Raw Data...</span> asks how many decimal places to use (0-4, default 2), then copies accepted channel/wavelength values as tab-separated text. It rounds only the clipboard text, includes all accepted channels regardless of the current table filter, and does not change saved run data. Cancel leaves the clipboard unchanged.</li>
     </ol>
 
     <h3>Test timing and session history</h3>

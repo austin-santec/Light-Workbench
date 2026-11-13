@@ -1,13 +1,17 @@
 """Formatting helpers for copying accepted run readings to other tools."""
 
 from collections.abc import Iterable
+from decimal import Decimal, ROUND_HALF_UP
 
 from .models import MeasurementRecord
 
 
+MAX_COPY_DECIMAL_PLACES = 4
+
+
 def format_raw_measurements(
     measurements: Iterable[MeasurementRecord],
-    decimal_places: int = 4,
+    decimal_places: int = MAX_COPY_DECIMAL_PLACES,
 ) -> str:
     """Format accepted readings as Excel-compatible tab-separated text.
 
@@ -19,13 +23,27 @@ def format_raw_measurements(
     records_by_channel = {record.channel: record for record in measurements}
     if not records_by_channel:
         raise ValueError("At least one completed measurement is required.")
+    if (
+        isinstance(decimal_places, bool)
+        or not isinstance(decimal_places, int)
+        or not 0 <= decimal_places <= MAX_COPY_DECIMAL_PLACES
+    ):
+        raise ValueError(
+            "Decimal places must be an integer from 0 through %d."
+            % MAX_COPY_DECIMAL_PLACES
+        )
 
-    format_string = "%%.%df" % decimal_places
+    quantum = Decimal(1).scaleb(-decimal_places)
+
+    def format_loss(value: float) -> str:
+        rounded = Decimal(str(value)).quantize(quantum, rounding=ROUND_HALF_UP)
+        return f"{rounded:.{decimal_places}f}"
+
     rows = [
         "\t".join(
             (
                 str(record.channel),
-                *(format_string % value for value in record.ordered_losses),
+                *(format_loss(value) for value in record.ordered_losses),
             )
         )
         for record in sorted(records_by_channel.values(), key=lambda item: item.channel)
@@ -33,4 +51,4 @@ def format_raw_measurements(
     return "\n".join(rows)
 
 
-__all__ = ["format_raw_measurements"]
+__all__ = ["MAX_COPY_DECIMAL_PLACES", "format_raw_measurements"]

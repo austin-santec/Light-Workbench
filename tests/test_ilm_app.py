@@ -3239,13 +3239,40 @@ class MainWindowTests(unittest.TestCase):
         window.reading_filter.setCurrentIndex(1)
         self.assertEqual(window.table.rowCount(), 1)
 
-        window.copy_raw_data()
+        with patch("ilm_app.QInputDialog.getInt", return_value=(2, True)) as prompt:
+            window.copy_raw_data()
 
         self.assertEqual(
             QApplication.clipboard().text(),
-            "1\t1.2346\t0.5000\n"
-            "2\t2.5000\t2.6000",
+            "1\t1.23\t0.50\n"
+            "2\t2.50\t2.60",
         )
+        self.assertEqual(prompt.call_args.args[3:6], (2, 0, 4))
+        self.assertEqual(window.run_data.measurements[0].ordered_losses, (1.23456, 0.5))
+        window.close()
+
+    def test_copy_raw_data_can_copy_four_recorded_decimal_places(self):
+        window = MainWindow()
+        window.run_data = RunData(
+            Path("test-run"), [MeasurementRecord(1, 1.2345, 0.5)], {}
+        )
+        with patch("ilm_app.QInputDialog.getInt", return_value=(4, True)):
+            window.copy_raw_data()
+        self.assertEqual(QApplication.clipboard().text(), "1\t1.2345\t0.5000")
+        window.close()
+
+    def test_copy_raw_data_cancel_preserves_clipboard(self):
+        window = MainWindow()
+        window.run_data = RunData(
+            Path("test-run"), [MeasurementRecord(1, 1.2345, 0.5)], {}
+        )
+        QApplication.clipboard().setText("keep this")
+        with patch("ilm_app.QInputDialog.getInt", return_value=(2, False)), patch(
+            "ilm_app.format_raw_measurements"
+        ) as formatter:
+            window.copy_raw_data()
+        formatter.assert_not_called()
+        self.assertEqual(QApplication.clipboard().text(), "keep this")
         window.close()
 
     def test_copy_raw_data_does_not_replace_clipboard_without_written_rows(self):
@@ -3253,11 +3280,14 @@ class MainWindowTests(unittest.TestCase):
         window.run_data = RunData(Path("test-run"), [], {})
         QApplication.clipboard().setText("keep this")
 
-        with patch("ilm_app.QMessageBox.information") as information:
+        with patch("ilm_app.QMessageBox.information") as information, patch(
+            "ilm_app.QInputDialog.getInt"
+        ) as prompt:
             window.copy_raw_data()
 
         self.assertEqual(QApplication.clipboard().text(), "keep this")
         information.assert_called_once()
+        prompt.assert_not_called()
         window.close()
 
     def test_measurement_button_shortcuts_update_after_keybind_change(self):
