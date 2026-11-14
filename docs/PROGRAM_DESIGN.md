@@ -395,6 +395,13 @@ only enumerates directory names and never opens or modifies product-log files.
 Lookup failure remains separate from hardware readiness and never writes run
 data. See DATA_ARCHITECTURE for the lookup roots and failure rules.
 
+`ui/unit_folder_lookup.py` presents Tools > Lookup Unit Folder. Its dedicated
+`UnitFolderLookupController` uses the existing background lookup lifecycle,
+including closed-dialog and stale-request suppression. It shares read-only
+directory resolution with part-number lookup and opens only the selected unit
+directory in File Explorer. Its connected-unit prefill and manual searches
+do not modify setup fields, saved run data, or product-log files.
+
 `domain/hardware_connection.py` defines capability, readiness, snapshot, and
 ownership errors without importing Qt or vendor drivers. Normal-run readiness
 requires available measurement hardware (plus a separate laser when configured)

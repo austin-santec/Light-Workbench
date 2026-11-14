@@ -1654,6 +1654,10 @@
    'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
    'Testing\\ui\\timing_profiles.py',
    'PYMODULE'),
+  ('ui.unit_folder_lookup',
+   'C:\\Users\\Austin\\Documents\\Python Stuff\\ILM Python '
+   'Testing\\ui\\unit_folder_lookup.py',
+   'PYMODULE'),
   ('urllib',
    'C:\\Users\\Austin\\AppData\\Local\\Programs\\Python\\Python311-32\\Lib\\urllib\\__init__.py',
    'PYMODULE'),

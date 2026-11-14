@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from infrastructure.coc_export import find_part_number, part_lookup_roots
+from infrastructure.coc_export import find_part_number, find_unit_folders, part_lookup_roots
 from infrastructure.coc_exporter import FileCocExporter
 
 
@@ -65,6 +65,17 @@ class ModelPartNumberLookupTests(unittest.TestCase):
         self.add_part("OSX-150")
         with self.assertRaisesRegex(LookupError, "More than one"):
             find_part_number("00123", lookup_parent=self.parent)
+
+    def test_unit_folder_lookup_returns_actual_paths_for_both_models(self):
+        first = self.add_part("OSX-100")
+        second = self.add_part("OSX-150")
+        expected = (
+            self.parent / "OSX-100" / ("SN00123_" + first),
+            self.parent / "OSX-150" / ("SN00123_" + second),
+        )
+        self.assertEqual(
+            FileCocExporter().find_unit_folders(" SN00123 ", self.parent), expected
+        )
 
     def test_multiple_matches_in_same_model_are_rejected(self):
         self.add_part("OSX-100")
@@ -129,6 +140,10 @@ class ModelPartNumberLookupTests(unittest.TestCase):
                 "builtins.open", side_effect=AssertionError("Lookup must not open files")
             ))
             self.assertEqual(find_part_number("00123", lookup_parent=self.parent), part)
+            self.assertEqual(
+                find_unit_folders("00123", lookup_parent=self.parent),
+                (evidence.parent,),
+            )
             with self.assertRaises(LookupError):
                 find_part_number("missing", lookup_parent=self.parent)
         self.assertEqual(evidence.read_text(encoding="utf-8"), "unchanged")

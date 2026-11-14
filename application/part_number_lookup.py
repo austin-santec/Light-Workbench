@@ -35,7 +35,7 @@ class PartNumberLookupController(QObject):
 
     def __init__(
         self,
-        lookup_function: Callable[..., str],
+        lookup_function: Callable[..., object],
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -93,9 +93,25 @@ class PartNumberLookupController(QObject):
 
         if not self._closed.is_set():
             try:
-                self.succeeded.emit(request_id, serial, str(part_number))
+                self.succeeded.emit(request_id, serial, self._result_payload(part_number))
             except RuntimeError:
                 pass
 
+    @staticmethod
+    def _result_payload(result):
+        return str(result)
 
-__all__ = ["PartNumberLookupController", "classify_part_lookup_error"]
+
+class UnitFolderLookupController(PartNumberLookupController):
+    """Use the same background lifecycle to return multiple directory paths."""
+
+    succeeded = pyqtSignal(int, str, object)
+
+    @staticmethod
+    def _result_payload(result):
+        return tuple(result)
+
+
+__all__ = [
+    "PartNumberLookupController", "UnitFolderLookupController", "classify_part_lookup_error"
+]

@@ -15,6 +15,7 @@ from infrastructure.coc_export import (
     CocTemplateProfile,
     export_coc as _export_coc,
     find_part_number as _find_part_number,
+    find_unit_folders as _find_unit_folders,
     inspect_coc_template_capacity as _inspect_coc_template_capacity,
     inspect_coc_template_profile as _inspect_coc_template_profile,
     normalise_serial as _normalise_serial,
@@ -53,6 +54,18 @@ class FileCocExporter:
     ) -> tuple[Path, ...]:
         """Resolve the same directories used by automatic/manual/COC lookup."""
         return _part_lookup_roots(switch_model, lookup_parent)
+
+    def find_unit_folders(
+        self,
+        main_board_serial: str,
+        lookup_parent: str | Path = DEFAULT_PART_LOOKUP_PARENT,
+        *,
+        switch_model: str | None = None,
+    ) -> tuple[Path, ...]:
+        """Read matching directory paths without opening or modifying files."""
+        return _find_unit_folders(
+            main_board_serial, switch_model=switch_model, lookup_parent=lookup_parent
+        )
 
     def normalise_serial(self, value: str) -> str:
         """Normalize the serial format used in COC fields and filenames."""

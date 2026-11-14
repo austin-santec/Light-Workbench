@@ -226,6 +226,7 @@ from ui.database_reports import DatabaseReportsDialog
 from ui.database_replacements import DatabaseReplacementDialog
 from ui.database_status import DatabaseStatusIndicator
 from ui.collapsible_group_box import CollapsibleGroupBox
+from ui.unit_folder_lookup import UnitFolderLookupDialog
 from domain.support_events import SupportEventCategory, SupportLogLevel
 from config.app_config import DEFAULT_PATHS
 from domain.measurement_timing import (
@@ -1803,6 +1804,9 @@ class MainWindow(QMainWindow):
         )
         self.get_switch_ip_action.triggered.connect(self.show_switch_ip)
         tools_menu.addAction(self.get_switch_ip_action)
+        self.lookup_unit_folder_action = QAction("Lookup Unit Folder...", self)
+        self.lookup_unit_folder_action.triggered.connect(self.show_unit_folder_lookup)
+        tools_menu.addAction(self.lookup_unit_folder_action)
         self.database_reports_action = QAction("Database Reports...", self)
         self.database_reports_action.setEnabled(self.database_workflow is not None)
         self.database_reports_action.triggered.connect(self.show_database_reports)
@@ -4203,6 +4207,18 @@ class MainWindow(QMainWindow):
                 "Confirm the unit identity before looking up its part number."
             )
         return next(iter(models), None)
+
+    def show_unit_folder_lookup(self):
+        """Prefill connected identity only; allow independent manual searches."""
+        state = self._device_connection_states.get(DeviceCategory.OPTICAL_SWITCH)
+        connected = state in {ConnectionState.CONNECTED, ConnectionState.IN_USE}
+        dialog = UnitFolderLookupDialog(
+            self.coc_exporter.find_unit_folders,
+            connected_serial=self._connected_switch_serial if connected else "",
+            connected_model=self._connected_switch_lookup_model if connected else None,
+            parent=self,
+        )
+        dialog.exec_()
 
     def open_part_lookup_folder(self):
         """Open the model's lookup directory, or the shared parent if unknown."""

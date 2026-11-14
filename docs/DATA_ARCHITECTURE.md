@@ -118,6 +118,16 @@ remains available after failure. Open Lookup Folder opens the selected model
 directory, or their shared parent when the model is unknown; this launches
 File Explorer only and performs no application write to the share.
 
+Tools > Lookup Unit Folder opens a separate, asynchronous directory lookup.
+Its serial is prefilled only from currently connected hardware; a loaded run
+does not supply a disconnected default. The matching connected serial uses
+its detected model, while other serials search both OSX-100 and OSX-150.
+The shared `find_unit_folders` resolver returns actual validated directory
+paths. Unlike part-number lookup, the folder dialog lets the user explicitly
+choose between multiple matches. It opens the unit directory itself in File
+Explorer so the Genesis subfolder is visible. Cancellation and stale background
+results do not launch Explorer. No product-log file contents are read or edited.
+
 ## Format responsibilities
 
 - SQL Server: canonical structured application data for new recorded hardware runs on

@@ -858,6 +858,24 @@ class MainWindowTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_unit_folder_lookup_prefills_only_connected_identity(self):
+        window = MainWindow()
+        try:
+            window._connected_switch_serial = "18761"
+            window._connected_switch_lookup_model = "OSX-150"
+            window.hardware_main_board_serial.setText("old-loaded-unit")
+            with patch("ilm_app.UnitFolderLookupDialog") as dialog:
+                window._device_connection_states[DeviceCategory.OPTICAL_SWITCH] = ConnectionState.CONNECTED
+                window.show_unit_folder_lookup()
+                self.assertEqual(dialog.call_args.kwargs["connected_serial"], "18761")
+                self.assertEqual(dialog.call_args.kwargs["connected_model"], "OSX-150")
+                window._device_connection_states[DeviceCategory.OPTICAL_SWITCH] = ConnectionState.DISCONNECTED
+                window.show_unit_folder_lookup()
+                self.assertEqual(dialog.call_args.kwargs["connected_serial"], "")
+                self.assertIsNone(dialog.call_args.kwargs["connected_model"])
+        finally:
+            window.close()
+
     def test_front_panel_count_distinguishes_physical_switch_capacity(self):
         window = MainWindow()
         try:
@@ -1370,6 +1388,7 @@ class MainWindowTests(unittest.TestCase):
             [
                 "Switch VISA Address...",
                 "Get IP...",
+                "Lookup Unit Folder...",
                 "Database Reports...",
                 "Check Dependencies...",
                 "Red Light Test...",

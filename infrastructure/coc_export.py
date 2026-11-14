@@ -92,13 +92,13 @@ def part_lookup_roots(
     return tuple(Path(lookup_parent) / item for item in models)
 
 
-def find_part_number(
+def find_unit_folders(
     main_board_serial: str,
     lookup_root: str | Path | None = None,
     *,
     switch_model: str | None = None,
     lookup_parent: str | Path = DEFAULT_PART_LOOKUP_PARENT,
-) -> str:
+) -> tuple[Path, ...]:
     """Read directory names only; never create, open, or modify lookup files.
 
     An explicit root preserves the legacy single-directory API. Otherwise a
@@ -118,7 +118,7 @@ def find_part_number(
         if not root.is_dir():
             raise FileNotFoundError(
                 "The part-number lookup folder is not available:\n%s\n"
-                "Lookup is incomplete. Restore access or enter the part number manually."
+                "Lookup is incomplete. Restore access and try again."
                 % root
             )
         matches.extend(
@@ -134,29 +134,44 @@ def find_part_number(
             "No matching folder was found for Main Board serial %s in:\n%s"
             % (serial, searched)
         )
+    expected_model = normalize_switch_model(switch_model)
+    for folder in matches:
+        part_number = folder.name[len(prefix):]
+        if not part_number:
+            raise LookupError("The matching folder does not contain a part number.")
+        folder_model = normalize_switch_model(folder.parent.name)
+        actual_model = normalize_switch_model(part_number)
+        if (
+            actual_model not in {"OSX-100", "OSX-150"}
+            or (expected_model and actual_model != expected_model)
+            or (folder_model in {"OSX-100", "OSX-150"} and actual_model != folder_model)
+        ):
+            raise LookupError(
+                "Part-number model mismatch: %s does not match %s in %s."
+                % (part_number, expected_model or folder_model, folder.parent)
+            )
+    return tuple(matches)
+
+
+def find_part_number(
+    main_board_serial: str,
+    lookup_root: str | Path | None = None,
+    *,
+    switch_model: str | None = None,
+    lookup_parent: str | Path = DEFAULT_PART_LOOKUP_PARENT,
+) -> str:
+    """Return the part number from one unambiguous, read-only folder match."""
+    matches = find_unit_folders(
+        main_board_serial, lookup_root,
+        switch_model=switch_model, lookup_parent=lookup_parent,
+    )
     if len(matches) > 1:
         raise LookupError(
             "More than one folder was found for Main Board serial %s:\n%s\n"
             "Confirm the model and part number before continuing."
-            % (serial, "\n".join(str(directory) for directory in matches))
+            % (normalise_serial(main_board_serial), "\n".join(str(path) for path in matches))
         )
-
-    part_number = matches[0].name[len(prefix):]
-    if not part_number:
-        raise LookupError("The matching folder does not contain a part number.")
-    expected_model = normalize_switch_model(switch_model)
-    folder_model = normalize_switch_model(matches[0].parent.name)
-    actual_model = normalize_switch_model(part_number)
-    if (
-        actual_model not in {"OSX-100", "OSX-150"}
-        or (expected_model and actual_model != expected_model)
-        or (folder_model in {"OSX-100", "OSX-150"} and actual_model != folder_model)
-    ):
-        raise LookupError(
-            "Part-number model mismatch: %s does not match %s in %s."
-            % (part_number, expected_model or folder_model, matches[0].parent)
-        )
-    return part_number
+    return matches[0].name[len("SN%s_" % normalise_serial(main_board_serial)):]
 
 
 def _safe_filename_component(value):
@@ -664,6 +679,7 @@ __all__ = [
     "DEFAULT_PART_LOOKUP_ROOT",
     "export_coc",
     "find_part_number",
+    "find_unit_folders",
     "inspect_coc_template_capacity",
     "inspect_coc_template_profile",
     "measurement_rows",
