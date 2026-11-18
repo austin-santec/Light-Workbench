@@ -822,6 +822,11 @@ class InMemoryRepositories(MemoryRunSessions):
             return latest, history
 
     def append(self, spec: ReplacementSpec) -> ReplacementRecord:
+        return self._append_replacement(spec)
+
+    def _append_replacement(
+        self, spec: ReplacementSpec, validated_recommendation_ids=frozenset()
+    ) -> ReplacementRecord:
         with self._lock:
             assignment, switch = self._routing_context(
                 spec.assignment_id, require_active=True
@@ -868,16 +873,15 @@ class InMemoryRepositories(MemoryRunSessions):
                     raise ValueError(
                         "Source replacement recommendation belongs to another assignment"
                     )
-                try:
-                    self._validate_analysis_source_snapshot(
-                        source_run,
-                        analysis.result_details.get("source_snapshot", {}),
-                        analysis.source_measurement_high_watermark_id,
-                    )
-                except ValueError as error:
-                    raise ValueError(
-                        "Source replacement recommendation is stale"
-                    ) from error
+                if spec.source_recommendation_id not in validated_recommendation_ids:
+                    try:
+                        self._validate_analysis_source_snapshot(
+                            source_run,
+                            analysis.result_details.get("source_snapshot", {}),
+                            analysis.source_measurement_high_watermark_id,
+                        )
+                    except ValueError as error:
+                        raise ValueError("Source replacement recommendation is stale: %s" % error) from error
                 if (
                     recommendation.logical_channel != spec.logical_channel
                     or recommendation.candidate_physical_port
@@ -1360,8 +1364,9 @@ class InMemoryRepositories(MemoryRunSessions):
             spares_before = dict(self.spare_events)
             ids_before = dict(self._next_ids)
             try:
+                validated_ids = self._validate_recommendation_sources(specs)
                 for spec in specs:
-                    self.append(spec)
+                    self._append_replacement(spec, validated_ids)
                 for spec in spare_specs:
                     self.append_event(spec)
             except Exception:
@@ -1370,6 +1375,30 @@ class InMemoryRepositories(MemoryRunSessions):
                 self._next_ids = ids_before
                 raise
             return self.routing_snapshot_for_assignment(assignment_id)
+
+    def _validate_recommendation_sources(self, specs) -> frozenset[int]:
+        """Freeze source approval before applying any replacement in the batch."""
+        validated = set()
+        for spec in specs:
+            recommendation_id = spec.source_recommendation_id
+            if recommendation_id is None or recommendation_id in validated:
+                continue
+            recommendation = self.replacement_analysis_recommendations.get(recommendation_id)
+            if recommendation is None:
+                raise ValueError("Source replacement recommendation does not exist")
+            analysis = self.replacement_analyses[recommendation.analysis_id]
+            source_run = self.runs.get(analysis.run_id)
+            if source_run is None or source_run.assignment_id != spec.assignment_id:
+                raise ValueError("Source replacement recommendation belongs to another assignment")
+            try:
+                self._validate_analysis_source_snapshot(
+                    source_run, analysis.result_details.get("source_snapshot", {}),
+                    analysis.source_measurement_high_watermark_id,
+                )
+            except ValueError as error:
+                raise ValueError("Source replacement recommendation is stale: %s" % error) from error
+            validated.add(recommendation_id)
+        return frozenset(validated)
 
     def _routing_context(self, assignment_id: int, *, require_active: bool = False):
         assignment = self.assignments.get(int(assignment_id))

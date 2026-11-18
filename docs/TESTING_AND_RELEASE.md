@@ -25,6 +25,20 @@ idempotency, atomic two-wavelength writes, attempt numbering, current-value
 views, and database-unavailable behavior. Historical bulk-import tests are not
 required by the approved clean-start design.
 
+Recommendation-linked replacement batches must verify that multiple queued
+recommendations save against one pre-save source state, retain their adoption
+links, and do not invalidate each other during the transaction. Cover genuine
+source changes and rollback after a later invalid candidate or insert failure.
+`tests/test_replacement_batch_save.py` exercises memory and fake DB-API paths;
+it does not establish actual SQL Server lock or concurrency behavior. Complete
+isolated SQL and packaged manual verification before closing that qualification.
+For the manual check, reload the saved run, confirm the analysis is current
+(recalculate if source data has changed), queue the intended recommendation
+pairs, save once, and reload to verify every recorded mapping and link. Record
+physical replacements already performed rather than repeating them. A new
+verification run must supply post-replacement measurements before they can
+qualify the new mappings for COC output.
+
 Database run-load performance instrumentation is hardware-free and must be
 tested with fake repositories, factories, clocks, and support loggers. The
 read-only benchmark is `tools/benchmark_database_run_load.py`; it must never

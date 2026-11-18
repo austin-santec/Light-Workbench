@@ -725,6 +725,16 @@ generation nor opening the editor writes an event. An existing spare is
 undesignated only by an explicit operator selection saved as a new append-only
 event.
 
+Recommendation-linked batch saves validate every source analysis against the
+pre-save database state before inserting any replacement. That approval is
+local to the transaction; run and measurement source locks remain held until
+commit, alongside the assignment lock. A replacement inserted earlier in the
+same batch must not invalidate a later recommendation. Each individual write
+still verifies the current mapping, candidate evidence, recommendation identity,
+and unused recommendation link. A later replacement or spare failure rolls
+back the entire batch. Successful replacement recording normally makes the
+original analysis stale for subsequent operations and requires retest evidence.
+
 ### `vw_ConfirmedExtraPorts`
 
 Returns the newest eligible `extra_candidate` measurement for each

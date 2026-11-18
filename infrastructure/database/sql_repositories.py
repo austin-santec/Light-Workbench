@@ -1346,19 +1346,23 @@ class SqlRepositories(SqlRunSessions):
         assignment_id,
         snapshot,
         high_watermark,
+        lock_sources=False,
     ):
         """Validate legacy or assignment-scoped analysis source evidence."""
+        source_hint = " WITH (HOLDLOCK)" if lock_sources else ""
         if not isinstance(snapshot, Mapping) or not snapshot.get(
             "considered_measurement_ids"
         ):
             source = cursor.execute(
-                "SELECT run_id FROM dbo.IL_MEASUREMENTS WHERE measurement_id = ?",
+                "SELECT run_id FROM dbo.IL_MEASUREMENTS" + source_hint
+                + " WHERE measurement_id = ?",
                 high_watermark,
             ).fetchone()
             if source is None or int(source[0]) != int(context_run_id):
                 raise ValueError("Analysis source measurement does not belong to the run")
             current_max = cursor.execute(
-                "SELECT MAX(measurement_id) FROM dbo.IL_MEASUREMENTS WHERE run_id = ?",
+                "SELECT MAX(measurement_id) FROM dbo.IL_MEASUREMENTS" + source_hint
+                + " WHERE run_id = ?",
                 context_run_id,
             ).fetchone()[0]
             if current_max is None or int(current_max) != int(high_watermark):
@@ -1387,7 +1391,9 @@ class SqlRepositories(SqlRunSessions):
         placeholders = ",".join("?" for _ in included_run_ids)
         run_rows = cursor.execute(
             "SELECT run_id, assignment_id, analysis_status, superseded_by_run_id "
-            "FROM dbo.IL_RUNS WHERE run_id IN (%s)" % placeholders,
+            "FROM dbo.IL_RUNS"
+            + (" WITH (UPDLOCK, HOLDLOCK)" if lock_sources else "")
+            + " WHERE run_id IN (%s) ORDER BY run_id" % placeholders,
             *included_run_ids,
         ).fetchall()
         if len(run_rows) != len(included_run_ids) or any(
@@ -1409,8 +1415,8 @@ class SqlRepositories(SqlRunSessions):
         current_measurement_ids = tuple(
             int(row[0])
             for row in cursor.execute(
-                "SELECT measurement_id FROM dbo.IL_MEASUREMENTS "
-                "WHERE run_id IN (%s) ORDER BY measurement_id" % placeholders,
+                "SELECT measurement_id FROM dbo.IL_MEASUREMENTS" + source_hint
+                + " WHERE run_id IN (%s) ORDER BY measurement_id" % placeholders,
                 *included_run_ids,
             ).fetchall()
         )
@@ -1524,8 +1530,9 @@ class SqlRepositories(SqlRunSessions):
         assignment_id = next(iter(assignment_ids))
         with self._factory.transaction() as cursor:
             self._routing_context(cursor, assignment_id, require_active=True)
+            validated_ids = self._validate_recommendation_sources(cursor, specs)
             for spec in specs:
-                self._append_replacement(cursor, spec)
+                self._append_replacement(cursor, spec, validated_ids)
             for spec in spare_specs:
                 self._append_spare_event(cursor, spec)
             return self._routing_snapshot(cursor, assignment_id)
@@ -1547,7 +1554,41 @@ class SqlRepositories(SqlRunSessions):
             self._routing_context(cursor, assignment_id, lock=True)
             return self._routing_snapshot(cursor, assignment_id)
 
-    def _append_replacement(self, cursor, spec: ReplacementSpec):
+    def _validate_recommendation_sources(self, cursor, specs) -> frozenset[int]:
+        """Validate every linked source before this transaction changes history."""
+        validated = set()
+        for spec in specs:
+            recommendation_id = spec.source_recommendation_id
+            if recommendation_id is None or recommendation_id in validated:
+                continue
+            source = cursor.execute(
+                "SELECT analysis.run_id, run.assignment_id, "
+                "analysis.source_measurement_high_watermark_id, analysis.result_details_json "
+                "FROM dbo.REPLACEMENT_ANALYSIS_RECOMMENDATIONS AS recommendation "
+                "INNER JOIN dbo.REPLACEMENT_ANALYSES AS analysis "
+                "ON analysis.analysis_id = recommendation.analysis_id "
+                "INNER JOIN dbo.IL_RUNS AS run ON run.run_id = analysis.run_id "
+                "WHERE recommendation.recommendation_id = ?",
+                recommendation_id,
+            ).fetchone()
+            if source is None:
+                raise ValueError("Source replacement recommendation does not exist")
+            if int(source[1]) != spec.assignment_id:
+                raise ValueError("Source replacement recommendation belongs to another assignment")
+            try:
+                self._validate_analysis_source_snapshot(
+                    cursor, context_run_id=int(source[0]), assignment_id=spec.assignment_id,
+                    snapshot=_mapping(source[3]).get("source_snapshot", {}),
+                    high_watermark=int(source[2]), lock_sources=True,
+                )
+            except ValueError as error:
+                raise ValueError("Source replacement recommendation is stale: %s" % error) from error
+            validated.add(recommendation_id)
+        return frozenset(validated)
+
+    def _append_replacement(
+        self, cursor, spec: ReplacementSpec, validated_recommendation_ids=frozenset()
+    ):
         context = self._routing_context(cursor, spec.assignment_id, require_active=True)
         channel_map = {
             item.logical_channel: item
@@ -1611,20 +1652,17 @@ class SqlRepositories(SqlRunSessions):
                 raise ValueError(
                     "Source replacement recommendation belongs to another assignment"
                 )
-            try:
-                self._validate_analysis_source_snapshot(
-                    cursor,
-                    context_run_id=int(recommendation[3]),
-                    assignment_id=int(source_assignment[0]),
-                    snapshot=_mapping(recommendation[6]).get(
-                        "source_snapshot", {}
-                    ),
-                    high_watermark=int(recommendation[4]),
-                )
-            except ValueError as error:
-                raise ValueError(
-                    "Source replacement recommendation is stale"
-                ) from error
+            if spec.source_recommendation_id not in validated_recommendation_ids:
+                try:
+                    self._validate_analysis_source_snapshot(
+                        cursor,
+                        context_run_id=int(recommendation[3]),
+                        assignment_id=int(source_assignment[0]),
+                        snapshot=_mapping(recommendation[6]).get("source_snapshot", {}),
+                        high_watermark=int(recommendation[4]), lock_sources=True,
+                    )
+                except ValueError as error:
+                    raise ValueError("Source replacement recommendation is stale: %s" % error) from error
             if (
                 int(recommendation[1]) != int(spec.logical_channel)
                 or int(recommendation[2]) != int(spec.replacement_physical_port)
